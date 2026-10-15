@@ -2,7 +2,9 @@
 
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
-tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`.
+tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 5), raised whenever a change makes the guard refuse a
+reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
 ASR model, not a person crafting input. It must reject the errors those models make:
@@ -27,17 +29,19 @@ the results was tried and abandoned: every rewrite rule could map two different 
 
 1. **Both sides** get only normalisation: NFKC and width folding; `\p{Cf}` deleted except U+200B, which is a space;
    `\p{Me}` and variation selectors deleted; Unicode decimal digits to ASCII at scalar level; lower case by the
-   language's rules (`tr`, `az`); apostrophes unified and **kept**. **Only unspoken punctuation is deleted**, and that
+   language's rules (`tr`, `az`); apostrophes unified and **kept**, except a pair of single quotation marks around
+   words (`Say ‘hello’.`, `'yes'`), which is unspoken; an unpaired mark is an apostrophe (`’tis`, `students’`). **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`
    written against a number is split off; a superscript digit is `^` and the digit before NFKC can fold it (`2³` is
    not `23`); a `-` between numbers, the left one possibly ending in `%` or an ordinal suffix (`5% - 2%`, `1st - 3rd`),
-   is a symbol, silent-able only when tight and outside an expression (`3-4`, `1-0` may be read with no word; `5-2=3`
+   touching the right one (`5 -2`), between Han numerals (`五 - 二`), or before a signed or decimal operand (`5 - +2`,
+   `5 - ,2`), is a symbol, silent-able only when tight and outside an expression (`3-4`, `1-0` may be read with no word; `5-2=3`
    and `3 - 4` may not). An expression is a run of numbers and symbols joined only by spaces that holds another
    operator; punctuation ends it (`1-0. #1` holds none). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
    both sides. A number keeps its
-   sign (start, after space or punctuation, before `.5`, or an exponent `1e-3`), its `. , / :` between digits and an
+   sign (start, after space or punctuation, before `.5` or `,5`, or an exponent `1e-3`), its `. , / :` between digits and an
    ordinal suffix; a leading `,` starts a number only after a space (`,5` is a French decimal, `Yes,3` is a word and a
    number). Only `- ‐ ‑` join words (`e-mail`); dashes `– —` separate them. A letter next to a digit is a token
    boundary; each character of an unspaced script (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) is a token.
@@ -97,10 +101,14 @@ spell-out, a reverse year (`nineteen ninety-nine` ≠ `1999`), `Lakers VS Celtic
 `Qxe7+` ≠ `Q X E7` (the spoken `+` is missing; Checkmate's TTS scripts contain no symbols), `007th` ≠ `zero zero
 seventh`, currency in words (`$5` ≠ `five dollars`: the reading reorders, deferred until a script needs it; `$` is a
 token, so an omitted currency is detected), `pages 3 - 4` ≠ `pages 3 4` (a spaced dash is spoken), a two-digit Han
-string (`一二` ≠ `12`). An emphasised short word missing from `svCapsWords` is the opposite case: it is accepted letter
+string (`一二` ≠ `12`), a Japanese numeral in kanji read back as digits (`四十二` ≠ `42`: Japanese numerals also
+spell words, `一緒`, `七夕`, so a run is not read as a value), and a character newer than the platform's Unicode
+tables (a Unicode 16 digit on macOS 14 reads as a symbol in Swift; the same table difference can only refuse, since
+an unknown character is a token that matches only itself). An emphasised short word missing from `svCapsWords` is the opposite case: it is accepted letter
 by letter, a residual false acceptance (see the threat model).
 
 Accepted residual false acceptances, each with its mechanism in the fixture `note`: a hyphenated compound read as its
 closed form (`co-op` = `coop`, `re-cover` = `recover`): the guard compares words, not pronunciation, and correct
 recordings of spelling-variant compounds come back from ASR in either form; `Oh one more thing` without a comma =
-`zero one more thing`.
+`zero one more thing`; `St` between a sentence's capitalised first word and a capital (`Main St. Next turn left.`,
+`Visit St. John`) reads "saint", as `Visit St. John` must, so `Main saint` is accepted and `Main street` refused there.

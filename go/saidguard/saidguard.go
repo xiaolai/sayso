@@ -27,6 +27,10 @@ type svAlt []string // tokens acceptable at one position
 type svSeq []svAlt  // one reading
 type svUnit []svSeq // the alternative readings of one script unit
 
+// Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
+// reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
+const Version = 5
+
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
 
@@ -160,8 +164,10 @@ func svSpokenSymbol(r rune) bool {
 	return true
 }
 
-// svBetweenNumbers: a '-' with a number on each side, spaced or not ("5 - 2", "3-4", "5% - 2%", "1st - 3rd"), is
-// spoken (minus, to). A number on the left may end in a percent sign or an ordinal suffix, as the lexer reads it.
+// svBetweenNumbers: a '-' with a number on each side, spaced or not ("5 - 2", "3-4", "5 -2", "5% - 2%", "1st - 3rd",
+// "五 - 二"), is spoken (minus, to). A number on the left may end in a percent sign or an ordinal suffix, as the lexer
+// reads it; the one on the right may carry a sign ("5 - -2", "5 - +2") or start with a decimal point or comma
+// ("5 - .2", "5 - ,2").
 func svBetweenNumbers(rs []rune, i int) bool {
 	p, n := i-1, i+1
 	for p >= 0 && unicode.IsSpace(rs[p]) {
@@ -178,10 +184,18 @@ func svBetweenNumbers(rs []rune, i int) bool {
 	} else if p >= 2 && svOrdinalSuffixAt(rs, p-1) {
 		p -= 2
 	}
-	if n < len(rs) && svMinus(rs[n]) && svSignAt(rs, n) {
-		n++ // a signed operand ("5 - -2")
+	if n < len(rs) && (svMinus(rs[n]) && svSignAt(rs, n) || rs[n] == '+' && svOperandAt(rs, n+1)) {
+		n++ // a signed operand ("5 - -2", "5 - +2")
 	}
-	return p >= 0 && svDigit(rs[p]) && n < len(rs) && (svDigit(rs[n]) || rs[n] == '.' && n+1 < len(rs) && svDigit(rs[n+1]))
+	return p >= 0 && (svDigit(rs[p]) || isHanNumeral(rs[p])) && svOperandAt(rs, n)
+}
+
+// svOperandAt: a number starts at rs[i]: a digit, a Han numeral, or a decimal point or comma before a digit.
+func svOperandAt(rs []rune, i int) bool {
+	if i >= len(rs) {
+		return false
+	}
+	return svDigit(rs[i]) || isHanNumeral(rs[i]) || (rs[i] == '.' || rs[i] == ',') && i+1 < len(rs) && svDigit(rs[i+1])
 }
 
 // svMinus: the hyphen-minus or the minus sign.
@@ -206,13 +220,14 @@ func svLetter(r rune) bool { return unicode.IsLetter(r) && !isUnspaced(r) }
 // svJoiner: the hyphens that join a word ("e-mail"). Dashes (– —) separate words and are not joiners.
 func svJoiner(r rune) bool { return r == '-' || r == '‐' || r == '‑' }
 
-// svSignAt: a '-' or '−' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an
-// exponent sign ("1e-3"); after a letter it is a joiner ("JIRA-10442") and after a digit a range ("3-4").
+// svSignAt: a '-' or '−' before a digit, or a decimal point or comma before one ("-.5", "-,5"), is a sign at the
+// start, after a space or punctuation, or as an exponent sign ("1e-3"); after a letter it is a joiner ("JIRA-10442"),
+// and after a number, spaced or not, a minus ("3-4", "5 -2").
 func svSignAt(rs []rune, i int) bool {
 	if !svMinus(rs[i]) || i+1 >= len(rs) {
 		return false
 	}
-	if !svDigit(rs[i+1]) && !(rs[i+1] == '.' && i+2 < len(rs) && svDigit(rs[i+2])) {
+	if !svDigit(rs[i+1]) && !((rs[i+1] == '.' || rs[i+1] == ',') && i+2 < len(rs) && svDigit(rs[i+2])) {
 		return false
 	}
 	if i == 0 {
@@ -226,7 +241,7 @@ func svSignAt(rs []rune, i int) bool {
 }
 
 func svLex(s string, hanNumbers bool) []svRaw {
-	rs := []rune(s)
+	rs := svUnquote([]rune(s))
 	var out []svRaw
 	prevEnd := 0
 	emit := func(kind svKind, i, j int) {
@@ -240,7 +255,7 @@ func svLex(s string, hanNumbers bool) []svRaw {
 	for i := 0; i < len(rs); {
 		r := rs[i]
 		switch {
-		case svDigit(r) || svSignAt(rs, i) || r == '.' && i+1 < len(rs) && svDigit(rs[i+1]) && (i == 0 || !svDigit(rs[i-1])) ||
+		case svDigit(r) || svSignAt(rs, i) && !svBetweenNumbers(rs, i) || r == '.' && i+1 < len(rs) && svDigit(rs[i+1]) && (i == 0 || !svDigit(rs[i-1])) ||
 			r == ',' && i+1 < len(rs) && svDigit(rs[i+1]) && (i == 0 || unicode.IsSpace(rs[i-1])):
 			// A leading "," is a number only after a space (",5" is a French decimal); "Yes,3" is a word and a number.
 			j := i + 1
@@ -264,7 +279,7 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			}
 			emit(svNumber, i, j)
 			i = j
-		case svSpokenSymbol(r) || r == '-' && svBetweenNumbers(rs, i):
+		case svSpokenSymbol(r) || svMinus(r) && svBetweenNumbers(rs, i):
 			emit(svSymbol, i, i+1)
 			i++
 		case hanNumbers && isHanNumeral(r) && !(i+1 < len(rs) && unicode.IsMark(rs[i+1])):
@@ -317,6 +332,33 @@ func svLex(s string, hanNumbers bool) []svRaw {
 		}
 	}
 	return out
+}
+
+// svUnquote replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"',
+// so the words inside are not read as elisions or possessives. An opener stands at a word start after a space, an
+// opening bracket or the start; a closer at a word end before a space, punctuation or the end; a pair stays within
+// a sentence. An unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n roll").
+func svUnquote(rs []rune) []rune {
+	open := -1
+	for i, r := range rs {
+		if !isApostrophe(r) {
+			if strings.ContainsRune(svSentenceEnds, r) {
+				open = -1
+			}
+			continue
+		}
+		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1])
+		closer := i > 0 && (svLetter(rs[i-1]) || unicode.IsMark(rs[i-1]) || svDigit(rs[i-1])) &&
+			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
+		switch {
+		case closer && open >= 0:
+			rs[open], rs[i] = '"', '"'
+			open = -1
+		case opener:
+			open = i
+		}
+	}
+	return rs
 }
 
 func svNormApostrophes(s string) string {
@@ -1223,7 +1265,7 @@ func svScriptUnits(s, language string) []svUnit {
 			// Spaced, the reading is the letters as written. Joined, two letters with an article or pronoun among them
 			// would make a word ("a T" = "at"), so a joined reading needs three letters or none of a, I.
 			unit := svUnit{lit(letters...)}
-			if len(letters) >= 3 || !(english && (svAltHas(letters, "a") || svAltHas(letters, "i"))) {
+			if len(letters) >= 3 || !svAltHas(letters, "a") && !svAltHas(letters, "i") {
 				unit = append(unit, lit(strings.Join(letters, "")))
 			}
 			units = append(units, unit)
@@ -1239,15 +1281,22 @@ func svScriptUnits(s, language string) []svUnit {
 			j++
 		}
 		if len(labels) >= 2 { // "one.Next" has no second lowercase label: a number word and a word
-			var parts, dotted []string
+			var parts, dotted, joined, joinedDotted []string
+			hyphen := false
 			for i, l := range labels {
 				if i > 0 {
-					dotted = append(dotted, "dot")
+					dotted, joinedDotted = append(dotted, "dot"), append(joinedDotted, "dot")
 				}
 				ws := strings.FieldsFunc(l, svJoiner)
+				hyphen = hyphen || len(ws) > 1
 				parts, dotted = append(parts, ws...), append(dotted, ws...)
+				joined, joinedDotted = append(joined, strings.Join(ws, "")), append(joinedDotted, strings.Join(ws, ""))
 			}
-			units = append(units, svUnit{lit(parts...), lit(dotted...)})
+			unit := svUnit{lit(parts...), lit(dotted...)}
+			if hyphen { // "e-mail.com" = "email dot com", as a hyphenated word may be joined
+				unit = append(unit, lit(joined...), lit(joinedDotted...))
+			}
+			units = append(units, unit)
 			k = j - 1
 			continue
 		}
@@ -1262,7 +1311,7 @@ func svScriptUnits(s, language string) []svUnit {
 				for _, p := range parts {
 					ok = ok && svPhraseWord(p)
 				}
-				if !ok {
+				if !ok || len(words)+len(parts) > svMaxPhraseWords { // the bound counts words, hyphenated ones too
 					break
 				}
 				words = append(words, parts...)
@@ -1379,13 +1428,16 @@ func svWithCodeReadings(unit svUnit, raws []svRaw, k int, low string) svUnit {
 // "1-0. #1" the score's dash is not in one. One pass over the raws, so a long chain costs its length.
 func svExpressions(raws []svRaw) []bool {
 	in := make([]bool, len(raws))
+	part := func(k int) bool {
+		return raws[k].kind == svNumber || raws[k].kind == svHanRun || raws[k].kind == svSymbol
+	}
 	for i := 0; i < len(raws); {
-		if raws[i].kind != svNumber && raws[i].kind != svSymbol {
+		if !part(i) {
 			i++
 			continue
 		}
 		j, op := i, false
-		for j < len(raws) && (raws[j].kind == svNumber || raws[j].kind == svSymbol) && (j == i || !raws[j].punctBefore()) {
+		for j < len(raws) && part(j) && (j == i || !raws[j].punctBefore()) {
 			op = op || raws[j].kind == svSymbol && raws[j].text != "-"
 			j++
 		}

@@ -1,5 +1,5 @@
 {
- "count": 718,
+ "count": 750,
  "fixtures": [
   {
    "id": "app-ready",
@@ -4144,6 +4144,204 @@
    "requires": [
     "spellout:fr"
    ]
+  },
+  {
+   "id": "said-177",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-178",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-179",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-180",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-181",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-182",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-183",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-184",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-185",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-186",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-187",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-188",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-189",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-190",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-191",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-192",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-193",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-194",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-195",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-196",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-197",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-198",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-199",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-200",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-201",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-202",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-203",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-204",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-205",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-206",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-207",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-208",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
   },
   {
    "id": "ws-close-1006",
