@@ -3,6 +3,20 @@ import Darwin
 import Foundation
 import RealtimeConnection
 
+/// Where auth.json is read: a pinned, validated CODEX_HOME folder, or, with CODEX_HOME unset, the default path. The
+/// folder stays open for every read, so replacing a folder of the path after validation (with a link elsewhere, say)
+/// cannot redirect a later read. The caller closes it.
+struct AuthLocation {
+    /// The open folder; -1 for the default path.
+    let dir: Int32
+    /// The file, for the caller's guard and for diagnostics.
+    let path: String
+
+    func close() {
+        if dir >= 0 { Darwin.close(dir) }
+    }
+}
+
 /// The file source (spec/credentials.md): `auth.json`, read without following a link, checked on the open
 /// descriptor, bounded, never written.
 enum AuthFile {
@@ -10,16 +24,21 @@ enum AuthFile {
     static let maxBytes = 64 << 10
     /// How long the one re-read after a parse failure waits for a writer to finish.
     static let tornRetryDelay: TimeInterval = 0.1
+    static let fileName = "auth.json"
 
-    /// `$CODEX_HOME/auth.json` when `codexHome` resolves, after following links, to a folder the user owns, inside
-    /// `confine` when that is set; `~/.codex/auth.json` when `codexHome` is unset. A set CODEX_HOME that fails is
-    /// codex-error.
-    static func path(codexHome: String?, home: String, confine: String?) throws -> String {
-        guard let codexHome, !codexHome.isEmpty else { return join(home, ".codex/auth.json") }
+    /// Locates `$CODEX_HOME/auth.json` when `codexHome` resolves, after following links, to a folder the user owns,
+    /// inside `confine` when that is set; `~/.codex/auth.json` when `codexHome` is unset. A set CODEX_HOME that
+    /// fails is codex-error.
+    static func location(codexHome: String?, home: String, confine: String?) throws -> AuthLocation {
+        guard let codexHome, !codexHome.isEmpty else { return AuthLocation(dir: -1, path: join(home, ".codex/auth.json")) }
+        guard !codexHome.contains("\0"), !(confine ?? "").contains("\0") else {
+            throw CodexAuthError(.codexError, message: "CODEX_HOME is not a valid path")
+        }
         guard codexHome.hasPrefix("/") else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not an absolute path") }
         guard let real = realPath(codexHome) else {
             throw CodexAuthError(.codexError, message: "CODEX_HOME does not resolve")
         }
+        let dir: Int32
         if let confine, !confine.isEmpty {
             guard let root = realPath(confine) else {
                 throw CodexAuthError(.codexError, message: "the folder CODEX_HOME is confined to does not resolve")
@@ -27,13 +46,41 @@ enum AuthFile {
             guard real == root || real.hasPrefix(root == "/" ? "/" : root + "/") else {
                 throw CodexAuthError(.codexError, message: "CODEX_HOME is outside the folder it is confined to")
             }
+            // Opened from the confining folder one component at a time, never following a link, so a path changed
+            // since it was resolved cannot leave the folder.
+            guard let d = openBeneath(root, String(real.dropFirst(root.count))) else {
+                throw CodexAuthError(
+                    .codexError, message: "CODEX_HOME is not a folder inside the folder it is confined to")
+            }
+            dir = d
+        } else {
+            dir = open(real, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+            guard dir >= 0 else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not a folder") }
         }
+        // Checked on the open folder, the one every read goes through.
         var st = stat()
-        guard stat(real, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else {
+        guard fstat(dir, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else {
+            Darwin.close(dir)
             throw CodexAuthError(.codexError, message: "CODEX_HOME is not a folder")
         }
-        guard st.st_uid == getuid() else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not owned by the user") }
-        return join(real, "auth.json")
+        guard st.st_uid == getuid() else {
+            Darwin.close(dir)
+            throw CodexAuthError(.codexError, message: "CODEX_HOME is not owned by the user")
+        }
+        return AuthLocation(dir: dir, path: join(real, fileName))
+    }
+
+    /// `rel` (folders separated by "/") opened beneath the folder `root`, without following a link; nil on failure.
+    private static func openBeneath(_ root: String, _ rel: String) -> Int32? {
+        var fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        for part in rel.split(separator: "/") {
+            let next = openat(fd, String(part), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            Darwin.close(fd)
+            guard next >= 0 else { return nil }
+            fd = next
+        }
+        return fd
     }
 
     private static func realPath(_ p: String) -> String? {
@@ -42,20 +89,24 @@ enum AuthFile {
         return String(cString: r)
     }
 
-    /// The ChatGPT token `path` holds. A missing file is no-sign-in-file; a parse failure is retried once after
-    /// `onRetry` and a short delay.
-    static func read(_ path: String, onRetry: (@Sendable () -> Void)?) throws -> Token {
-        if let parsed = try readOnce(path) { return parsed }
+    /// The ChatGPT token the file at `loc` holds. A missing file is no-sign-in-file; a parse failure is retried
+    /// once after `onRetry` and a short delay.
+    static func read(_ loc: AuthLocation, onRetry: (@Sendable () -> Void)?) throws -> Token {
+        if let parsed = try readOnce(loc) { return parsed }
         onRetry?()
         Thread.sleep(forTimeInterval: tornRetryDelay)
-        if let parsed = try readOnce(path) { return parsed }
+        if let parsed = try readOnce(loc) { return parsed }
         throw CodexAuthError(.codexError, message: "auth.json is not a valid sign-in file")
     }
 
-    /// Opens `path` without following a link and without blocking on a FIFO, checks the open descriptor, and decodes
-    /// the bytes read from it. nil only when the content did not decode.
-    private static func readOnce(_ path: String) throws -> Token? {
-        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    /// Opens the file without following a link and without blocking on a FIFO, checks the open descriptor, and
+    /// decodes the bytes read from it. nil only when the content did not decode.
+    private static func readOnce(_ loc: AuthLocation) throws -> Token? {
+        guard !loc.path.contains("\0") else {
+            throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: "the path holds a NUL")
+        }
+        let flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+        let fd = loc.dir >= 0 ? openat(loc.dir, fileName, flags) : open(loc.path, flags)
         if fd < 0 {
             if errno == ENOENT { throw CodexAuthError(.noSignInFile, message: "auth.json does not exist") }
             throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: String(cString: strerror(errno)))
@@ -84,7 +135,8 @@ enum AuthFile {
         guard used < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
         var data = Data(buf[0..<used])
         defer { data.resetBytes(in: 0..<data.count) }
-        guard let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? [String: Any]
+        guard isPlainJSON(data),
+            let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? [String: Any]
         else { return nil }
         return try decode(doc)
     }
@@ -122,7 +174,7 @@ enum AuthFile {
 }
 
 /// Registers `bearer` with the scrubber and wraps it with its expiry: the JWT `exp` claim, read without checking the
-/// signature. A token that is not a JWT, or has no integer `exp`, has unknown expiry.
+/// signature. A token that is not a JWT, or has no `exp` that is a signed 64-bit integer, has unknown expiry.
 func makeToken(_ bearer: String, source: String) -> Token {
     Token(bearer: bearer, expires: jwtExpiry(bearer), source: source)
 }
@@ -138,9 +190,10 @@ func jwtExpiry(_ token: String) -> Date? {
     var b64 = payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
     guard b64.count % 4 != 1 else { return nil }
     b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
-    guard let data = Data(base64Encoded: b64),
+    guard let data = Data(base64Encoded: b64), isPlainJSON(data),
         let claims = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-        let exp = claims["exp"] as? NSNumber, CFGetTypeID(exp) != CFBooleanGetTypeID(), !CFNumberIsFloatType(exp)
+        let exp = claims["exp"] as? NSNumber, CFGetTypeID(exp) != CFBooleanGetTypeID(), !CFNumberIsFloatType(exp),
+        NSNumber(value: exp.int64Value) == exp  // a signed 64-bit integer exactly, as Go decodes it; not wrapped
     else { return nil }
     return Date(timeIntervalSince1970: TimeInterval(exp.int64Value))
 }

@@ -24,11 +24,15 @@ func jwtExpiry(tok string) time.Time {
 	if err != nil {
 		return time.Time{}
 	}
-	var claims struct {
-		Exp *int64 `json:"exp"`
-	}
-	if json.Unmarshal(payload, &claims) != nil || claims.Exp == nil {
+	// Exact key: a struct field would also match "EXP", which the Swift implementation does not read.
+	var claims map[string]json.RawMessage
+	var exp int64
+	if json.Unmarshal(payload, &claims) != nil {
 		return time.Time{}
 	}
-	return time.Unix(*claims.Exp, 0)
+	raw, ok := claims["exp"]
+	if !ok || string(raw) == "null" || json.Unmarshal(raw, &exp) != nil { // not an int64 (a fraction, an overflow)
+		return time.Time{}
+	}
+	return time.Unix(exp, 0)
 }

@@ -2,8 +2,9 @@
 import Foundation
 import RealtimeConnection
 
-/// How to obtain the token (spec/credentials.md).
-public struct CodexAuthConfiguration: Sendable {
+/// How to obtain the token (spec/credentials.md). Formatting and reflection never show the environment, which may hold
+/// credentials.
+public struct CodexAuthConfiguration: Sendable, CustomStringConvertible, CustomReflectable {
     /// Where the token comes from.
     public enum Source: String, Sendable, Equatable {
         /// Codex when it resolves, else auth.json.
@@ -17,7 +18,7 @@ public struct CodexAuthConfiguration: Sendable {
     public var source: Source
     /// An explicitly chosen executable (a path, or a name looked up in `PATH`); nil resolves.
     public var executable: String?
-    /// nil means `CODEX_HOME` from `environment`, else unset.
+    /// nil or "" means `CODEX_HOME` from `environment`, else unset.
     public var codexHome: String?
     /// The user's home folder; nil means the process's.
     public var home: String?
@@ -65,6 +66,16 @@ public struct CodexAuthConfiguration: Sendable {
         self.onFileRetry = onFileRetry
         self.log = log
     }
+
+    public var description: String { "CodexAuthConfiguration{\(source.rawValue)}" }
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "source": source.rawValue, "executable": executable as Any, "codexHome": codexHome as Any,
+                "margin": margin, "timeout": timeout, "environment": Secret.redacted,
+            ], displayStyle: .struct)
+    }
 }
 
 /// An invalid ``CodexAuthConfiguration``.
@@ -101,8 +112,9 @@ public struct CodexAuthInfo: Sendable, Equatable {
 /// Hands out the ChatGPT bearer Codex holds for this machine and owns the refresh policy: single-flight, a refresh
 /// succeeds when the token it returns is fresh, and a failure backs off from 60 s, doubling to 15 min, without a
 /// permanent budget. Codex runs only during a fetch or a refresh, on a private serial queue, never on the caller's
-/// thread. Thrown errors are ``CodexAuthError``.
-public final class Credentials: CredentialSource, @unchecked Sendable, CustomStringConvertible {
+/// thread. Thrown errors are ``CodexAuthError``, or `CancellationError` for a task cancelled while it waited its
+/// turn; a task cancelled while Codex runs ends that call. Formatting and reflection show the source only.
+public final class Credentials: CredentialSource, @unchecked Sendable, CustomStringConvertible, CustomReflectable {
     static let backoffStart: TimeInterval = 60
     static let backoffMax: TimeInterval = 15 * 60
 
@@ -117,27 +129,37 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     // State, touched only on `queue`.
     private var current: Token?
     private var refreshable = false
+    /// The bearer a provider last refused and no refresh has renewed since: it is not handed out again until a
+    /// refresh succeeds or the file holds another token.
+    private var refused: String?
     private var backoff: TimeInterval = 0
     private var retryAt: Date?
     private var latest = CodexAuthInfo()
-    /// Asks for a refreshed token; ``refreshCodex()``, replaced only by tests.
+    /// Counts successful refreshes; read off the queue. A caller that refused a token while a refresh was running
+    /// takes that refresh's result instead of starting another, even when Codex returned the same bearer.
+    private let refreshes = Counter()
+    /// Asks for a refreshed token; ``refreshCodex(_:)``, replaced only by tests.
     var refresher: (() throws -> Token)?
 
     /// Validates `cfg`; the first use fetches.
     public init(_ cfg: CodexAuthConfiguration) throws {
-        guard cfg.margin > 0, cfg.timeout > 0 else {
-            throw CodexAuthConfigurationError("codexauth: margin and timeout are required")
+        guard cfg.margin > 0, cfg.timeout > 0, cfg.margin.isFinite, cfg.timeout.isFinite else {
+            throw CodexAuthConfigurationError("codexauth: margin and timeout are required, finite and positive")
         }
         self.cfg = cfg
         env = cfg.environment ?? ProcessInfo.processInfo.environment
         home = cfg.home ?? NSHomeDirectory()
-        let ch = cfg.codexHome ?? env["CODEX_HOME"]
+        // As in Go: an empty explicit home is no choice, so the inherited CODEX_HOME applies to the child and the
+        // file alike.
+        let explicit = (cfg.codexHome ?? "").isEmpty ? nil : cfg.codexHome
+        let ch = explicit ?? env["CODEX_HOME"]
         codexHome = (ch?.isEmpty ?? true) ? nil : ch
         path = env["PATH"] ?? ""
         candidates = cfg.candidates ?? CodexExecutable.candidates(home: home)
     }
 
     public var description: String { "Credentials{\(cfg.source.rawValue)}" }
+    public var customMirror: Mirror { Mirror(self, children: ["source": cfg.source.rawValue], displayStyle: .class) }
 
     /// What the latest fetch found.
     public func info() async -> CodexAuthInfo {
@@ -147,18 +169,39 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     /// A fresh bearer, fetching on first use and refreshing when less than the margin remains. A token from auth.json
     /// is re-read rather than refreshed.
     public func token() async throws -> Token {
-        try await run { try self.tokenLocked() }
+        try await run { op in try self.tokenLocked(op) }
     }
 
-    /// Called when a request made with `stale` was refused as auth-expired. When `stale` was already replaced, the
-    /// replacement is returned without a refresh; otherwise a refresh runs, within the backoff.
+    /// Called when a request made with `stale` was refused as auth-expired. When `stale` was already replaced by a
+    /// fresh token, or a refresh completed while this caller waited, that token is returned without another refresh;
+    /// otherwise a refresh runs, within the backoff. Until a refresh succeeds, ``token()`` does not hand out `stale`.
     public func refresh(after stale: Token) async throws -> Token {
-        try await run { try self.refreshAfterLocked(stale) }
+        let seen = refreshes.value
+        return try await run { op in try self.refreshAfterLocked(stale, seen: seen, op) }
     }
 
-    private func run<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { cont in
-            queue.async { cont.resume(with: Result { try body() }) }
+    /// Runs `body` on the queue. A task cancelled while it waits its turn is released at once and its body never
+    /// runs; one cancelled while the body runs ends the Codex call in progress.
+    private func run<T: Sendable>(_ body: @escaping @Sendable (Operation) throws -> T) async throws -> T {
+        let op = Operation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+                guard op.install({ cont.resume(with: $0.map { $0 as! T }) }) else { return }
+                queue.async {
+                    guard op.begin() else { return }
+                    op.finish(Result { try body(op) })
+                }
+            }
+        } onCancel: {
+            op.cancel()
+        }
+    }
+
+    /// Installs `tok` as if a fetch had returned it; for tests, with ``refresher``.
+    func seedForTesting(_ tok: Token, refreshable: Bool) {
+        queue.sync {
+            current = tok
+            self.refreshable = refreshable
         }
     }
 
@@ -169,54 +212,64 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
         return expires.timeIntervalSince(cfg.now()) >= cfg.margin
     }
 
-    private func tokenLocked() throws -> Token {
-        if current == nil || (!refreshable && !fresh(current!)) { try fetchLocked() }
-        if fresh(current!) { return current! }
-        return try refreshLocked()
+    /// Whether `t` may be handed out: fresh, and not the bearer a provider refused.
+    private func usable(_ t: Token) -> Bool { fresh(t) && t.bearer != refused }
+
+    private func tokenLocked(_ op: Operation) throws -> Token {
+        if current == nil || (!refreshable && !usable(current!)) { try fetchLocked(op) }
+        if usable(current!) { return current! }
+        return try refreshLocked(op)
     }
 
-    private func refreshAfterLocked(_ stale: Token) throws -> Token {
-        if let current, current.bearer != stale.bearer { return current }
+    private func refreshAfterLocked(_ stale: Token, seen: Int, _ op: Operation) throws -> Token {
+        if let current, refreshes.value != seen, fresh(current) { return current }  // a refresh ran meanwhile
+        if let current, current.bearer != stale.bearer, usable(current) { return current }
+        refused = stale.bearer
         if current == nil || !refreshable {
-            try fetchLocked()
-            if current!.bearer != stale.bearer && fresh(current!) { return current! }
+            try fetchLocked(op)
+            if usable(current!) { return current! }
             if !refreshable {
                 throw CodexAuthError(
                     .expired, message: "auth.json holds the refused token, and the file source cannot refresh")
             }
         }
-        return try refreshLocked()
+        return try refreshLocked(op)
     }
 
-    private func refreshLocked() throws -> Token {
+    private func refreshLocked(_ op: Operation) throws -> Token {
         guard refreshable else {
             throw CodexAuthError(
                 .expired, message: "the token in auth.json is expiring, and the file source cannot refresh")
         }
-        let now = cfg.now()
-        if let retryAt, now < retryAt {
+        if let retryAt, cfg.now() < retryAt {
             throw CodexAuthError(.expired, message: "the last refresh failed; the next attempt waits for the backoff")
         }
         do {
-            let tok = try (refresher ?? refreshCodex)()
+            let tok = try (refresher ?? { try self.refreshCodex(op) })()
             guard fresh(tok) else {
                 throw CodexAuthConfigurationError("Codex returned a token that is still within the margin")
             }
             backoff = 0
             retryAt = nil
+            refused = nil
             current = tok
+            refreshes.increment()
             return tok
         } catch {
+            if op.isCancelled {
+                // The caller gave up; Codex did not fail, so no backoff is spent.
+                throw CodexAuthError(.expired, message: "the refresh was cancelled", cause: String(describing: error))
+            }
             backoff = backoff == 0 ? Self.backoffStart : min(2 * backoff, Self.backoffMax)
-            retryAt = now.addingTimeInterval(backoff)
+            retryAt = cfg.now().addingTimeInterval(backoff)  // from the failure, so a slow attempt keeps the wait
             throw CodexAuthError(
                 .expired, message: "the refresh did not renew the sign-in", cause: String(describing: error))
         }
     }
 
-    private func fetchLocked() throws {
+    private func fetchLocked(_ op: Operation) throws {
         do {
-            let (tok, canRefresh) = try fetch()
+            let (tok, canRefresh) = try fetch(op)
             current = tok
             refreshable = canRefresh
         } catch var e as CodexAuthError {
@@ -225,7 +278,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
         }
     }
 
-    private func fetch() throws -> (Token, Bool) {
+    private func fetch(_ op: Operation) throws -> (Token, Bool) {
         latest = CodexAuthInfo(codexHome: codexHome ?? "")
         if cfg.source == .file { return (try fileToken(fallback: false), false) }
         guard let bin = CodexExecutable.resolve(explicit: cfg.executable, path: path, candidates: candidates) else {
@@ -236,7 +289,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             return (try fileToken(fallback: true), false)
         }
         latest.bin = bin
-        return try codexToken(bin)
+        return try codexToken(bin, op)
     }
 
     /// Reads auth.json. `fallback` marks the file source as the fallback for a missing executable: a missing or
@@ -249,22 +302,24 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
                 .noCodex, message: "no Codex executable resolved and auth.json is missing or unusable",
                 cause: String(describing: e))
         }
-        let file: String
-        do { file = try AuthFile.path(codexHome: codexHome, home: home, confine: cfg.confineCodexHome) } catch let e
+        let loc: AuthLocation
+        do { loc = try AuthFile.location(codexHome: codexHome, home: home, confine: cfg.confineCodexHome) } catch let e
             as CodexAuthError
         { throw fallbackState(e) }
+        defer { loc.close() }
         if let guardAccess = cfg.guardAccess {
-            do { try guardAccess(file) } catch {
+            do { try guardAccess(loc.path) } catch {
                 throw CodexAuthError(
                     .codexError, message: "reading auth.json was refused", cause: String(describing: error))
             }
         }
-        do { return try AuthFile.read(file, onRetry: cfg.onFileRetry) } catch let e as CodexAuthError {
+        do { return try AuthFile.read(loc, onRetry: cfg.onFileRetry) } catch let e as CodexAuthError {
             throw fallbackState(e)
         }
     }
 
-    private func start(_ bin: String) throws -> AppServerClient {
+    private func start(_ bin: String, _ op: Operation) throws -> AppServerClient {
+        if op.isCancelled { throw CodexAuthError(.codexError, message: "the call was cancelled") }
         let client: AppServerClient
         do {
             client = try AppServerClient.start(
@@ -281,21 +336,22 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             client.close()
             throw CodexAuthError(.codexTooOld, codexVersion: version, message: "Codex is older than \(minimumCodexVersion)")
         }
+        op.attach(client)
         return client
     }
 
     /// Asks a fresh app-server child: metadata first, and the token only for a ChatGPT sign-in, so an API key is
     /// never requested.
-    private func codexToken(_ bin: String) throws -> (Token, Bool) {
+    private func codexToken(_ bin: String, _ op: Operation) throws -> (Token, Bool) {
         latest.source = .codex
-        let client = try start(bin)
+        let client = try start(bin, op)
         defer { client.close() }
         let meta: AuthStatus
         do { meta = try client.getAuthStatus(includeToken: false, refreshToken: false) } catch let e as AppServerError
             where e.rpcCode == AppServerError.methodNotFound
         {
             client.close()
-            return (try storeFallback(bin), false)
+            return (try storeFallback(bin, op), false)
         } catch {
             throw CodexAuthError(
                 .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
@@ -309,8 +365,8 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
 
     /// Runs when Codex lacks getAuthStatus: a fresh child's config/read decides whether auth.json is Codex's
     /// authority. A running app-server keeps the store it started with, so the answer comes from a new child.
-    private func storeFallback(_ bin: String) throws -> Token {
-        let client = try start(bin)
+    private func storeFallback(_ bin: String, _ op: Operation) throws -> Token {
+        let client = try start(bin, op)
         let store: String
         do {
             store = try client.credentialsStore()
@@ -334,21 +390,24 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     }
 
     /// Asks a fresh child to refresh the sign-in.
-    private func refreshCodex() throws -> Token {
+    private func refreshCodex(_ op: Operation) throws -> Token {
         guard let bin = CodexExecutable.resolve(explicit: cfg.executable, path: path, candidates: candidates) else {
             throw CodexAuthError(.noCodex, message: "no Codex executable resolved")
         }
-        let client = try start(bin)
+        let client = try start(bin, op)
         defer { client.close() }
         return try Self.token(from: { try client.getAuthStatus(includeToken: true, refreshToken: true) })
     }
 
-    /// Checks the method again on a token reply: a changed method is classified like the metadata reply.
+    /// Checks the provider and the method again on a token reply: a change is classified like the metadata reply.
     private static func token(from call: () throws -> AuthStatus) throws -> Token {
         let full: AuthStatus
         do { full = try call() } catch {
             throw CodexAuthError(
                 .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
+        }
+        guard full.requiresOpenAIAuth else {
+            throw CodexAuthError(.providerWithoutOpenAIAuth, message: "the provider in force needs no OpenAI sign-in")
         }
         if let e = classifyMode(full.method) { throw e }
         guard !full.token.isEmpty else {
@@ -365,6 +424,84 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
         guard let first = rest.first, first != "." else { return "" }
         return String(rest)
     }
+}
+
+/// One call into ``Credentials``: whether it was cancelled, how to release its caller, and the Codex client it is
+/// using, so a cancellation can end that client's call.
+final class Operation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resume: ((Result<any Sendable, Error>) -> Void)?
+    private var cancelled = false
+    private var running = false
+    private var done = false
+    private var client: AppServerClient?
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+
+    /// Installs the continuation; false when the task was already cancelled, in which case it is resumed here.
+    func install(_ resume: @escaping (Result<any Sendable, Error>) -> Void) -> Bool {
+        let early = lock.withLock { () -> Bool in
+            if cancelled {
+                done = true
+                return true
+            }
+            self.resume = resume
+            return false
+        }
+        if early { resume(.failure(CancellationError())) }
+        return !early
+    }
+
+    /// Called on the queue before the body; false when the caller was released while waiting.
+    func begin() -> Bool {
+        lock.withLock {
+            guard !done, !cancelled else { return false }
+            running = true
+            return true
+        }
+    }
+
+    func finish<T: Sendable>(_ result: Result<T, Error>) {
+        let r = lock.withLock { () -> ((Result<any Sendable, Error>) -> Void)? in
+            guard !done else { return nil }
+            done = true
+            client = nil
+            defer { resume = nil }
+            return resume
+        }
+        r?(result.map { $0 as any Sendable })
+    }
+
+    func cancel() {
+        let (release, active) = lock.withLock { () -> (((Result<any Sendable, Error>) -> Void)?, AppServerClient?) in
+            cancelled = true
+            if !running && !done {
+                done = true
+                defer { resume = nil }
+                return (resume, nil)
+            }
+            return (nil, done ? nil : client)
+        }
+        release?(.failure(CancellationError()))
+        active?.cancel()
+    }
+
+    /// The client the body now uses; cancelled at once when the operation already was.
+    func attach(_ c: AppServerClient) {
+        let cancelNow = lock.withLock { () -> Bool in
+            client = c
+            return cancelled
+        }
+        if cancelNow { c.cancel() }
+    }
+}
+
+/// A counter read from any thread.
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var value: Int { lock.withLock { n } }
+    func increment() { lock.withLock { n += 1 } }
 }
 
 /// The outcome of a probe. It never holds the token in a printable field.

@@ -52,6 +52,15 @@ type Config struct {
 	Guard func(bin string) error
 }
 
+// String names the executable only: Env holds the inherited environment, which may hold credentials.
+func (cfg Config) String() string { return "codexapp.Config{" + cfg.Bin + "}" }
+
+// GoString redacts like String.
+func (cfg Config) GoString() string { return cfg.String() }
+
+// Format redacts like String for every verb.
+func (cfg Config) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(cfg.String())) }
+
 // RPCError is a JSON-RPC error reply. Message is scrubbed and kept out of Error(), because a misbehaving child may
 // put a credential there.
 type RPCError struct {
@@ -67,7 +76,7 @@ func (e *RPCError) Error() string { return fmt.Sprintf("JSON-RPC error %d", e.Co
 // Client is one app-server child, alive until Close.
 type Client struct {
 	cmd     *exec.Cmd
-	stdin   io.WriteCloser
+	stdin   *os.File // our write end, pollable, so every write has a deadline and Close interrupts it
 	stdout  *os.File // our read ends; closed by Close so abandoned readers end
 	stderrR *os.File
 	timeout time.Duration
@@ -147,17 +156,18 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		closeAll(outR, outW)
 		return nil, codexError("Codex app-server could not be started", err)
 	}
-	cmd.Stdout, cmd.Stderr = outW, errW
-	stdin, err := cmd.StdinPipe()
+	inR, inW, err := os.Pipe()
 	if err != nil {
 		closeAll(outR, outW, errR, errW)
 		return nil, codexError("Codex app-server could not be started", err)
 	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
 	if err := cmd.Start(); err != nil {
-		closeAll(outR, outW, errR, errW)
+		closeAll(inR, inW, outR, outW, errR, errW)
 		return nil, codexError("Codex app-server could not be started", err)
 	}
-	closeAll(outW, errW) // the child holds its copies
+	closeAll(inR, outW, errW) // the child holds its copies
+	stdin := inW
 	c.cmd, c.stdin, c.stdout, c.stderrR = cmd, stdin, outR, errR
 
 	go c.readLoop(outR)
@@ -175,15 +185,18 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		"clientInfo":   map[string]any{"name": name, "version": "0"},
 		"capabilities": map[string]any{},
 	}
-	var hello struct {
-		UserAgent string `json:"userAgent"`
-	}
+	var hello json.RawMessage
 	if err := c.Call(ctx, "initialize", init, &hello); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
-	c.agent = secret.Scrub(hello.UserAgent)
-	if err := c.write(map[string]any{"method": "initialized"}); err != nil {
+	agent, err := field[string](hello, "userAgent")
+	if err != nil {
+		_ = c.Close()
+		return nil, codexError("Codex app-server sent an unexpected initialize result", nil)
+	}
+	c.agent = secret.Scrub(agent)
+	if err := c.write(map[string]any{"method": "initialized"}, time.Now().Add(c.timeout)); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -247,7 +260,8 @@ func (c *Client) readLoop(r io.Reader) {
 
 // refuse answers a server request (an approval, for instance) with an error.
 func (c *Client) refuse(id json.RawMessage) {
-	_ = c.write(map[string]any{"id": id, "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}})
+	_ = c.write(map[string]any{"id": id, "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}},
+		time.Now().Add(c.timeout))
 }
 
 func (c *Client) deliver(id string, m wireMsg) {
@@ -277,14 +291,22 @@ func (c *Client) fail(err error) {
 	c.mu.Unlock()
 }
 
-func (c *Client) write(v any) error {
+// write sends one message, giving up at deadline: a child that stops reading cannot hold a call, or the reader that
+// refuses a server request, past its timeout. Close interrupts a write in progress.
+func (c *Client) write(v any, deadline time.Time) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("codexapp: encode: %w", err)
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := c.stdin.SetWriteDeadline(deadline); err != nil {
+		return codexError("Codex app-server is not accepting requests", nil)
+	}
 	if _, err := c.stdin.Write(append(b, '\n')); err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return codexError("Codex app-server did not accept a request within "+c.timeout.String(), nil)
+		}
 		return codexError("Codex app-server is not accepting requests", nil)
 	}
 	return nil
@@ -316,7 +338,8 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	if params == nil {
 		params = map[string]any{}
 	}
-	if err := c.write(map[string]any{"id": id, "method": method, "params": params}); err != nil {
+	deadline, _ := ctx.Deadline() // set: ctx carries the per-call timeout
+	if err := c.write(map[string]any{"id": id, "method": method, "params": params}, deadline); err != nil {
 		return err
 	}
 	select {
@@ -325,7 +348,7 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 			return codexError("Codex app-server rejected "+method, resp.err)
 		}
 		if out != nil {
-			if err := json.Unmarshal(resp.result, out); err != nil {
+			if err := json.Unmarshal(resp.result, out); err != nil { // an absent result is an error too
 				return codexError("Codex app-server sent an unexpected "+method+" result", nil)
 			}
 		}
@@ -343,22 +366,20 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	}
 }
 
-// Close ends the child: stdin closed, SIGTERM to its process group, SIGKILL to the group after 2 s. It returns within
-// grace + 1 s even when a descendant outside the group still holds the pipes: our read ends are closed and the
-// readers abandoned. Safe to call more than once.
+// Close ends the child: stdin closed, SIGTERM to its process group, SIGKILL to the group after 2 s when the child
+// or any other member of its group is still alive. It returns within grace + 1 s even when a descendant outside the
+// group still holds the pipes: our read ends are closed and the readers abandoned. Safe to call more than once.
 func (c *Client) Close() error {
 	c.closeMu.Do(func() {
 		_ = c.stdin.Close()
-		pgid := -c.cmd.Process.Pid
-		_ = syscall.Kill(pgid, syscall.SIGTERM)
-		select {
-		case <-c.exited:
-		case <-time.After(killGrace):
-			_ = syscall.Kill(pgid, syscall.SIGKILL)
+		pid := c.cmd.Process.Pid
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		if !c.waitGroup(pid, time.Now().Add(killGrace)) {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
 			select {
 			case <-c.exited:
 			case <-time.After(reapGrace):
-				c.logger.Debug("codex app-server was not reaped within the grace; abandoning it", "pid", c.cmd.Process.Pid)
+				c.logger.Debug("codex app-server was not reaped within the grace; abandoning it", "pid", pid)
 			}
 		}
 		closeAll(c.stdout, c.stderrR)
@@ -367,6 +388,34 @@ func (c *Client) Close() error {
 		}
 	})
 	return nil
+}
+
+// waitGroup reports whether the child was reaped and no other member of its process group remains before deadline.
+// A group outlives its leader while a member lives, so the group ID still names our group while kill(-pid, 0)
+// succeeds.
+func (c *Client) waitGroup(pid int, deadline time.Time) bool {
+	for {
+		select {
+		case <-c.exited:
+			if !groupAlive(pid) {
+				return true
+			}
+		default:
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			return false
+		}
+		select {
+		case <-c.exited:
+		case <-time.After(min(left, 20*time.Millisecond)):
+		}
+	}
+}
+
+func groupAlive(pgid int) bool {
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // boundedBuffer keeps the first stderrCap bytes and discards the rest.

@@ -806,5 +806,123 @@
   "expect": {
    "state": "codex-error"
   }
+ },
+ {
+  "id": "auth-file-exp-overflow",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjkyMjMzNzIwMzY4NTQ3NzU4MDh9.c2ln"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjkyMjMzNzIwMzY4NTQ3NzU4MDh9.c2ln",
+   "expiresAt": null
+  },
+  "note": "An exp beyond a signed 64-bit integer is not an expiry: unknown, never a negative time."
+ },
+ {
+  "id": "auth-file-exp-key-case",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "EXP": 1800000100
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "EXP": 1800000100
+    }
+   },
+   "expiresAt": null
+  },
+  "note": "Claim names are exact: EXP is not exp."
+ },
+ {
+  "id": "auth-file-access-token-key-case",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": null,
+      "ACCESS_TOKEN": "opaque-upper"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "opaque-upper"
+   ]
+  },
+  "note": "Keys are exact: ACCESS_TOKEN is not access_token."
+ },
+ {
+  "id": "auth-file-utf16",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "hex": "fffe7b00220074006f006b0065006e00730022003a007b0022006100630063006500730073005f0074006f006b0065006e0022003a0022006f00700061007100750065002d007500740066003100360022007d007d00"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "auth.json is UTF-8 JSON; Codex and Go reject UTF-16."
+ },
+ {
+  "id": "auth-file-utf8-bom",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "hex": "efbbbf7b22746f6b656e73223a7b226163636573735f746f6b656e223a226f70617175652d626f6d227d7d"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "A byte-order mark is not JSON."
  }
 ]

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // ErrNotFound reports that no Codex executable could be resolved.
@@ -89,18 +90,25 @@ func lookIn(dirs []string, name string) (string, bool) {
 	return "", false
 }
 
-// executable returns the absolute form of p when it is a regular file with an execute bit.
+// executable returns the absolute form of p when it is a regular file this process may execute: an execute bit for
+// another user only would stop the search at a file that cannot start.
 func executable(p string) (string, bool) {
+	if strings.ContainsRune(p, 0) {
+		return "", false
+	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", false
 	}
 	fi, err := os.Stat(abs)
-	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 || syscall.Access(abs, xOK) != nil {
 		return "", false
 	}
 	return abs, true
 }
+
+// xOK is access(2)'s X_OK.
+const xOK = 0x1
 
 // VersionLess reports whether dotted numeric version a is below b. Missing components count as zero.
 func VersionLess(a, b string) bool {

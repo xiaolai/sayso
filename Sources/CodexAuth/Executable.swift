@@ -17,9 +17,10 @@ public enum CodexExecutable {
     private static func nvmBins(home: String) -> [String] {
         let root = join(home, ".nvm/versions/node")
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: root) else { return [] }
+        // A folder itself, not a link to one, as Go's DirEntry.IsDir reports it.
         let versions = names.filter { name in
-            var isDir: ObjCBool = false
-            return FileManager.default.fileExists(atPath: join(root, name), isDirectory: &isDir) && isDir.boolValue
+            var st = stat()
+            return lstat(join(root, name), &st) == 0 && st.st_mode & S_IFMT == S_IFDIR
         }
         func bare(_ v: String) -> String { v.hasPrefix("v") ? String(v.dropFirst()) : v }
         return versions.sorted { a, b in
@@ -49,24 +50,49 @@ public enum CodexExecutable {
         return nil
     }
 
-    /// The absolute, lexically cleaned form of `p` when it is a regular file with an execute bit.
+    /// The absolute, lexically cleaned form of `p` when it is a regular file this process may execute: an execute
+    /// bit for another user only would stop the search at a file that cannot start. A NUL, which the system would
+    /// read as the end of the path, matches nothing.
     private static func executable(_ p: String) -> String? {
+        guard !p.contains("\0") else { return nil }
         let abs = clean(p.hasPrefix("/") ? p : join(FileManager.default.currentDirectoryPath, p))
         var st = stat()
-        guard stat(abs, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_mode & 0o111 != 0 else { return nil }
+        guard stat(abs, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_mode & 0o111 != 0, access(abs, X_OK) == 0
+        else { return nil }
         return abs
     }
 
-    /// Whether dotted numeric version `a` is below `b`. Missing or non-numeric components count as zero.
+    /// Whether dotted numeric version `a` is below `b`. Missing or non-numeric components count as zero; a component
+    /// too large for an integer saturates, as Go's strconv.Atoi does.
     public static func versionLess(_ a: String, _ b: String) -> Bool {
         let x = a.split(separator: ".", omittingEmptySubsequences: false)
         let y = b.split(separator: ".", omittingEmptySubsequences: false)
         for i in 0..<max(x.count, y.count) {
-            let p = i < x.count ? Int(x[i]) ?? 0 : 0
-            let q = i < y.count ? Int(y[i]) ?? 0 : 0
+            let p = i < x.count ? atoi(x[i]) : 0
+            let q = i < y.count ? atoi(y[i]) : 0
             if p != q { return p < q }
         }
         return false
+    }
+
+    /// Go's strconv.Atoi: an optional sign and decimal digits, saturating at the integer bounds; anything else is 0.
+    private static func atoi(_ s: Substring) -> Int {
+        var digits = Substring(s)
+        var negative = false
+        if let f = digits.first, f == "+" || f == "-" {
+            negative = f == "-"
+            digits = digits.dropFirst()
+        }
+        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return 0 }
+        var n = 0
+        for c in digits.utf8 {
+            let d = Int(c - 0x30)
+            let (m, o1) = n.multipliedReportingOverflow(by: 10)
+            let (r, o2) = negative ? m.subtractingReportingOverflow(d) : m.addingReportingOverflow(d)
+            if o1 || o2 { return negative ? Int.min : Int.max }
+            n = r
+        }
+        return n
     }
 
     /// The variables that override Codex's own authentication or its token endpoints (upstream

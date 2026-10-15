@@ -46,16 +46,18 @@ public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertibl
         case .codexError, .noCodex, .codexTooOld, .appServerAuthUnavailable: errorClass = .codexError
         default: errorClass = .authMode
         }
-        self.message = message
+        self.message = Secret.scrub(message)
         self.cause = Secret.scrub(cause)
     }
 
+    /// Scrubbed whole when formatted, so a field set after construction, and a secret registered since, are removed
+    /// too.
     public var description: String {
         var s = "codexauth: " + state.rawValue
         if !mode.isEmpty { s += " (mode \(mode))" }
         s += ": openai: \(errorClass.rawValue): \(message)"
-        if !cause.isEmpty { s += ": " + Secret.scrub(cause) }
-        return s
+        if !cause.isEmpty { s += ": " + cause }
+        return Secret.scrub(s)
     }
 
     /// The state an error carries: ready for nil, codex-error for an error from elsewhere.
@@ -81,16 +83,13 @@ func classifyMode(_ mode: String) -> CodexAuthError? {
     }
 }
 
-/// A reported mode made safe to print: scrubbed, printable (Go's unicode.IsPrint), at most 64 characters.
+/// A reported mode made safe to print: printable (Go's unicode.IsPrint), scrubbed, at most 64 characters. Filtering
+/// comes first: removing a character could join the pieces of a secret ("e\u{0}k_…") into one the scrubber
+/// recognises.
 func cleanMode(_ m: String) -> String {
-    var out = String.UnicodeScalarView()
-    var count = 0
-    for s in Secret.scrub(m).unicodeScalars where isPrintable(s) {
-        guard count < maxModeLength else { break }
-        out.append(s)
-        count += 1
-    }
-    return String(out)
+    var printable = String.UnicodeScalarView()
+    for s in m.unicodeScalars where isPrintable(s) { printable.append(s) }
+    return String(String(Secret.scrub(String(printable)).unicodeScalars.prefix(maxModeLength)))
 }
 
 private func isPrintable(_ s: Unicode.Scalar) -> Bool {

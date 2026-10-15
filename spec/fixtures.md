@@ -58,7 +58,7 @@ client starts one child per fetch or refresh. The scenario keys are documented a
 | `inheritedPath` | the `PATH` the caller inherits (default: `$binDir:/usr/bin:/bin`) |
 | `inheritedEnv` | extra inherited variables |
 | `codexHome` | `default` (unset; `$home/.codex`), `inside` (`$home/custom-codex`), `outside` (a folder outside `$home`), `symlink-outside` (`$home/link` → outside), `file-not-folder` (`$home/codex-file`, a file) |
-| `file` | `auth.json` in the `CODEX_HOME` in force: `{"kind": "regular", "json": …}`, `{"kind": "regular", "raw": "…"}`, `{"kind": "regular", "rawRepeat": {"text", "count"}}`, `{"kind": "missing"}`, `{"kind": "symlink", "json": …}` (a link to a file elsewhere in `$home`), `{"kind": "fifo"}`, `{"kind": "directory"}`; `padTo` pads `json` with trailing spaces to that many bytes |
+| `file` | `auth.json` in the `CODEX_HOME` in force: `{"kind": "regular", "json": …}`, `{"kind": "regular", "raw": "…"}`, `{"kind": "regular", "rawRepeat": {"text", "count"}}`, `{"kind": "regular", "hex": "…"}` (bytes), `{"kind": "missing"}`, `{"kind": "symlink", "json": …}` (a link to a file elsewhere in `$home`), `{"kind": "fifo"}`, `{"kind": "directory"}`; `padTo` pads `json` with trailing spaces to that many bytes |
 | `retry` | the content the file holds at the one re-read after a parse failure |
 | `timeoutMs` | the per-call app-server timeout |
 | `server` | the fake's scenario (top of `tools/fake-app-server.py`) |
@@ -75,7 +75,7 @@ client starts one child per fetch or refresh. The scenario keys are documented a
 | `requests` | the exact sequence of requests and notifications the fake received, across starts (the client's answers to server requests are not counted): `method`, `params` that must match exactly when given, `notification: true` for a message without `id` |
 | `envAbsent`, `envEquals`, `pathStartsWith` | the child's environment |
 | `binDir` | the folder the resolved executable is in |
-| `childrenExited` | no started child is alive when the probe returns |
+| `childrenExited` | no started child is alive when the probe returns, and no process the fake started in the child's group (`groupDescendant`) is alive a moment later, once its new parent has reaped it |
 | `closeWithinMs` | the probe, including closing the child, returns within this many milliseconds |
 | `serverRequestAnswered` | `error`: the server request got an error reply |
 | `refreshCalls` | `getAuthStatus` calls with `refreshToken: true` so far |

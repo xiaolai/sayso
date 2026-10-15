@@ -2,11 +2,14 @@ package codexapp
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeExec(t *testing.T, path string) {
@@ -128,5 +131,67 @@ func TestStartRefusals(t *testing.T) {
 	_, err := Start(t.Context(), Config{Bin: "/bin/false", Timeout: 1, Guard: func(string) error { return errors.New("not in tests") }})
 	if err == nil || !strings.Contains(err.Error(), "not in tests") {
 		t.Errorf("guard ignored: %v", err)
+	}
+}
+
+// A file whose only execute bit is for another class cannot start, so the search goes on past it.
+func TestResolveNeedsExecutePermissionForThisUser(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root may execute any file with an execute bit")
+	}
+	root := t.TempDir()
+	first, second := filepath.Join(root, "a", "codex"), filepath.Join(root, "b", "codex")
+	writeExec(t, first)
+	writeExec(t, second)
+	if err := os.Chmod(first, 0o641); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Resolve("", filepath.Dir(first)+":"+filepath.Dir(second), nil)
+	if err != nil || got != second {
+		t.Fatalf("resolved %q, %v; want %q", got, err, second)
+	}
+	if _, err := Resolve(second+"\x00suffix", "", nil); err == nil {
+		t.Fatal("a path with a NUL resolved")
+	}
+}
+
+// Formatting a Config never prints the environment it carries.
+func TestConfigRedactsEnvironment(t *testing.T) {
+	cfg := Config{Bin: "/b/codex", Env: []string{"OPENAI_API_KEY=canary-env-1"}}
+	for _, s := range []string{fmt.Sprintf("%v %+v %#v %s", cfg, cfg, cfg, cfg), fmt.Sprint(&cfg)} {
+		if strings.Contains(s, "canary") {
+			t.Fatalf("leaked: %s", s)
+		}
+	}
+}
+
+// A child that stops reading cannot hold a call past its timeout, nor Close past the grace.
+func TestCallTimesOutWhenTheChildStopsReading(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("needs python3")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "codex")
+	// Answers initialize, then never reads again.
+	body := "#!" + python + "\nimport sys, json, time\nm = json.loads(sys.stdin.readline())\n" +
+		"print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\ntime.sleep(30)\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Generous enough for a loaded machine to start Python and answer initialize.
+	c, err := Start(t.Context(), Config{Bin: script, Env: []string{"PATH=/usr/bin:/bin"}, Timeout: 3 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err = c.Call(t.Context(), "big", map[string]any{"pad": strings.Repeat("x", 4<<20)}, nil) // far beyond a pipe buffer
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("call returned %v after %v", err, time.Since(start))
+	}
+	start = time.Now()
+	_ = c.Close()
+	if d := time.Since(start); d > 4*time.Second {
+		t.Fatalf("close took %v", d)
 	}
 }

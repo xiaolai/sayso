@@ -182,3 +182,140 @@ func TestTokenHonoursContextWhileWaiting(t *testing.T) {
 		t.Fatal("Token returned while the lock was held")
 	}
 }
+
+// Callers that refused a token while a refresh ran take that refresh's result, even when Codex returned the same
+// bearer: one refresh, not one per caller.
+func TestRefreshAfterSharesARefreshThatReturnedTheSameBearer(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: time.Minute, Timeout: time.Second,
+		Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := secret.NewToken(jwt(now.Unix()+3600), time.Unix(now.Unix()+3600, 0), "", "test")
+	c.cur, c.refreshable = &same, true
+	var refreshes atomic.Int32
+	c.refresh = func(context.Context) (secret.Token, error) {
+		refreshes.Add(1)
+		time.Sleep(100 * time.Millisecond)
+		return same, nil
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if _, err := c.RefreshAfter(context.Background(), same); err != nil {
+				t.Errorf("RefreshAfter: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if n := refreshes.Load(); n != 1 {
+		t.Fatalf("%d refreshes, want 1", n)
+	}
+}
+
+// The backoff runs from the failure, so a refresh that took longer than the backoff does not allow an immediate retry.
+func TestBackoffRunsFromTheFailure(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: 10 * time.Minute, Timeout: time.Second,
+		Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := secret.NewToken(jwt(now.Unix()+60), time.Unix(now.Unix()+60, 0), "", "test")
+	c.cur, c.refreshable = &stale, true
+	calls := 0
+	c.refresh = func(context.Context) (secret.Token, error) {
+		calls++
+		now = now.Add(90 * time.Second) // a slow failure
+		return secret.Token{}, fmt.Errorf("offline")
+	}
+	_, _ = c.Token(context.Background())
+	now = now.Add(time.Second)
+	if _, err := c.Token(context.Background()); StateOf(err) != StateExpired || calls != 1 {
+		t.Fatalf("a call 1 s after a slow failure refreshed again (calls %d, %v)", calls, err)
+	}
+}
+
+// A refresh the caller cancelled is not a refresh failure: it spends no backoff.
+func TestCancelledRefreshSpendsNoBackoff(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: 10 * time.Minute, Timeout: time.Second,
+		Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := secret.NewToken(jwt(now.Unix()+60), time.Unix(now.Unix()+60, 0), "", "test")
+	c.cur, c.refreshable = &stale, true
+	ctx, cancel := context.WithCancel(context.Background())
+	c.refresh = func(ctx context.Context) (secret.Token, error) {
+		cancel()
+		return secret.Token{}, ctx.Err()
+	}
+	if _, err := c.Token(ctx); err == nil {
+		t.Fatal("a cancelled refresh succeeded")
+	}
+	if c.backoff != 0 || !c.retryAt.IsZero() {
+		t.Fatalf("a cancelled refresh set a backoff of %v", c.backoff)
+	}
+}
+
+// Formatting the credentials, the value as well as the pointer, or their Config never prints the environment.
+func TestFormattingNeverPrintsTheEnvironment(t *testing.T) {
+	c, err := New(Config{Source: SourceFile, Home: t.TempDir(), Env: []string{"OPENAI_API_KEY=canary-env-2"},
+		Margin: time.Minute, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{fmt.Sprintf("%v %+v %#v %s", *c, *c, *c, *c), fmt.Sprint(c), fmt.Sprintf("%+v %#v", c.cfg, c.cfg)} {
+		if strings.Contains(s, "canary") {
+			t.Fatalf("leaked: %s", s)
+		}
+	}
+}
+
+// Error text is scrubbed whole, so a Mode set by a caller cannot carry a secret out.
+func TestErrorScrubsItsMode(t *testing.T) {
+	secret.Register("canary-mode-3")
+	e := &Error{State: StateUnsupported, Mode: "canary-mode-3 ek_abc"}
+	if s := e.Error(); strings.Contains(s, "canary") || strings.Contains(s, "ek_abc") {
+		t.Fatalf("leaked: %s", s)
+	}
+	if got := cleanMode("e\x00k_canary4"); strings.Contains(got, "canary") {
+		t.Fatalf("a secret joined by filtering survived: %q", got)
+	}
+}
+
+// A CODEX_HOME swapped for a link after it was validated cannot redirect the read: the folder is read through the
+// descriptor opened when it was checked.
+func TestFileReadsThroughThePinnedFolder(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside, outside := filepath.Join(home, "codex"), filepath.Join(t.TempDir(), "elsewhere")
+	for _, d := range []string{inside, outside} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "auth.json"), []byte(`{"tokens":{"access_token":"outside-token"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loc, e := authFilePath(inside, home, home)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer loc.close()
+	// Swap the validated folder for a link outside the confinement.
+	if err := os.Rename(inside, inside+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, inside); err != nil {
+		t.Fatal(err)
+	}
+	tok, e := readAuthFile(loc, nil)
+	if e == nil && tok.Bearer() == "outside-token" {
+		t.Fatal("the read followed the swapped folder outside the confinement")
+	}
+}

@@ -24,6 +24,32 @@ def converse(scenario, messages, args=("-c", 'model_provider="openai"', "app-ser
 
 
 class Fake(unittest.TestCase):
+    def test_hold_after_eof_and_group_descendant(self):
+        import signal, time
+        with tempfile.TemporaryDirectory() as d:
+            sc, rec = pathlib.Path(d, "s.json"), pathlib.Path(d, "r.jsonl")
+            sc.write_text(json.dumps({"holdAfterEOF": True, "groupDescendant": True}))
+            env = dict(os.environ, SAYSO_FAKE_SCENARIO=str(sc), SAYSO_FAKE_RECORD=str(rec))
+            p = subprocess.Popen([sys.executable, "-I", str(FAKE)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                 env=env, start_new_session=True)
+            try:
+                p.stdin.close()
+                deadline = time.time() + 10
+                def recorded():
+                    return rec.exists() and any("groupDescendant" in l for l in rec.read_text().splitlines())
+                while time.time() < deadline and not recorded():
+                    time.sleep(0.05)
+                desc = [json.loads(l)["groupDescendant"] for l in rec.read_text().splitlines() if "groupDescendant" in l][0]
+                time.sleep(0.3)
+                self.assertIsNone(p.poll(), "the fake ended at stdin EOF")
+                self.assertEqual(os.getpgid(desc), p.pid)
+                os.killpg(p.pid, signal.SIGTERM)
+                time.sleep(0.3)
+                os.kill(desc, 0)  # still alive: it ignores SIGTERM
+            finally:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait(timeout=5)
+
     def test_initialize_and_jwt_substitution(self):
         scenario = {"byParams": {"getAuthStatus": [{"when": {"includeToken": True}, "steps": [{"result": {"authMethod": "chatgpt", "authToken": {"$jwt": {"exp": 5}}}}]}]}}
         p, out, _, rec = converse(scenario, [{"id": 1, "method": "initialize", "params": {}}, {"method": "initialized"},

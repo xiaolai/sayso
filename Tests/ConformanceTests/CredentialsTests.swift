@@ -155,11 +155,11 @@ final class CredentialWorld {
     }
 
     func cleanUp() {
-        // The descendant fixture leaves a sleeping process in its own session; end it with the case.
-        if let lines = try? recordLines() {
-            for line in lines {
-                if let pid = (line["descendant"] as? NSNumber)?.int32Value, pid > 0 { _ = kill(pid, SIGKILL) }
-            }
+        // What the fake started outlives a failing case; end it with the case, but only a process still in the group
+        // it was started in: a pid freed and reused is not ours to kill.
+        if let rec = try? read() {
+            for pid in rec.group where rec.pids.contains(getpgid(pid)) { _ = kill(pid, SIGKILL) }
+            for pid in rec.other where getpgid(pid) == pid { _ = kill(pid, SIGKILL) }
         }
         try? FileManager.default.removeItem(atPath: root)
     }
@@ -236,6 +236,9 @@ final class CredentialWorld {
         var spawns: [(argv: [Any], env: [String: String])] = []
         var requests: [[String: Any]] = []
         var pids: [Int32] = []
+        /// Processes the fake started in its own process group, and in a session of their own.
+        var group: [Int32] = []
+        var other: [Int32] = []
     }
 
     private func recordLines() throws -> [[String: Any]] {
@@ -256,6 +259,10 @@ final class CredentialWorld {
                 r.pids.append((line["pid"] as? NSNumber)?.int32Value ?? 0)
             } else if let req = line["req"] as? [String: Any] {
                 r.requests.append(req)
+            } else if let pid = (line["groupDescendant"] as? NSNumber)?.int32Value, pid > 0 {
+                r.group.append(pid)
+            } else if let pid = (line["descendant"] as? NSNumber)?.int32Value, pid > 0 {
+                r.other.append(pid)
             }
         }
         return r
@@ -313,6 +320,13 @@ final class CredentialWorld {
                 if got != subst("\(v)") { p.append("binDir differs") }
             case "childrenExited":
                 for pid in rec.pids where pid > 0 && kill(pid, 0) == 0 { p.append("child \(pid) still alive") }
+                // A member of the child's group is reparented when the child ends, so its new parent reaps it: allow
+                // it a moment to disappear after the signal that ended it.
+                for pid in rec.group {
+                    let deadline = Date().addingTimeInterval(1)
+                    while kill(pid, 0) == 0 && Date() < deadline { usleep(10_000) }
+                    if kill(pid, 0) == 0 { p.append("process \(pid) of the child's group still alive") }
+                }
             case "closeWithinMs":
                 let limit = ((v as? NSNumber)?.doubleValue ?? 0) / 1000
                 if elapsed > limit { p.append("took \(elapsed) s, limit \(limit) s") }
@@ -419,10 +433,22 @@ final class CredentialWorld {
         }
     }
 
-    /// The bytes a file object describes: `raw`, `rawRepeat`, or `json` (with `$jwt` substituted, compact, padded
-    /// with spaces to `padTo` bytes).
+    /// The bytes a file object describes: `raw`, `hex`, `rawRepeat`, or `json` (with `$jwt` substituted, compact,
+    /// padded with spaces to `padTo` bytes).
     static func content(_ f: [String: Any]) throws -> Data {
         if let raw = f["raw"] as? String { return Data(raw.utf8) }
+        if let hex = f["hex"] as? String {
+            let digits = Array(hex.utf8)
+            guard digits.count % 2 == 0 else { throw FixtureError("odd hex length") }
+            var out = Data()
+            for i in stride(from: 0, to: digits.count, by: 2) {
+                guard let b = UInt8(String(decoding: digits[i..<i + 2], as: UTF8.self), radix: 16) else {
+                    throw FixtureError("bad hex")
+                }
+                out.append(b)
+            }
+            return out
+        }
         if let rep = f["rawRepeat"] as? [String: Any] {
             return Data(String(repeating: rep["text"] as? String ?? "", count: (rep["count"] as? Int) ?? 0).utf8)
         }
