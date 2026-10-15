@@ -427,9 +427,20 @@ public final class AppServerClient: @unchecked Sendable {
         }
         var result: Result<Any, AppServerError> = .success(m["result"] ?? NSNull())
         if let e = m["error"], !(e is NSNull) {
+            // As in Go: a code that is not an integer, or a message that is not a string, makes the line malformed.
             guard let e = e as? [String: Any] else { return false }
-            let code = (e["code"] as? NSNumber).map(\.intValue) ?? 0
-            result = .failure(AppServerError("", rpcCode: code, rpcMessage: e["message"] as? String ?? ""))
+            var code = 0
+            if let raw = e["code"], !(raw is NSNull) {
+                guard let n = raw as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n)
+                else { return false }
+                code = n.intValue
+            }
+            var message = ""
+            if let raw = e["message"], !(raw is NSNull) {
+                guard let s = raw as? String else { return false }
+                message = s
+            }
+            result = .failure(AppServerError("", rpcCode: code, rpcMessage: message))
         }
         guard let n = id as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n) else {
             return true  // not one of ours
