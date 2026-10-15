@@ -1,0 +1,44 @@
+# HTTP and minting (`NET-01`, `NET-02`, `NET-05`)
+
+Component `mint`. Product `RealtimeConnection` (Swift), packages `openaihttp` and `realtime` (Go).
+Fixtures: `fixtures/mint/`.
+
+## Origin policy (`NET-01`)
+
+A request carrying `Authorization` is sent only to `https://api.openai.com`: scheme `https`, host `api.openai.com`,
+port empty or 443, no userinfo, no `Host` override. Anything else is refused before a connection is made, as class
+`internal` (a programming error). Redirects are never followed: a 3xx reply is `protocol`. The proxy comes from the
+environment. Tests reach a fake server only through an origin injected explicitly as a test origin.
+
+## Minting (`NET-02`)
+
+- `POST /v1/realtime/client_secrets`, `Authorization: Bearer <ChatGPT token>`, `Content-Type: application/json`.
+- Body: `{"session": <caller's session object>, "expires_after": {"anchor": "created_at", "seconds": <caller's
+  lifetime>}}`. The session shape is app policy; the package passes it through unchanged.
+- Reply: at most 1 MiB; JSON with `value`, a non-empty string of at most 4,096 UTF-8 bytes, and `expires_at`, an
+  integer (Unix seconds). Anything else is `protocol`. The secret is registered with the scrubber before it is
+  returned, with its expiry.
+- **`auth-expired` once.** On an `auth-expired` reply the minter asks the credential source to refresh after that
+  token ([credentials](credentials.md)) and retries once. A second `auth-expired` is returned as `auth-expired`.
+- Timeouts are required arguments (Mochi 45 s request / 90 s resource, Checkmate 20 / 25 s, recite 20 s).
+- Retry policy is not in the contract.
+
+## Classification (`NET-05`)
+
+| Reply | Class |
+|---|---|
+| 401 with error `code` `missing_scope` | `route-denied` |
+| 401 | `auth-expired` |
+| 403, 404 | `route-denied` |
+| 429 | `rate-limited` |
+| 500 and above | `server` |
+| other 4xx | `invalid-request` |
+| 1xx, 3xx | `protocol` |
+| a transport failure (DNS, TLS, refused, reset, timeout) | `network` |
+| cancelled by the caller | `cancelled` |
+
+The other classes are `auth-mode` and `codex-error` (credentials), `internal` (programming errors). Every error
+carries the HTTP status, the provider's `type`, `code` (a number is kept as its decimal string) and `param`, and the
+`x-request-id` header, all scrubbed. At most 64 KiB of an error body is read. The provider's free-text `message`
+is kept scrubbed for diagnostics and is never meant for display. Checkmate's model fallback decides on
+`status ∈ {400, 404, 422}` itself, from the status on the error.

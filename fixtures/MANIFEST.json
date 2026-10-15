@@ -1,0 +1,3579 @@
+{
+ "count": 589,
+ "fixtures": [
+  {
+   "id": "app-ready",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-env-hygiene",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-path-repair",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-not-signed-in",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-api-key",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-chatgptAuthTokens",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-headers",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-agentIdentity",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-personalAccessToken",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-bedrockApiKey",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-bedrockAccessKeys",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-futureMode",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-mode-long-and-hostile",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-provider-without-openai-auth",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-changed",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-null-token",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-empty-token",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-opaque-token",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-too-old",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-minimum-version",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-no-version",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-crash",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-read-only-home",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-slow",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-rpc-error-leaks",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-malformed-line",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-oversize-line",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-stderr-canary",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-server-request-refused",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-close-descendant",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-missing-store-file",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-missing-store-absent",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-missing-no-file",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-missing-store-keyring",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-missing-store-auto",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-method-missing-store-ephemeral",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-no-codex-file-fallback",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-no-codex-no-file",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-explicit-missing",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-candidate-local-bin",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-candidate-nvm-newest",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-on-margin",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-still-stale",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-error",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-backoff",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-unchanged-fresh",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-after-replaced",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-missing",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-missing-fallback",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-chatgpt-tokens-only",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-chatgpt-explicit-mode",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-null-key",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-key-beats-tokens",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-empty-key-still-key",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-key-only",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-apikey-mode",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-tokens-mode",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-unknown-mode",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-pat",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-bedrock-key",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-bedrock-keys",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-empty-access-token",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-no-access-token",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-not-object",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-not-json",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-torn-write",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-oversize-boundary",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-just-under-cap",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-symlink",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-fifo",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-directory",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-expired",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-within-margin",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-opaque-token",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-jwt-without-exp",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-codex-home-inside",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-codex-home-outside",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-codex-home-link-outside",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-codex-home-is-file",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "event-session-created",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-session-created-missing",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-created",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-created-missing",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-audio-delta",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-audio-delta-bad-base64",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-audio-delta-missing",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-transcript-delta",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done-completed",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done-failed",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done-cancelled",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done-no-status",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done-unknown-status",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-response-done-no-response",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-rate-limits",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-rate-limits-missing-remaining",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-error",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-error-numeric-code",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-error-missing-type",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-input-committed",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-transcription-delta",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-transcription-completed",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-transcription-failed",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-transcription-failed-missing-item",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-session-updated",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-response-output-item-added",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-response-output-item-done",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-response-content-part-added",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-response-content-part-done",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-response-output-audio-done",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-response-output-audio-transcript-done",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-conversation-item-added",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-conversation-item-created",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-conversation-item-done",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-input-audio-buffer-speech-started",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-input-audio-buffer-speech-stopped",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-input-audio-buffer-cleared",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-ignored-conversation-item-input-audio-transcription-segment",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-unknown",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-empty",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-null",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-truncated",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-no-type",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wrong-types",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-type-not-string",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-payload-not-named",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "mint-ok",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-missing-value",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-empty-value",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-value-too-long",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-value-at-cap",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-missing-expiry",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-not-json",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-reply-too-large",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-refresh-once",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-refused-twice",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-missing-scope",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-forbidden",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-not-found",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-rate-limited",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-server",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-unavailable",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-bad-request",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-unprocessable",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-numeric-code",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-non-json-error",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-redirect",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-error-message-scrubbed",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-secret-registered",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-origin-http",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-origin-other-host",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-origin-port",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-origin-userinfo",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "pcm-encode",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-decode",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-decode-slice",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-decode-odd",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-decode-empty",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-wav-24k",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-wav-16k",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-rate",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-riff-size",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-data-size",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-stereo",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-odd",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-empty",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-over-cap",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-at-cap",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-not-riff",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible-short",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible-quiet",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible-negative",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible-punctuation",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible-han",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-plausible-empty-script",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "said-001",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-002",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-003",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-004",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-005",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-006",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-007",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-008",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-009",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-010",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-011",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-012",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-013",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-014",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-015",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-016",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-017",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-018",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-019",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-020",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-021",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-022",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-023",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-024",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-025",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-026",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-027",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-028",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-029",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-030",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-031",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-032",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-033",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-034",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-035",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-036",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-037",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-038",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-039",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-040",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-041",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-042",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-043",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-044",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-045",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-046",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-047",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-048",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-049",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-050",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-051",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-052",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-053",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:th"
+   ]
+  },
+  {
+   "id": "said-054",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:ja"
+   ]
+  },
+  {
+   "id": "said-055",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:ko"
+   ]
+  },
+  {
+   "id": "said-056",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-057",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-058",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-059",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-060",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-061",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-062",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "said-063",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:hi"
+   ]
+  },
+  {
+   "id": "said-064",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-065",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "said-066",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-067",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-068",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-069",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-070",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-071",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-072",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-073",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-074",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-075",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-076",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-077",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-078",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-079",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-080",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-081",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-082",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-083",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-084",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-085",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-086",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-087",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-088",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-089",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-090",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-091",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-092",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-093",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-094",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-095",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-096",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-097",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-098",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-099",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-100",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-101",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-102",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-103",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-104",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-105",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-106",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-107",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-108",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-109",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-110",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-111",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-112",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-113",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-114",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-115",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-116",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-117",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-118",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-119",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-120",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-121",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-122",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-123",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-124",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-125",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-126",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "said-127",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-apostrophe",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-letters-number",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-its-s",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-its-code",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-st-case",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-oh-letter",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-year-boundary",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-hyphen-year",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-d2",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "attack-literal-empty",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-negative-hyphen",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-oh-letter2",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-scale-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "attack-leading-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "delta10-sign-de",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "delta10-decimal-fr",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "delta10-fraction-de",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "delta10-time-ja",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "delta10-same-de",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-zwsp",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-apostrophe-ms",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-apostrophe-mr",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-apostrophe-ms-2",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-letter-ms",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-de-group-decimal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
+  },
+  {
+   "id": "r4-hi-group-decimal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-fr-point",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "r4-fr-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-de-colon",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-de-slash",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-multi-sign",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-apostrophe-sign",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-fr-unspecified",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-fr-specified",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-fr-und",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-en-upper",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-pt-underscore",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-tr-case",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-tr-case-reject",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-tr-dotted",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-tr-decomposed",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-az-case",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-thai-mark",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-thai-spacing",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-lao-mark",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-khmer-mark",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-myanmar-mark",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-cap-at",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-cap-above",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-cap-normalize",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-han-idiom",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-han-idiom-hant",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-han-idiom-unspecified",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-jp-word-ms",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-ms-unit",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-zh-hant-simple",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r4-cache-fraction",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-lower-dr-duplicate",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-lower-ms-duplicate",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-lower-mr-duplicate",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-lower-title-case",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-lower-title-case-mr",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-hyphen-number-empty",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-hyphen-number-fr2",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-billion-rich",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-colloq110-equal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-一万零五",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-十万",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-两千零二十",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-二十一万三千",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-zwsp-split",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-zwsp-joined",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-zwsp",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-literal-leading-gain",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-literal-fr-leading-comma",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-literal-scientific",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-literal-range-context",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-trillion-context",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-barezero-context",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-zero10",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-han-money110",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-zwsp-thai",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r5-title-with-vs",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-group-neg",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-group-percent",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-group-ordinal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-leading-decimal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-leading-percent-decimal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-long-decimal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-leading-ordinal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-caps",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-interjection",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-street",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-domain-title",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-han-repeat",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-han-leadingzero",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-han-invalid-gap",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-26",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-27",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-28",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-29",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-30",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-31",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-32",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-33",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-34",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-37",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-38",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-39",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-40",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-44",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-45",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-46",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-negative-comma-output",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-percent-comma-output",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-negative-leading-dot",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-comma-list",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-comma-no-space",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-hyphen-coop",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-hyphen-resign",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-singleletter-article",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-knight",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-queen",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-mp3",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-domain-chain",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-liang",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-liang-wan",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-ordinal-word",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-british-and",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-abbr-vscode",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-abbr-initials",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-abbr-drive",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-abbr-megasecond",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-minus-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-decimal-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-title-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-latin-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-operator-transcript",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-zero-interjection-fr",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-worded-passcode",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-hyphen-trailing-and",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-hyphen-trailing-and",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-email",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-zero-run",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-percent-spaced-script",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-percent-spaced-transcript",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-reg-percent-spacing",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-han-idiom-repeat",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-control-exponent",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-control-negative",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r6-control-decimal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-st-saint",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-st-saint-not-street",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-st-street-initial",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-dr-drive",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-dr-title",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-jr",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-vs-lower",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-vs-caps-false-reject",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-caps-novowel",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-symbols-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-symbols-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-symbols-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-percent-detached-script",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-percent-detached-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-percent-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-email-address",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-million-and-one",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-a-million-and-one",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-british-all-and-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-email-hyphen",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-initials",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-han-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-han-liang-from-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-han-colloquial-to-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-han-not-colloquial-wrong",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-han-double-wan",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-words-to-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-ordinal-second",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-neg-leading-dot-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-unicode-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-comma-words-list",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-comma-words-list-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-decimal-not-int",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-ampersand",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-a-t-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-hyphen-split",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-oh-no-comma-residual",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-api-letters",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-i-pronoun-not-letter",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-fr-decimal-comma",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g6-thousand-zero-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-mul",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-divide",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-minus-tight",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-added-times",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-inequality",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-neq",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-sharp",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-star",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-prime",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-superscript",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-han-range",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-han-range2",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-han-tenliang",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-han-22liang",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-han-invalid-reverse",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-caps-on",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-caps-no",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-caps-go",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-article-A",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-road-sentence",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-road-saint",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-number-and-scale",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-number-and-scale2",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-doctor",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-saint",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-sci",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-ibm",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-abc",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-list",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-group-big",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-han-one",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-reg-han10001000",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-han-control",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-literal-control",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-control-plus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-control-doctor",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-control-A",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-control-number",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r7-control-200",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-dash-spaced-spoken",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-dash-spaced-to",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-dash-tight-silent",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-ok-spelled",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-squared",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-power-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-star-named",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-emoji-unspoken",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-currency-kept",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-currency-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-han-single-digit",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-han-digit-string",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-han-liang-wan",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-han-liang-qian-after-wan",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-caps-codes-pair-joined",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-stop-now-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-letters-at-not-word",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "g7-road-same-sentence",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1006",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1001",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1011",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1012",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1013",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1014",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1008",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1000",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1002",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1003",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1005",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1007",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-1009",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-4000",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-3000",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-close-reason-scrubbed",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-rate-code",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-rate-type",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-quota-type",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-quota-code",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-missing-scope",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-invalid",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-server",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-future-type",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-session-expired",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-invalid-key",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-session-not-found",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-authentication",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-permission",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-numeric-code",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-error-message-scrubbed",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-size-over",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-size-at",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-size-mochi-over",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-size-mib-over",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  }
+ ]
+}

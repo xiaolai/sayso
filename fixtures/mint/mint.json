@@ -1,0 +1,1182 @@
+[
+ {
+  "id": "mint-ok",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "expiresAt": 1800000600,
+   "requests": 1,
+   "refreshCalls": 0,
+   "request": {
+    "method": "POST",
+    "path": "/v1/realtime/client_secrets",
+    "authorization": "Bearer $token",
+    "contentType": "application/json",
+    "body": {
+     "session": {
+      "type": "realtime",
+      "model": "gpt-realtime",
+      "output_modalities": [
+       "audio"
+      ]
+     },
+     "expires_after": {
+      "anchor": "created_at",
+      "seconds": 600
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "mint-missing-value",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "mint-empty-value",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "",
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "mint-value-too-long",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  },
+  "note": "4,097 bytes."
+ },
+ {
+  "id": "mint-value-at-cap",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "expiresAt": 1800000600
+  }
+ },
+ {
+  "id": "mint-missing-expiry",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret"
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "mint-not-json",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "body": "<html>ok</html>"
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "mint-reply-too-large",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "bodyPadTo": 1048577,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  },
+  "note": "A valid reply padded with trailing spaces past 1 MiB."
+ },
+ {
+  "id": "mint-refresh-once",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    },
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "requests": 2,
+   "refreshCalls": 1,
+   "secondAuthorization": "Bearer $refreshTo"
+  }
+ },
+ {
+  "id": "mint-refused-twice",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    },
+    {
+     "status": 401,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "auth-expired",
+   "requests": 2,
+   "refreshCalls": 1
+  }
+ },
+ {
+  "id": "mint-missing-scope",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message",
+       "code": "missing_scope"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "route-denied",
+   "status": 401,
+   "code": "missing_scope",
+   "refreshCalls": 0
+  }
+ },
+ {
+  "id": "mint-forbidden",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 403,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "route-denied",
+   "status": 403
+  }
+ },
+ {
+  "id": "mint-not-found",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 404,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message",
+       "type": "invalid_request_error",
+       "param": "session.model"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "route-denied",
+   "status": 404,
+   "param": "session.model"
+  }
+ },
+ {
+  "id": "mint-rate-limited",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 429,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message",
+       "code": "rate_limit_exceeded"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "rate-limited",
+   "status": 429
+  }
+ },
+ {
+  "id": "mint-server",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 500,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "server",
+   "status": 500
+  }
+ },
+ {
+  "id": "mint-unavailable",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 503,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "server",
+   "status": 503
+  }
+ },
+ {
+  "id": "mint-bad-request",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 400,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message",
+       "code": "invalid_value",
+       "type": "invalid_request_error",
+       "param": "session.voice"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "invalid-request",
+   "status": 400,
+   "code": "invalid_value",
+   "type": "invalid_request_error",
+   "param": "session.voice",
+   "requestId": "req_fixture"
+  }
+ },
+ {
+  "id": "mint-unprocessable",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 422,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "a provider message"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "invalid-request",
+   "status": 422
+  }
+ },
+ {
+  "id": "mint-numeric-code",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 400,
+     "json": {
+      "error": {
+       "code": 123,
+       "message": "m"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "invalid-request",
+   "code": "123"
+  }
+ },
+ {
+  "id": "mint-non-json-error",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 502,
+     "body": "Bad Gateway"
+    }
+   ]
+  },
+  "expect": {
+   "class": "server",
+   "status": 502
+  }
+ },
+ {
+  "id": "mint-redirect",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 302,
+     "headers": {
+      "location": "https://elsewhere.invalid/"
+     },
+     "body": ""
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol",
+   "requests": 1
+  },
+  "note": "Redirects are never followed."
+ },
+ {
+  "id": "mint-error-message-scrubbed",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 400,
+     "headers": {
+      "x-request-id": "req_fixture"
+     },
+     "json": {
+      "error": {
+       "message": "bad token eyJhbGciOi.eyJleHAiOjF9.c2ln and ek_canary_leak"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "invalid-request",
+   "notInDescription": [
+    "eyJhbGciOi.eyJleHAiOjF9.c2ln",
+    "ek_canary_leak"
+   ]
+  }
+ },
+ {
+  "id": "mint-secret-registered",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "scrubs": [
+    "ek_fixture_secret"
+   ]
+  },
+  "note": "After minting, the scrubber replaces the secret in any text."
+ },
+ {
+  "id": "mint-origin-http",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "http://api.openai.com",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "internal",
+   "requests": 0
+  },
+  "note": "Refused before a connection is made."
+ },
+ {
+  "id": "mint-origin-other-host",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "https://api.openai.com.evil.invalid",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "internal",
+   "requests": 0
+  },
+  "note": "Refused before a connection is made."
+ },
+ {
+  "id": "mint-origin-port",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "https://api.openai.com:8443",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "internal",
+   "requests": 0
+  },
+  "note": "Refused before a connection is made."
+ },
+ {
+  "id": "mint-origin-userinfo",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "https://user@api.openai.com",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "internal",
+   "requests": 0
+  },
+  "note": "Refused before a connection is made."
+ }
+]

@@ -1,0 +1,260 @@
+[
+ {
+  "id": "pcm-encode",
+  "component": "pcm16",
+  "op": "encode",
+  "input": [
+   0.0,
+   1.0,
+   -1.0,
+   0.5,
+   -0.5,
+   2.0,
+   -2.0,
+   "NaN",
+   "Infinity",
+   "-Infinity",
+   3e-05,
+   -3e-05,
+   0.999999
+  ],
+  "expectSamples": [
+   0,
+   32767,
+   -32767,
+   16383,
+   -16383,
+   32767,
+   -32767,
+   0,
+   0,
+   0,
+   0,
+   0,
+   32766
+  ],
+  "expectHex": "0000ff7f0180ff3f01c0ff7f018000000000000000000000fe7f",
+  "note": "NaN and infinities are strings because JSON has no such numbers; each becomes 0."
+ },
+ {
+  "id": "pcm-decode",
+  "component": "pcm16",
+  "op": "decode",
+  "hex": "00800100ff7f0000",
+  "expectSamples": [
+   -32768,
+   1,
+   32767,
+   0
+  ],
+  "note": "A float is the sample divided by 32768."
+ },
+ {
+  "id": "pcm-decode-slice",
+  "component": "pcm16",
+  "op": "decode",
+  "hex": "aa0100ff7f",
+  "sliceFrom": 1,
+  "expectSamples": [
+   1,
+   32767
+  ],
+  "note": "The buffer is a slice starting at byte 1 of a larger buffer; it decodes like a copy."
+ },
+ {
+  "id": "pcm-decode-odd",
+  "component": "pcm16",
+  "op": "decode",
+  "hex": "010002",
+  "expectSamples": [
+   1
+  ],
+  "note": "A trailing odd byte is ignored."
+ },
+ {
+  "id": "pcm-decode-empty",
+  "component": "pcm16",
+  "op": "decode",
+  "hex": "",
+  "expectSamples": []
+ },
+ {
+  "id": "pcm-wav-24k",
+  "component": "pcm16",
+  "op": "wav",
+  "rate": 24000,
+  "pcmHex": "0100ff7f",
+  "expectHex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f"
+ },
+ {
+  "id": "pcm-wav-16k",
+  "component": "pcm16",
+  "op": "wav",
+  "rate": 16000,
+  "pcmHex": "0100",
+  "expectHex": "524946462600000057415645666d74201000000001000100803e0000007d00000200100064617461020000000100"
+ },
+ {
+  "id": "pcm-valid-wav",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": true
+ },
+ {
+  "id": "pcm-valid-wav-rate",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100803e0000007d00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-riff-size",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946466300000057415645666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-data-size",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100064617461020000000100ff7f",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-stereo",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000200c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-odd",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462700000057415645666d74201000000001000100c05d000080bb0000020010006461746103000000010203",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-empty",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462400000057415645666d74201000000001000100c05d000080bb0000020010006461746100000000",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-over-cap",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 2,
+  "expect": false
+ },
+ {
+  "id": "pcm-valid-wav-at-cap",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 4,
+  "expect": true
+ },
+ {
+  "id": "pcm-valid-wav-not-riff",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946582800000057415645666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false
+ },
+ {
+  "id": "pcm-plausible",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 24000,
+   "value": 328
+  },
+  "script": "abcdefghijklmnopqrstuvwxy",
+  "expect": true,
+  "note": "25 letters need 1 s: 24,000 samples."
+ },
+ {
+  "id": "pcm-plausible-short",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 23999,
+   "value": 328
+  },
+  "script": "abcdefghijklmnopqrstuvwxy",
+  "expect": false
+ },
+ {
+  "id": "pcm-plausible-quiet",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 24000,
+   "value": 327
+  },
+  "script": "abcdefghijklmnopqrstuvwxy",
+  "expect": false,
+  "note": "327 is below -40 dBFS."
+ },
+ {
+  "id": "pcm-plausible-negative",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 24000,
+   "value": -328
+  },
+  "script": "abcdefghijklmnopqrstuvwxy",
+  "expect": true,
+  "note": "Magnitude, not sign."
+ },
+ {
+  "id": "pcm-plausible-punctuation",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 9600,
+   "value": 1000
+  },
+  "script": "Hello, world!",
+  "expect": true,
+  "note": "Ten letters need 0.4 s; punctuation and spaces are not letters."
+ },
+ {
+  "id": "pcm-plausible-han",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 2880,
+   "value": 1000
+  },
+  "script": "你好世界",
+  "expect": false,
+  "note": "Han characters are letters: four need 0.16 s, 3,840 samples; 2,880 is too few."
+ },
+ {
+  "id": "pcm-plausible-empty-script",
+  "component": "pcm16",
+  "op": "plausible",
+  "pcm": {
+   "samples": 1,
+   "value": 1000
+  },
+  "script": "",
+  "expect": true,
+  "note": "No letters need no time."
+ }
+]

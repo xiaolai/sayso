@@ -1,0 +1,792 @@
+[
+ {
+  "id": "auth-file-missing",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "missing"
+   }
+  },
+  "expect": {
+   "state": "no-sign-in-file"
+  }
+ },
+ {
+  "id": "auth-file-missing-fallback",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "fallback",
+   "codexHome": "default",
+   "file": {
+    "kind": "missing"
+   }
+  },
+  "expect": {
+   "state": "no-codex"
+  },
+  "note": "The file was only the fallback for a missing executable: the fix is to install Codex."
+ },
+ {
+  "id": "auth-file-chatgpt-tokens-only",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600
+  }
+ },
+ {
+  "id": "auth-file-chatgpt-explicit-mode",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": "chatgpt",
+     "OPENAI_API_KEY": "canary-key",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600
+  },
+  "note": "An explicit auth_mode wins over a present key."
+ },
+ {
+  "id": "auth-file-null-key",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "OPENAI_API_KEY": null,
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600
+  }
+ },
+ {
+  "id": "auth-file-key-beats-tokens",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "OPENAI_API_KEY": "canary-key",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "api-key"
+  },
+  "note": "Codex's resolved_mode: a present key wins when auth_mode is absent."
+ },
+ {
+  "id": "auth-file-empty-key-still-key",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "OPENAI_API_KEY": "",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "api-key"
+  },
+  "note": "Option<String> present and empty is Some(\"\") in Codex."
+ },
+ {
+  "id": "auth-file-key-only",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "OPENAI_API_KEY": "canary-key",
+     "tokens": null
+    }
+   }
+  },
+  "expect": {
+   "state": "api-key"
+  }
+ },
+ {
+  "id": "auth-file-apikey-mode",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": "apikey",
+     "OPENAI_API_KEY": "canary-key",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "api-key"
+  }
+ },
+ {
+  "id": "auth-file-tokens-mode",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": "chatgptAuthTokens",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "unsupported-auth",
+   "mode": "chatgptAuthTokens"
+  }
+ },
+ {
+  "id": "auth-file-unknown-mode",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": "futureMode",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "Codex cannot parse a file whose auth_mode it does not know."
+ },
+ {
+  "id": "auth-file-pat",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "personal_access_token": "canary-pat",
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "unsupported-auth",
+   "mode": "personalAccessToken"
+  }
+ },
+ {
+  "id": "auth-file-bedrock-key",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "bedrock_api_key": {
+      "api_key": "canary-bedrock"
+     },
+     "OPENAI_API_KEY": "canary-key"
+    }
+   }
+  },
+  "expect": {
+   "state": "unsupported-auth",
+   "mode": "bedrockApiKey"
+  },
+  "note": "Bedrock comes before the OpenAI key in resolved_mode."
+ },
+ {
+  "id": "auth-file-bedrock-keys",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "bedrock_access_keys": {
+      "access_key_id": "canary-id"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "unsupported-auth",
+   "mode": "bedrockAccessKeys"
+  }
+ },
+ {
+  "id": "auth-file-empty-access-token",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": ""
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-no-access-token",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {}
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-not-object",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "raw": "[1,2,3]"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-not-json",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "raw": "{\"tokens\":"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-torn-write",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "raw": "{\"tokens\":{\"acc"
+   },
+   "retry": {
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600
+  },
+  "note": "The first read sees a half-written file; the one re-read sees the finished file."
+ },
+ {
+  "id": "auth-file-oversize-boundary",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "rawRepeat": {
+     "text": " ",
+     "count": 65536
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "Exactly 64 KiB is refused: the file must be smaller."
+ },
+ {
+  "id": "auth-file-just-under-cap",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    },
+    "padTo": 65535
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600
+  },
+  "note": "Padded with trailing spaces to 65,535 bytes."
+ },
+ {
+  "id": "auth-file-symlink",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "symlink",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "O_NOFOLLOW: a planted link is never read."
+ },
+ {
+  "id": "auth-file-fifo",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "fifo"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "Must return without blocking on the FIFO."
+ },
+ {
+  "id": "auth-file-directory",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "directory"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-expired",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1799999940
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "expired"
+  }
+ },
+ {
+  "id": "auth-file-within-margin",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800000300
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "expired"
+  },
+  "note": "The file source cannot refresh, so a token inside the margin is expired."
+ },
+ {
+  "id": "auth-file-opaque-token",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "opaque-token"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "opaque-token",
+   "expiresAt": null
+  },
+  "note": "Not a JWT: unknown expiry; the provider decides."
+ },
+ {
+  "id": "auth-file-jwt-without-exp",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {}
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {}
+   },
+   "expiresAt": null
+  }
+ },
+ {
+  "id": "auth-file-codex-home-inside",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "inside",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600
+  }
+ },
+ {
+  "id": "auth-file-codex-home-outside",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "outside",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "CODEX_HOME outside the home folder is not trusted."
+ },
+ {
+  "id": "auth-file-codex-home-link-outside",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "symlink-outside",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "A link inside the home folder that resolves outside it is not trusted."
+ },
+ {
+  "id": "auth-file-codex-home-is-file",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "file-not-folder",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ }
+]

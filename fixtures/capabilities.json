@@ -1,0 +1,8 @@
+{
+ "components": ["credentials", "mint", "session", "pcm16", "said-guard"],
+ "implementations": {
+  "go": {"components": ["credentials", "mint", "session", "pcm16", "said-guard"], "capabilities": []},
+  "swift": {"components": ["credentials", "mint", "session", "pcm16", "said-guard"],
+            "capabilities": ["spellout:ar", "spellout:de", "spellout:es", "spellout:fr", "spellout:hi", "spellout:it", "spellout:ja", "spellout:ko", "spellout:pt"]}
+ }
+}

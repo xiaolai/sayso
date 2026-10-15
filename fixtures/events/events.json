@@ -1,0 +1,480 @@
+[
+ {
+  "id": "event-session-created",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"session.created\", \"session\": {\"type\": \"realtime\", \"model\": \"gpt-realtime\"}}",
+  "expect": {
+   "type": "session.created",
+   "sessionType": "realtime",
+   "model": "gpt-realtime"
+  }
+ },
+ {
+  "id": "event-session-created-missing",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"session.created\", \"session\": {}}",
+  "expect": {
+   "protocolError": "session.created"
+  }
+ },
+ {
+  "id": "event-response-created",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"resp_1\", \"metadata\": {\"chunk\": \"c1\"}}}",
+  "expect": {
+   "type": "response.created",
+   "responseId": "resp_1",
+   "metadata": {
+    "chunk": "c1"
+   }
+  }
+ },
+ {
+  "id": "event-response-created-missing",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {}}",
+  "expect": {
+   "protocolError": "response.created"
+  }
+ },
+ {
+  "id": "event-audio-delta",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio.delta\", \"response_id\": \"r\", \"delta\": \"AAEC\"}",
+  "expect": {
+   "type": "response.output_audio.delta",
+   "responseId": "r",
+   "pcmHex": "000102"
+  }
+ },
+ {
+  "id": "event-audio-delta-bad-base64",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio.delta\", \"response_id\": \"r\", \"delta\": \"%%%\"}",
+  "expect": {
+   "protocolError": "response.output_audio.delta"
+  }
+ },
+ {
+  "id": "event-audio-delta-missing",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio.delta\", \"delta\": \"AAEC\"}",
+  "expect": {
+   "protocolError": "response.output_audio.delta"
+  }
+ },
+ {
+  "id": "event-transcript-delta",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio_transcript.delta\", \"response_id\": \"r\", \"delta\": \"Hello\"}",
+  "expect": {
+   "type": "response.output_audio_transcript.delta",
+   "responseId": "r",
+   "delta": "Hello"
+  }
+ },
+ {
+  "id": "event-response-done",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"incomplete\", \"status_details\": {\"reason\": \"max_output_tokens\"}, \"usage\": {\"input_tokens\": 10, \"output_tokens\": 20, \"input_token_details\": {\"text_tokens\": 9}, \"output_token_details\": {\"text_tokens\": 5, \"audio_tokens\": 15}}, \"metadata\": {\"chunk\": \"c1\"}}}",
+  "expect": {
+   "type": "response.done",
+   "responseId": "r",
+   "status": "incomplete",
+   "statusReason": "max_output_tokens",
+   "usage": {
+    "inputTokens": 10,
+    "outputTokens": 20,
+    "inputTextTokens": 9,
+    "outputTextTokens": 5,
+    "outputAudioTokens": 15
+   },
+   "metadata": {
+    "chunk": "c1"
+   }
+  }
+ },
+ {
+  "id": "event-response-done-completed",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"completed\"}}",
+  "expect": {
+   "type": "response.done",
+   "responseId": "r",
+   "status": "completed"
+  }
+ },
+ {
+  "id": "event-response-done-failed",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"failed\"}}",
+  "expect": {
+   "type": "response.done",
+   "responseId": "r",
+   "status": "failed"
+  }
+ },
+ {
+  "id": "event-response-done-cancelled",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"cancelled\"}}",
+  "expect": {
+   "type": "response.done",
+   "responseId": "r",
+   "status": "cancelled"
+  }
+ },
+ {
+  "id": "event-response-done-no-status",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\"}}",
+  "expect": {
+   "protocolError": "response.done"
+  }
+ },
+ {
+  "id": "event-response-done-unknown-status",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"in_progress\"}}",
+  "expect": {
+   "protocolError": "response.done"
+  }
+ },
+ {
+  "id": "event-response-done-no-response",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\"}",
+  "expect": {
+   "protocolError": "response.done"
+  }
+ },
+ {
+  "id": "event-rate-limits",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"rate_limits.updated\", \"rate_limits\": [{\"name\": \"requests\", \"limit\": 100, \"remaining\": 0, \"reset_seconds\": 1.5}]}",
+  "expect": {
+   "type": "rate_limits.updated",
+   "limits": [
+    {
+     "name": "requests",
+     "limit": 100,
+     "remaining": 0,
+     "resetSeconds": 1.5
+    }
+   ],
+   "exhausted": true
+  }
+ },
+ {
+  "id": "event-rate-limits-missing-remaining",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"rate_limits.updated\", \"rate_limits\": [{\"name\": \"requests\", \"limit\": 100}]}",
+  "expect": {
+   "protocolError": "rate_limits.updated"
+  }
+ },
+ {
+  "id": "event-error",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"error\", \"error\": {\"type\": \"invalid_request_error\", \"code\": \"invalid_value\", \"param\": \"x\", \"message\": \"m\"}}",
+  "expect": {
+   "type": "error",
+   "class": "invalid-request",
+   "code": "invalid_value",
+   "param": "x"
+  }
+ },
+ {
+  "id": "event-error-numeric-code",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"error\", \"error\": {\"type\": \"server_error\", \"code\": 500}}",
+  "expect": {
+   "type": "error",
+   "class": "server",
+   "code": "500"
+  }
+ },
+ {
+  "id": "event-error-missing-type",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"error\", \"error\": {\"message\": \"m\"}}",
+  "expect": {
+   "protocolError": "error"
+  }
+ },
+ {
+  "id": "event-input-committed",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"input_audio_buffer.committed\", \"item_id\": \"item_1\"}",
+  "expect": {
+   "type": "input_audio_buffer.committed",
+   "itemId": "item_1"
+  }
+ },
+ {
+  "id": "event-transcription-delta",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.input_audio_transcription.delta\", \"item_id\": \"item_1\", \"delta\": \"hel\"}",
+  "expect": {
+   "type": "conversation.item.input_audio_transcription.delta",
+   "itemId": "item_1",
+   "delta": "hel"
+  }
+ },
+ {
+  "id": "event-transcription-completed",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.input_audio_transcription.completed\", \"item_id\": \"item_1\", \"transcript\": \"hello\"}",
+  "expect": {
+   "type": "conversation.item.input_audio_transcription.completed",
+   "itemId": "item_1",
+   "transcript": "hello"
+  }
+ },
+ {
+  "id": "event-transcription-failed",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.input_audio_transcription.failed\", \"item_id\": \"item_1\", \"error\": {\"type\": \"server_error\", \"message\": \"m\"}}",
+  "expect": {
+   "type": "conversation.item.input_audio_transcription.failed",
+   "itemId": "item_1",
+   "class": "server"
+  }
+ },
+ {
+  "id": "event-transcription-failed-missing-item",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.input_audio_transcription.failed\", \"error\": {\"type\": \"server_error\"}}",
+  "expect": {
+   "protocolError": "conversation.item.input_audio_transcription.failed"
+  }
+ },
+ {
+  "id": "event-ignored-session-updated",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"session.updated\"}",
+  "expect": {
+   "ignored": "session.updated"
+  }
+ },
+ {
+  "id": "event-ignored-response-output-item-added",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_item.added\"}",
+  "expect": {
+   "ignored": "response.output_item.added"
+  }
+ },
+ {
+  "id": "event-ignored-response-output-item-done",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_item.done\"}",
+  "expect": {
+   "ignored": "response.output_item.done"
+  }
+ },
+ {
+  "id": "event-ignored-response-content-part-added",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.content_part.added\"}",
+  "expect": {
+   "ignored": "response.content_part.added"
+  }
+ },
+ {
+  "id": "event-ignored-response-content-part-done",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.content_part.done\"}",
+  "expect": {
+   "ignored": "response.content_part.done"
+  }
+ },
+ {
+  "id": "event-ignored-response-output-audio-done",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio.done\"}",
+  "expect": {
+   "ignored": "response.output_audio.done"
+  }
+ },
+ {
+  "id": "event-ignored-response-output-audio-transcript-done",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio_transcript.done\"}",
+  "expect": {
+   "ignored": "response.output_audio_transcript.done"
+  }
+ },
+ {
+  "id": "event-ignored-conversation-item-added",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.added\"}",
+  "expect": {
+   "ignored": "conversation.item.added"
+  }
+ },
+ {
+  "id": "event-ignored-conversation-item-created",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.created\"}",
+  "expect": {
+   "ignored": "conversation.item.created"
+  }
+ },
+ {
+  "id": "event-ignored-conversation-item-done",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.done\"}",
+  "expect": {
+   "ignored": "conversation.item.done"
+  }
+ },
+ {
+  "id": "event-ignored-input-audio-buffer-speech-started",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"input_audio_buffer.speech_started\"}",
+  "expect": {
+   "ignored": "input_audio_buffer.speech_started"
+  }
+ },
+ {
+  "id": "event-ignored-input-audio-buffer-speech-stopped",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"input_audio_buffer.speech_stopped\"}",
+  "expect": {
+   "ignored": "input_audio_buffer.speech_stopped"
+  }
+ },
+ {
+  "id": "event-ignored-input-audio-buffer-cleared",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"input_audio_buffer.cleared\"}",
+  "expect": {
+   "ignored": "input_audio_buffer.cleared"
+  }
+ },
+ {
+  "id": "event-ignored-conversation-item-input-audio-transcription-segment",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"conversation.item.input_audio_transcription.segment\"}",
+  "expect": {
+   "ignored": "conversation.item.input_audio_transcription.segment"
+  }
+ },
+ {
+  "id": "event-unknown",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.future_thing\", \"x\": 1}",
+  "expect": {
+   "unknown": "response.future_thing"
+  }
+ },
+ {
+  "id": "event-empty",
+  "component": "session",
+  "kind": "event",
+  "raw": "",
+  "expect": {
+   "protocolError": null
+  }
+ },
+ {
+  "id": "event-null",
+  "component": "session",
+  "kind": "event",
+  "raw": "null",
+  "expect": {
+   "protocolError": null
+  }
+ },
+ {
+  "id": "event-truncated",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\":\"response.done\",\"resp",
+  "expect": {
+   "protocolError": null
+  }
+ },
+ {
+  "id": "event-no-type",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"event_id\": \"e\"}",
+  "expect": {
+   "protocolError": null
+  }
+ },
+ {
+  "id": "event-wrong-types",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.output_audio.delta\", \"response_id\": 5, \"delta\": [\"x\"]}",
+  "expect": {
+   "protocolError": null
+  },
+  "note": "A field of the wrong JSON type makes the event invalid."
+ },
+ {
+  "id": "event-type-not-string",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": 7}",
+  "expect": {
+   "protocolError": null
+  }
+ },
+ {
+  "id": "event-payload-not-named",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"weird ek_canary_payload\"}}",
+  "expect": {
+   "protocolError": "response.done",
+   "notInDescription": [
+    "ek_canary_payload"
+   ]
+  },
+  "note": "A protocol error names the event type, never the payload."
+ }
+]

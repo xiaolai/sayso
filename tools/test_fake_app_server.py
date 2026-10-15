@@ -1,0 +1,69 @@
+"""Tests for tools/fake-app-server.py, the scripted codex both suites run."""
+import base64
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+FAKE = ROOT / "tools" / "fake-app-server.py"
+
+
+def converse(scenario, messages, args=("-c", 'model_provider="openai"', "app-server", "--listen", "stdio://")):
+    with tempfile.TemporaryDirectory() as d:
+        sc, rec = pathlib.Path(d, "s.json"), pathlib.Path(d, "r.jsonl")
+        sc.write_text(json.dumps(scenario))
+        env = dict(os.environ, SAYSO_FAKE_SCENARIO=str(sc), SAYSO_FAKE_RECORD=str(rec))
+        p = subprocess.run([sys.executable, "-I", str(FAKE), *args], input="".join(json.dumps(m) + "\n" for m in messages),
+                           capture_output=True, text=True, env=env, timeout=20)
+        lines = [json.loads(l) for l in rec.read_text().splitlines()] if rec.exists() else []
+        return p, [json.loads(l) for l in p.stdout.splitlines() if l.startswith("{")], p.stdout, lines
+
+
+class Fake(unittest.TestCase):
+    def test_initialize_and_jwt_substitution(self):
+        scenario = {"byParams": {"getAuthStatus": [{"when": {"includeToken": True}, "steps": [{"result": {"authMethod": "chatgpt", "authToken": {"$jwt": {"exp": 5}}}}]}]}}
+        p, out, _, rec = converse(scenario, [{"id": 1, "method": "initialize", "params": {}}, {"method": "initialized"},
+                                             {"id": 2, "method": "getAuthStatus", "params": {"includeToken": True, "refreshToken": False}}])
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(out[0]["result"]["userAgent"], "codex_cli_rs/0.162.1 (Fake 1.0; test)")
+        token = out[1]["result"]["authToken"]
+        payload = token.split(".")[1]
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))), {"exp": 5})
+        self.assertEqual(rec[0]["spawn"]["argv"], ["-c", 'model_provider="openai"', "app-server", "--listen", "stdio://"])
+        self.assertEqual([r["req"]["method"] for r in rec[1:]], ["initialize", "initialized", "getAuthStatus"])
+
+    def test_unscripted_method_is_not_found(self):
+        _, out, _, _ = converse({}, [{"id": 1, "method": "config/read", "params": {}}])
+        self.assertEqual(out[0]["error"]["code"], -32601)
+
+    def test_steps_advance_and_last_repeats(self):
+        scenario = {"methods": {"m": [{"result": {"n": 1}}, {"error": {"code": -1, "message": "e"}}]}}
+        _, out, _, _ = converse(scenario, [{"id": i, "method": "m"} for i in range(3)])
+        self.assertEqual([("result" in o, "error" in o) for o in out], [(True, False), (False, True), (False, True)])
+
+    def test_server_request_comes_first(self):
+        scenario = {"serverRequest": {"id": "srv-1", "method": "execCommandApproval", "params": {}}, "methods": {"getAuthStatus": [{"result": {}}]}}
+        _, out, _, _ = converse(scenario, [{"id": 1, "method": "getAuthStatus", "params": {}}])
+        self.assertEqual(out[0]["method"], "execCommandApproval")
+        self.assertEqual(out[1]["id"], 1)
+
+    def test_exit_before_initialize(self):
+        p, out, _, rec = converse({"exitBeforeInitialize": 1}, [{"id": 1, "method": "initialize"}])
+        self.assertEqual((p.returncode, out), (1, []))
+        self.assertIn("spawn", rec[0])
+
+    def test_raw_line_bytes(self):
+        _, _, stdout, _ = converse({"methods": {"m": [{"rawLineBytes": 1000}]}}, [{"id": 1, "method": "m"}])
+        self.assertEqual(len(stdout.split("\n")[0]), 1000)
+
+    def test_no_version(self):
+        _, out, _, _ = converse({"version": None}, [{"id": 1, "method": "initialize"}])
+        self.assertEqual(out[0]["result"]["userAgent"], "codex_cli_rs")
+
+
+if __name__ == "__main__":
+    unittest.main()

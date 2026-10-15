@@ -1,0 +1,480 @@
+[
+ {
+  "id": "ws-close-1006",
+  "component": "session",
+  "kind": "close",
+  "code": 1006,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "network"
+  }
+ },
+ {
+  "id": "ws-close-1001",
+  "component": "session",
+  "kind": "close",
+  "code": 1001,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-1011",
+  "component": "session",
+  "kind": "close",
+  "code": 1011,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-1012",
+  "component": "session",
+  "kind": "close",
+  "code": 1012,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-1013",
+  "component": "session",
+  "kind": "close",
+  "code": 1013,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-1014",
+  "component": "session",
+  "kind": "close",
+  "code": 1014,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-1008",
+  "component": "session",
+  "kind": "close",
+  "code": 1008,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "invalid-request"
+  }
+ },
+ {
+  "id": "ws-close-1000",
+  "component": "session",
+  "kind": "close",
+  "code": 1000,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-close-1002",
+  "component": "session",
+  "kind": "close",
+  "code": 1002,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-close-1003",
+  "component": "session",
+  "kind": "close",
+  "code": 1003,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-close-1005",
+  "component": "session",
+  "kind": "close",
+  "code": 1005,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-close-1007",
+  "component": "session",
+  "kind": "close",
+  "code": 1007,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-close-1009",
+  "component": "session",
+  "kind": "close",
+  "code": 1009,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-close-4000",
+  "component": "session",
+  "kind": "close",
+  "code": 4000,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-3000",
+  "component": "session",
+  "kind": "close",
+  "code": 3000,
+  "reason": "fixture reason",
+  "expect": {
+   "class": "server"
+  }
+ },
+ {
+  "id": "ws-close-reason-scrubbed",
+  "component": "session",
+  "kind": "close",
+  "code": 1008,
+  "reason": "token ek_canary_close leaked",
+  "expect": {
+   "class": "invalid-request",
+   "notInDescription": [
+    "ek_canary_close"
+   ]
+  }
+ },
+ {
+  "id": "ws-error-rate-code",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "rate_limit_exceeded",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "rate-limited",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-rate-type",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "rate_limit_error",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "rate-limited",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-quota-type",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "insufficient_quota",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "rate-limited",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-quota-code",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "insufficient_quota",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "rate-limited",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-missing-scope",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "missing_scope",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "route-denied",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-invalid",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "invalid_value",
+    "param": "session.voice",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "invalid-request",
+   "fatal": false,
+   "code": "invalid_value",
+   "param": "session.voice"
+  }
+ },
+ {
+  "id": "ws-error-server",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "server_error",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "server",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-future-type",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "some_future_error",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "server",
+   "fatal": false
+  }
+ },
+ {
+  "id": "ws-error-session-expired",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "session_expired",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "invalid-request",
+   "fatal": true
+  }
+ },
+ {
+  "id": "ws-error-invalid-key",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "invalid-request",
+   "fatal": true
+  }
+ },
+ {
+  "id": "ws-error-session-not-found",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": "session_not_found",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "invalid-request",
+   "fatal": true
+  }
+ },
+ {
+  "id": "ws-error-authentication",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "authentication_error",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "server",
+   "fatal": true
+  }
+ },
+ {
+  "id": "ws-error-permission",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "permission_error",
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "server",
+   "fatal": true
+  }
+ },
+ {
+  "id": "ws-error-numeric-code",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "invalid_request_error",
+    "code": 42,
+    "message": "m"
+   }
+  },
+  "expect": {
+   "class": "invalid-request",
+   "fatal": false,
+   "code": "42"
+  }
+ },
+ {
+  "id": "ws-error-message-scrubbed",
+  "component": "session",
+  "kind": "error-event",
+  "event": {
+   "type": "error",
+   "event_id": "evt_1",
+   "error": {
+    "type": "server_error",
+    "message": "eyJx.eyJ5.eno and ek_canary_err"
+   }
+  },
+  "expect": {
+   "class": "server",
+   "fatal": false,
+   "notInDescription": [
+    "eyJx.eyJ5.eno",
+    "ek_canary_err"
+   ]
+  }
+ },
+ {
+  "id": "ws-size-over",
+  "component": "session",
+  "kind": "size",
+  "readLimit": 2000000,
+  "messageBytes": 2000001,
+  "note": "The message is a session.updated event padded with spaces to messageBytes; the check runs before decoding.",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-size-at",
+  "component": "session",
+  "kind": "size",
+  "readLimit": 2000000,
+  "messageBytes": 2000000,
+  "note": "The message is a session.updated event padded with spaces to messageBytes; the check runs before decoding.",
+  "expect": {
+   "class": null
+  }
+ },
+ {
+  "id": "ws-size-mochi-over",
+  "component": "session",
+  "kind": "size",
+  "readLimit": 4000000,
+  "messageBytes": 4000001,
+  "note": "The message is a session.updated event padded with spaces to messageBytes; the check runs before decoding.",
+  "expect": {
+   "class": "protocol"
+  }
+ },
+ {
+  "id": "ws-size-mib-over",
+  "component": "session",
+  "kind": "size",
+  "readLimit": 2097152,
+  "messageBytes": 2097153,
+  "note": "The message is a session.updated event padded with spaces to messageBytes; the check runs before decoding.",
+  "expect": {
+   "class": "protocol"
+  }
+ }
+]

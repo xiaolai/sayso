@@ -1,0 +1,18 @@
+name: swift
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build -Xswiftc -warnings-as-errors -Xswiftc -strict-concurrency=complete
+      - run: swift build -Xswiftc -warnings-as-errors -Xswiftc -swift-version -Xswiftc 6
+      - run: SAYSO_RESULTS="$RUNNER_TEMP/results-swift.json" swift test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-swift
+          path: ${{ runner.temp }}/results-swift.json
+          if-no-files-found: error

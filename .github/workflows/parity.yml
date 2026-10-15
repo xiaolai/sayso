@@ -1,0 +1,32 @@
+name: parity
+on:
+  workflow_run:
+    workflows: [go, swift]
+    types: [completed]
+  push:
+    paths: [fixtures/**, tools/**]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -I tools/manifest.py --check
+      - run: python3 -I -m unittest discover -s tools -p 'test_*.py'
+  parity:
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: results
+      - name: Both suites' results are required
+        run: test -f results/results-go/results-go.json && test -f results/results-swift/results-swift.json
+      - run: python3 -I tools/parity.py results/results-go/results-go.json results/results-swift/results-swift.json
