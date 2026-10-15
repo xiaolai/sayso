@@ -149,8 +149,8 @@ func TestCloseWithSilentPeerDropsTheConnection(t *testing.T) {
 	c.CloseIdleConnections()
 }
 
-// Unknown and ignored events are not delivered; unknown ones are counted.
-func TestUnknownCountedIgnoredSkipped(t *testing.T) {
+// Ignored and unknown events are delivered with their raw bytes; unknown ones are also counted.
+func TestUnknownCountedAndDelivered(t *testing.T) {
 	s := dialHandler(t, func(c *websocket.Conn) {
 		send(c, `{"type":"session.updated"}`)
 		send(c, `{"type":"response.future_thing"}`)
@@ -158,9 +158,22 @@ func TestUnknownCountedIgnoredSkipped(t *testing.T) {
 		send(c, `{"type":"response.done","response":{"id":"r","status":"completed"}}`)
 		_, _, _ = c.Read(context.Background())
 	}, nil)
-	ev, err := s.Next(context.Background())
-	if err != nil || ev.EventType() != realtime.TypeResponseDone {
-		t.Fatalf("got %v %v", ev, err)
+	want := []string{"session.updated", "response.future_thing", "response.future_thing", realtime.TypeResponseDone}
+	for i, typ := range want {
+		ev, err := s.Next(context.Background())
+		if err != nil || ev.EventType() != typ {
+			t.Fatalf("event %d: got %v %v, want %s", i, ev, err, typ)
+		}
+		switch e := ev.(type) {
+		case realtime.Ignored:
+			if len(e.Raw) == 0 {
+				t.Fatal("an ignored event lost its raw bytes")
+			}
+		case realtime.Unknown:
+			if len(e.Raw) == 0 {
+				t.Fatal("an unknown event lost its raw bytes")
+			}
+		}
 	}
 	if got := s.Unknown(); got["response.future_thing"] != 2 || len(got) != 1 {
 		t.Fatalf("unknown counts %v", got)

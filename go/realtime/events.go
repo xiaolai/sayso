@@ -135,8 +135,12 @@ type TranscriptionFailed struct {
 	Err    *openaihttp.Error
 }
 
-// Ignored is a documented event the package does not consume.
-type Ignored struct{ Type string }
+// Ignored is a documented event the package does not consume. Raw is the event as received, so a caller can read a
+// type the package does not decode.
+type Ignored struct {
+	Type string
+	Raw  []byte
+}
 
 // Unknown is an event type the package has never seen: API drift. Raw is the event as received; a Session counts
 // it and logs its type at debug.
@@ -300,7 +304,7 @@ func DecodeEvent(data []byte) (Event, error) {
 		return TranscriptionFailed{ItemID: *w.ItemID, Err: e}, nil
 	}
 	if ignoredTypes[typ] {
-		return Ignored{Type: typ}, nil
+		return Ignored{Type: typ, Raw: append([]byte(nil), data...)}, nil
 	}
 	return Unknown{Type: typ, Raw: append([]byte(nil), data...)}, nil
 }

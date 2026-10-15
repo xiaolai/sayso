@@ -53,7 +53,8 @@ is `session_expired`, `invalid_api_key` or `session_not_found`, or its type is `
 | `conversation.item.input_audio_transcription.failed` | `item_id`, `error.type` | item id, the classified error |
 
 A documented type the package does not consume (`session.updated`, `response.output_item.added`, …; the list is in
-the fixtures) is **ignored**. Any other type is **unknown**: passed through raw and counted, as API drift. Invalid
+the fixtures) is **ignored**. Any other type is **unknown**: passed through raw and counted, as API drift. A session delivers both, each with
+its raw bytes, so an app can read a type the package does not decode. Invalid
 JSON, a missing `type`, a missing required field, bad base64 or an unknown `response.status` is a `protocol` error
 that names the event type only, never the payload.
 

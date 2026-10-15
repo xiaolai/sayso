@@ -151,14 +151,8 @@ func (s *Session) readLoop() {
 			s.trace("server", data)
 		}
 		ev, err := DecodeEvent(data)
-		if err == nil {
-			if u, ok := ev.(Unknown); ok {
-				s.countUnknown(u.Type)
-				continue
-			}
-			if _, ok := ev.(Ignored); ok {
-				continue
-			}
+		if u, ok := ev.(Unknown); ok && err == nil {
+			s.countUnknown(u.Type) // delivered too: an app may read a type the package does not decode
 		}
 		select {
 		case s.events <- item{ev: ev, err: err}:
@@ -186,7 +180,7 @@ func (s *Session) Unknown() map[string]int {
 	return maps.Clone(s.unknown)
 }
 
-// Next returns the next consumed event. A protocol error for one malformed event does not end the session; a
+// Next returns the next event, ignored and unknown types included. A protocol error for one malformed event does not end the session; a
 // connection failure does, and is returned classified from then on. Cancelling ctx unblocks it with ctx.Err().
 func (s *Session) Next(ctx context.Context) (Event, error) {
 	select {
