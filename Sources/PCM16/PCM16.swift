@@ -47,9 +47,11 @@ public enum PCM {
     /// Converts PCM to floats, each sample / 32768. An odd trailing byte is ignored. It indexes from the buffer's own
     /// start, so a slice of a larger buffer decodes like a copy.
     public static func decode(_ pcm: Data) -> [Float] {
-        let bytes = [UInt8](pcm)
-        return (0..<bytes.count / 2).map { i in
-            Float(sample(bytes, at: 2 * i)) / 32768
+        // Read in place: a copy of the bytes would cost the recording's size again before the output.
+        pcm.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> [Float] in
+            (0..<raw.count / 2).map { i in
+                Float(Int16(bitPattern: UInt16(raw[2 * i]) | UInt16(raw[2 * i + 1]) << 8)) / 32768
+            }
         }
     }
 
@@ -92,7 +94,8 @@ public enum PCM {
     /// Whether `pcm` can be a reading of `script`: at least one second per 25 letters of the script, and some sample
     /// at least `minPeak` in magnitude.
     public static func isPlausible(_ pcm: Data, script: String) -> Bool {
-        let letters = script.unicodeScalars.filter(isLetter).count
+        var letters = 0
+        for r in script.unicodeScalars where isLetter(r) { letters += 1 }  // counted, not collected
         // bytes / (2 × sampleRate) ≥ letters / 25, in integers.
         if pcm.count * 25 < letters * 2 * sampleRate { return false }
         // Read in place: a copy of a long recording would cost its whole size before the first sample.
@@ -113,10 +116,6 @@ public enum PCM {
         case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter: return true
         default: return false
         }
-    }
-
-    private static func sample(_ b: [UInt8], at i: Int) -> Int16 {
-        Int16(bitPattern: UInt16(b[i]) | UInt16(b[i + 1]) << 8)
     }
 
     private static func append16(_ d: inout Data, _ v: UInt16) {

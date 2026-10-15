@@ -58,7 +58,8 @@ func Decode(pcm []byte) []float32 {
 // WAV returns pcm behind a canonical 44-byte mono 16-bit header for rate. A rate outside 1…MaxRate, or PCM longer
 // than MaxData bytes, is ErrWAVRange: the header would carry wrapped sizes.
 func WAV(pcm []byte, rate int) ([]byte, error) {
-	if rate < 1 || rate > MaxRate || int64(len(pcm)) > MaxData {
+	// On a 32-bit platform HeaderSize+len(pcm) can overflow int below MaxData, so the output length is checked too.
+	if rate < 1 || rate > MaxRate || int64(len(pcm)) > MaxData || len(pcm) > math.MaxInt-HeaderSize {
 		return nil, ErrWAVRange
 	}
 	h := header(len(pcm), rate)
