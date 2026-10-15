@@ -69,7 +69,7 @@ func (cfg Config) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(cfg.String
 // RPCError is a JSON-RPC error reply. Message is scrubbed and kept out of Error(), because a misbehaving child may
 // put a credential there.
 type RPCError struct {
-	Code    int
+	Code    int64 // a signed 64-bit integer, as the wire rules read it, on every platform
 	Message string
 }
 
@@ -127,7 +127,7 @@ type core struct {
 	pending    map[string]chan response
 	failure    error         // set once the child is unusable
 	dead       chan struct{} // closed when the reader stops
-	exited     chan struct{} // closed when the child is reaped
+	exited     chan struct{} // closed when the child has exited (on darwin it stays unreaped until Close)
 	closeMu    sync.Once
 }
 
@@ -207,7 +207,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		close(k.stderrDone)
 	}()
 	go func() {
-		_ = cmd.Wait()
+		waitExit(cmd)
 		close(k.exited)
 	}()
 	runtime.AddCleanup(c, func(k *core) { _ = k.close() }, k)
@@ -304,15 +304,15 @@ func (k *core) handle(line []byte) bool {
 	if err != nil {
 		return false
 	}
+	id, hasID := m.Field("id")
+	if !hasID {
+		return true // a notification, whatever else it holds
+	}
 	_, hasMethod, err := m.String("method")
 	if err != nil {
 		return false
 	}
-	id, hasID := m.Field("id")
-	switch {
-	case !hasID:
-		return true // a notification
-	case hasMethod:
+	if hasMethod {
 		k.refuse(id)
 		return true
 	}
@@ -328,7 +328,7 @@ func (k *core) handle(line []byte) bool {
 		if err != nil {
 			return false
 		}
-		resp.err = &RPCError{Code: int(code), Message: secret.Scrub(msg)}
+		resp.err = &RPCError{Code: code, Message: secret.Scrub(msg)}
 	} else if r, ok := m["result"]; ok {
 		resp.result, resp.hasResult = json.RawMessage(r.Raw()), true
 	}
@@ -343,7 +343,9 @@ func (k *core) handle(line []byte) bool {
 	return true
 }
 
-// refuse answers a server request (an approval, for instance) with an error.
+// refuse answers a server request (an approval, for instance) with an error, before the reader reads on, so the
+// answer precedes anything that follows. The write has the per-call deadline: a child that stops reading its input
+// while sending requests (filling the 64 KiB pipe takes hundreds of them) costs at most that wait, then codex-error.
 func (k *core) refuse(id wire.Node) {
 	msg := map[string]any{"id": json.RawMessage(id.Raw()), "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}}
 	_ = k.write(context.Background(), msg, time.Now().Add(k.timeout))
@@ -516,8 +518,8 @@ func (k *core) close() error {
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
-		// Once the child is reaped and its group is empty, the group ID may already name another process's group, so
-		// nothing is signalled.
+		// Once the child has exited and its group is empty nothing is signalled. On darwin the child is not reaped
+		// until the end of Close, so its group ID cannot name another group meanwhile; elsewhere it may, once reaped.
 		if !k.gone(pid) {
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
 		}
@@ -535,6 +537,18 @@ func (k *core) close() error {
 		case <-time.After(stderrDrain):
 		}
 		closeAll(k.stdout, k.stderrR)
+		if reservesGroup {
+			// The group is no longer signalled, so the child is reaped now, or once it exits if it was abandoned.
+			select {
+			case <-k.exited:
+				_ = k.cmd.Wait()
+			default:
+				go func() {
+					<-k.exited
+					_ = k.cmd.Wait()
+				}()
+			}
+		}
 		if n := k.stderr.Len(); n > 0 {
 			k.logger.Debug("codex app-server wrote to stderr", "bytes", n)
 		}
@@ -542,7 +556,7 @@ func (k *core) close() error {
 	return nil
 }
 
-// gone reports whether the child was reaped and no member of its process group remains.
+// gone reports whether the child has exited and no live member of its process group remains.
 func (k *core) gone(pid int) bool {
 	select {
 	case <-k.exited:
@@ -552,7 +566,7 @@ func (k *core) gone(pid int) bool {
 	}
 }
 
-// waitGroup reports whether the child was reaped and no other member of its process group remains before deadline.
+// waitGroup reports whether the child has exited and no live member of its process group remains before deadline.
 // A group outlives its leader while a member lives, so the group ID still names our group while kill(-pid, 0)
 // succeeds.
 func (k *core) waitGroup(pid int, deadline time.Time) bool {
@@ -572,11 +586,6 @@ func (k *core) waitGroup(pid int, deadline time.Time) bool {
 		case <-pause.C:
 		}
 	}
-}
-
-func groupAlive(pgid int) bool {
-	err := syscall.Kill(-pgid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // boundedBuffer keeps the first stderrCap bytes and discards the rest.

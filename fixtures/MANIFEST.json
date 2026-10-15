@@ -1,5 +1,5 @@
 {
- "count": 707,
+ "count": 715,
  "fixtures": [
   {
    "id": "app-ready",
@@ -404,6 +404,36 @@
    "requires": []
   },
   {
+   "id": "app-ignored-number-out-of-range",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-notification-method-not-string",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-version-combining-mark",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-token-call-method-missing",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-method-missing",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
    "id": "auth-file-missing",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
@@ -669,6 +699,24 @@
   },
   {
    "id": "auth-file-nested-65",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-kelvin-key",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-kelvin-mode",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-jwt-padded",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []

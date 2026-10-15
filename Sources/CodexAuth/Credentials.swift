@@ -213,7 +213,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     }
 
     /// Whether `t` may be handed out: fresh, and not the bearer a provider refused.
-    private func usable(_ t: Token) -> Bool { fresh(t) && t.bearer != refused }
+    private func usable(_ t: Token) -> Bool { fresh(t) && !sameBearer(t.bearer, refused) }
 
     private func tokenLocked(_ op: Operation) throws -> Token {
         if current == nil || (!refreshable && !usable(current!)) { try fetchLocked(op) }
@@ -224,7 +224,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     private func refreshAfterLocked(_ stale: Token, seen: Int, _ op: Operation) throws -> Token {
         // A refresh ran while this caller waited, and its token has not been refused since.
         if let current, refreshes.value != seen, usable(current) { return current }
-        if let current, current.bearer != stale.bearer {
+        if let current, !sameBearer(current.bearer, stale.bearer) {
             if usable(current) { return current }
             // stale is an older token. The current one is refused or within the margin already; recording stale
             // would forget that the current one was refused.
@@ -373,7 +373,17 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             throw CodexAuthError(.providerWithoutOpenAIAuth, message: "the provider in force needs no OpenAI sign-in")
         }
         if let e = classifyMode(meta.method) { throw e }
-        return (try Self.token(from: { try client.getAuthStatus(includeToken: true, refreshToken: false) }), true)
+        let full: AuthStatus
+        do { full = try client.getAuthStatus(includeToken: true, refreshToken: false) } catch let e as AppServerError
+            where e.rpcCode == AppServerError.methodNotFound
+        {
+            client.close()
+            return (try storeFallback(bin, op), false)
+        } catch {
+            throw CodexAuthError(
+                .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
+        }
+        return (try Self.token(from: { full }), true)
     }
 
     /// Runs when Codex lacks getAuthStatus: a fresh child's config/read decides whether auth.json is Codex's
@@ -409,7 +419,21 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
         }
         let client = try start(bin, op)
         defer { client.close() }
-        return try Self.token(from: { try client.getAuthStatus(includeToken: true, refreshToken: true) })
+        let full: AuthStatus
+        do { full = try client.getAuthStatus(includeToken: true, refreshToken: true) } catch let e as AppServerError
+            where e.rpcCode == AppServerError.methodNotFound
+        {
+            // Codex was updated to one without getAuthStatus since the token was fetched: the same config/read rule
+            // decides, and a file token cannot be refreshed again.
+            client.close()
+            let tok = try storeFallback(bin, op)
+            refreshable = false
+            return tok
+        } catch {
+            throw CodexAuthError(
+                .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
+        }
+        return try Self.token(from: { full })
     }
 
     /// Checks the provider and the method again on a token reply: a change is classified like the metadata reply.
@@ -431,11 +455,13 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
 
     /// The Codex version in an initialize userAgent such as "codex_cli_rs/0.162.1 (Mac OS 15.0; arm64)"; "" when
     /// there is none.
+    /// Read as bytes, as Go reads it: a digit followed by a combining mark is one Character but still a digit.
     public static func version(_ userAgent: String) -> String {
-        guard let slash = userAgent.firstIndex(of: "/") else { return "" }
-        let rest = userAgent[userAgent.index(after: slash)...].prefix { $0 == "." || ("0"..."9").contains($0) }
-        guard let first = rest.first, first != "." else { return "" }
-        return String(rest)
+        let bytes = Array(userAgent.utf8)
+        guard let slash = bytes.firstIndex(of: 0x2F) else { return "" }
+        let rest = bytes[(slash + 1)...].prefix { $0 == 0x2E || ($0 >= 0x30 && $0 <= 0x39) }
+        guard let first = rest.first, first != 0x2E else { return "" }
+        return String(decoding: rest, as: UTF8.self)
     }
 }
 
@@ -556,6 +582,15 @@ public struct CodexAuthStatus: Sendable {
             return CodexAuthStatus(
                 state: e.state, info: await c.info(), mode: e.mode, expires: nil, error: e, credentials: c)
         }
+    }
+}
+/// Whether two bearers are the same bytes, as Go compares them: Swift's `==` treats canonically equivalent strings as
+/// equal, and two different credentials can be (`tok-\u{E9}`, `tok-e\u{301}`).
+func sameBearer(_ a: String?, _ b: String?) -> Bool {
+    switch (a, b) {
+    case (nil, nil): return true
+    case let (x?, y?): return x.utf8.elementsEqual(y.utf8)
+    default: return false
     }
 }
 #endif

@@ -4,6 +4,7 @@
 package codexauth
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"unicode"
@@ -55,6 +56,21 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error { return e.Err }
+
+// String is Error for a copy of the value (fmt.Sprintf("%v", *e)), which would otherwise print the fields.
+func (e Error) String() string { return e.Error() }
+
+// GoString is Error: %#v would otherwise print Mode and the cause unscrubbed.
+func (e Error) GoString() string { return e.Error() }
+
+// MarshalJSON encodes the state, the mode and the version, scrubbed, and the cause as its scrubbed text.
+func (e Error) MarshalJSON() ([]byte, error) {
+	m := map[string]string{"state": string(e.State), "mode": secret.Scrub(e.Mode), "codexVersion": secret.Scrub(e.CodexVersion)}
+	if e.Err != nil {
+		m["error"] = secret.Scrub(e.Err.Error())
+	}
+	return json.Marshal(m)
+}
 
 // StateOf returns the state an error from this package carries: StateReady for nil, StateCodexError for an error
 // from elsewhere.

@@ -2,6 +2,9 @@ package codexapp
 
 import (
 	"encoding/json"
+	"errors"
+	"math"
+	"strconv"
 
 	"github.com/xiaolai/sayso/go/internal/wire"
 )
@@ -12,15 +15,29 @@ import (
 const MaxJSONDepth = 64
 
 // ValidJSON reports whether b is JSON as Codex's is read (spec/credentials.md, messages): one strict value (valid
-// UTF-8, no duplicate key; Codex's serde refuses both) nested at most MaxJSONDepth deep.
-func ValidJSON(b []byte) bool { return depthWithin(b, MaxJSONDepth) && wire.Valid(b) }
+// UTF-8, no duplicate key; Codex's serde refuses both) nested at most MaxJSONDepth deep, with no number too large for
+// a float64 (1e999). Foundation refuses such a number wherever it is, even in a field nobody reads, and Codex's serde
+// refuses it too, so it makes the document malformed in both implementations.
+func ValidJSON(b []byte) bool { return withinBounds(b, MaxJSONDepth) && wire.Valid(b) }
 
-// depthWithin reports whether no array or object in b nests deeper than max, counting outside strings only. It runs
-// before the strict check, so it reads b as it is and never copies it.
-func depthWithin(b []byte, max int) bool {
+// withinBounds reports whether no array or object in b nests deeper than max and every number outside strings fits a
+// float64. It runs before the strict check and reads b in place: only a number's own text is copied.
+func withinBounds(b []byte, max int) bool {
 	depth, inString, escaped := 0, false, false
-	for _, c := range b {
+	for i := 0; i < len(b); i++ {
+		c := b[i]
 		switch {
+		case !inString && (c == '-' || c >= '0' && c <= '9'):
+			j := i
+			for j < len(b) && (b[j] == '-' || b[j] == '+' || b[j] == '.' || b[j] == 'e' || b[j] == 'E' || b[j] >= '0' && b[j] <= '9') {
+				j++
+			}
+			if f, err := strconv.ParseFloat(string(b[i:j]), 64); err == nil || errors.Is(err, strconv.ErrRange) {
+				if math.IsInf(f, 0) {
+					return false
+				}
+			} // a malformed number is the strict check's to refuse
+			i = j - 1
 		case inString:
 			switch {
 			case escaped:

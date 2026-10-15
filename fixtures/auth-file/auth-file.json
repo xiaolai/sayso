@@ -1078,5 +1078,79 @@
    "state": "codex-error"
   },
   "note": "Codex's JSON nests at most 64 levels in both implementations (spec/credentials.md); beyond is malformed."
+ },
+ {
+  "id": "auth-file-kelvin-key",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "OPENAI_API_KEY": "canary-kelvin-key",
+     "tokens": {
+      "access_token": "opaque-kelvin-token"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "opaque-kelvin-token",
+   "notInDescription": [
+    "canary-kelvin-key"
+   ]
+  },
+  "note": "Keys are bytes: OPENAI_API_KEY spelled with a Kelvin sign (U+212A) is another key, as in Go and Codex, though Swift strings compare it equal."
+ },
+ {
+  "id": "auth-file-kelvin-mode",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": "bedrockApiKey",
+     "tokens": {
+      "access_token": "opaque-kelvin-mode"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "auth_mode values are bytes: bedrockApiKey spelled with a Kelvin sign is unknown, which makes the file unreadable to Codex."
+ },
+ {
+  "id": "auth-file-jwt-padded",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjF9====.c2ln"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjF9====.c2ln",
+   "expiresAt": null
+  },
+  "note": "A JWT payload is unpadded base64url (RFC 7515, and Codex's decoder): padding makes it no JWT, so the expiry is unknown, not exp 1."
  }
 ]

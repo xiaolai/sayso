@@ -3,6 +3,7 @@ package codexauth
 import (
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"strings"
 	"time"
 
@@ -21,8 +22,9 @@ func jwtExpiry(tok string) time.Time {
 	if len(parts) != 3 {
 		return time.Time{}
 	}
-	// The base64url alphabet only: the decoder would skip a CR or LF, which the Swift implementation refuses.
-	payload64 := strings.TrimRight(parts[1], "=")
+	// The base64url alphabet only, unpadded (RFC 7515, and Codex's own decoder): the decoder would skip a CR or LF,
+	// and trimming "=" would read "eyJleHAiOjF9====" as exp 1.
+	payload64 := parts[1]
 	if strings.IndexFunc(payload64, func(r rune) bool {
 		return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 	}) >= 0 {
@@ -42,8 +44,8 @@ func jwtExpiry(tok string) time.Time {
 	if !ok || string(raw) == "null" || json.Unmarshal(raw, &exp) != nil { // not an int64 (a fraction, an overflow)
 		return time.Time{}
 	}
-	// time.Time counts seconds from year 1 in an int64, so a Unix time this large would wrap into the past; any
-	// such expiry is far in the future, so it is clamped there.
+	// time.Time counts seconds from year 1 in an int64, so a Unix time beyond maxUnix would wrap into the past; such
+	// an expiry is clamped to the last instant it can hold. Every smaller exp is kept as given, as in Swift.
 	exp = min(exp, maxUnix)
 	t := time.Unix(exp, 0)
 	if t.IsZero() { // exp names year 1 exactly, which is the zero time, "unknown"; it is expired
@@ -52,5 +54,5 @@ func jwtExpiry(tok string) time.Time {
 	return t
 }
 
-// maxUnix is a Unix time time.Time can hold without wrapping: about 146 billion years from now.
-const maxUnix = 1 << 62
+// maxUnix is the largest Unix time time.Time holds: its seconds count from year 1, 62,135,596,800 s before 1970.
+const maxUnix = math.MaxInt64 - 62_135_596_800

@@ -54,15 +54,27 @@ func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 	if err != nil {
 		return authLocation{}, fail(StateCodexError, "CODEX_HOME does not resolve", err)
 	}
+	// os.OpenRoot opens without O_DIRECTORY or O_NONBLOCK, so a FIFO named as a folder would block it forever.
+	if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
+		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder", err)
+	}
 	var dir *os.Root
 	if confine != "" {
-		root, err := filepath.EvalSymlinks(confine)
+		// Absolute first: EvalSymlinks keeps a relative path relative, and Rel cannot relate it to real.
+		abs, err := filepath.Abs(confine)
+		if err != nil {
+			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to does not resolve", err)
+		}
+		root, err := filepath.EvalSymlinks(abs)
 		if err != nil {
 			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to does not resolve", err)
 		}
 		rel, err := filepath.Rel(root, real)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return authLocation{}, fail(StateCodexError, "CODEX_HOME is outside the folder it is confined to", nil)
+		}
+		if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to is not a folder", err)
 		}
 		// Opened through the confining folder, which refuses any path that leaves it, even one changed since.
 		top, err := os.OpenRoot(root)

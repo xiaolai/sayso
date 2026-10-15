@@ -46,16 +46,21 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   `CODEX_REVOKE_TOKEN_URL_OVERRIDE`. `CODEX_HOME` is set when the caller configured one (an empty choice is no
   choice: the inherited `CODEX_HOME` applies, to the child and the file alike). `PATH` is the
   executable's folder, then `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, then the inherited `PATH`, so an
-  npm-installed `codex` (`#!/usr/bin/env node`) finds its interpreter. Nothing else is added.
+  npm-installed `codex` (`#!/usr/bin/env node`) finds its interpreter. Nothing else is added. A name holding `=`
+  or a NUL, or a value (`CODEX_HOME` included) holding a NUL, cannot be passed on as given: it is `codex-error`
+  before anything starts.
 - **Lifetime.** Started on demand for one fetch or refresh, then closed; the token is cached in memory, not the
   child. The child starts in its own process group. Close: stdin closed, `SIGTERM` to the group, a 2 s grace,
   `SIGKILL` to the group unless the child was reaped and no other member of its group remains; close returns within
   grace + 1 s even when a descendant outside the group still holds the pipes (our ends are closed and the readers
-  abandoned). A client released without a close ends its child the same way.
+  abandoned). A client released without a close ends its child the same way. On macOS a child that exits stays
+  unreaped until close, so its process-group ID cannot be reused by another process while close may still signal
+  it; close reaps it last.
 - **Messages.** Newline-delimited JSON-RPC, UTF-8 without a byte-order mark; a last line ended by end of file rather
   than a newline is still a line. Only JSON's own whitespace (space, tab, line feed, carriage return) is trimmed
   around a line. A line longer than 4 MiB, or a line that is not strict JSON (one value, valid UTF-8, no duplicate
-  key, nested at most 64 levels), is `codex-error`; so is a reply with neither `result` nor `error`, while
+  key, nested at most 64 levels, no number beyond the range of a 64-bit float such as `1e999`), is `codex-error`;
+  so is a reply with neither `result` nor `error`, while
   `result: null` reads as an empty object. Keys are matched exactly (`AUTHTOKEN` is not `authToken`), and a present
   field of the wrong type is `codex-error` (an error `code` is a signed 64-bit integer). A message is classified
   before its reply fields are read: one without `id` is a notification and is ignored whatever else it holds; one
@@ -79,7 +84,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   come from a new child. Its `result.config.cli_auth_credentials_store` decides: `file` (or absent) uses the file
   source below; `keyring`, `auto` and `ephemeral` are `app-server-auth-unavailable`, so a stale `auth.json` left after
   a move to the keychain is never used. A Codex that lacks `config/read` too cannot confirm the file:
-  `app-server-auth-unavailable`; any other `config/read` failure is `codex-error`.
+  `app-server-auth-unavailable`; any other `config/read` failure is `codex-error`. A `-32601` on the token call
+  (step 4) or on a refresh follows the same rule; a token read from the file after a refresh's `-32601` is not
+  refreshed again.
 - **Read-only `CODEX_HOME`.** Codex cannot start there (it creates state before `initialize`); that exit is
   `codex-error`, not a reason to read the file.
 
@@ -94,7 +101,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
 - **Read.** One `open` with `O_NOFOLLOW | O_NONBLOCK`; `fstat` on that descriptor must show a regular file owned by
   the user and smaller than 64 KiB (65,536 bytes is refused); the bytes are read from that descriptor, bounded. The
   content is JSON in UTF-8 without a byte-order mark (UTF-16 and UTF-32 are not JSON here, as for Codex), with exact
-  keys.
+  keys: keys and `auth_mode` values compare as bytes, so a look-alike spelling (a Kelvin sign for `K`) is not the
+  name it resembles.
   A link, a FIFO, a folder, a foreign owner or an oversize file is `codex-error`. A missing file is
   `no-sign-in-file`. When the file source was only the fallback for a missing executable, a missing or unusable
   file (and a failing `CODEX_HOME`) is `no-codex` instead: with no usable file either, the fix is to install Codex. The raw
@@ -112,7 +120,7 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
 ## Expiry and refresh (`AUTH-04`)
 
 - **Expiry** is the JWT `exp` claim (exactly `exp`), read without checking the signature. A token that is not a JWT
-  (its payload outside the base64url alphabet, a CR or LF included, or not strict JSON), or whose `exp` is absent or
+  (its payload outside the unpadded base64url alphabet, `=` padding and a CR or LF included, or not strict JSON), or whose `exp` is absent or
   not a signed 64-bit integer (a fraction, an overflow), has unknown expiry: it is `ready`, and the provider decides
   (a refusal leads to a refresh, below). Every signed 64-bit `exp` is an instant: the first second of year 1 is
   expired, and the largest is far in the future.
