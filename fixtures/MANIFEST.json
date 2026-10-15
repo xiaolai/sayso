@@ -1,5 +1,5 @@
 {
- "count": 668,
+ "count": 672,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1005,6 +1005,30 @@
   },
   {
    "id": "event-wire-base64-trailing-bits",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wrong-field-type-named",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-usage-count-int64",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-equivalent-names-typed",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-equivalent-names",
    "file": "events/events.json",
    "component": "session",
    "requires": []

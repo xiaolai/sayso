@@ -78,7 +78,10 @@ implementations accept and refuse the same documents whatever their JSON librari
 - member names match exactly; null is the same as absence;
 - a string field must be a string; an integer field is a number written without fraction or exponent that fits a
   signed 64-bit integer; a float field is a number within the range of a double;
-- a provider `code` is its string, or for any other value its exact JSON text.
+- a provider `code` is its string, or for any other value its exact JSON text;
+- in a string map (`metadata`), two names that are canonically equivalent (`\u00e9` and `e\u0301`) are invalid,
+  because Swift's `String`-keyed map cannot hold both;
+- a field of the wrong type in a consumed event is a `protocol` error that names the event type.
 
 Go reads through `encoding/json/jsontext`; Swift has its own validator, because `JSONSerialization` folds none of
 these the same way.

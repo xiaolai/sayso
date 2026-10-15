@@ -145,7 +145,7 @@ public enum RealtimeEvent: Sendable, Equatable {
         do {
             if let event = try typed(type, w) { return event }
         } catch is WireJSON.Invalid {
-            throw notJSON
+            throw protocolError(type, "a field has the wrong type")  // the type is known: name it
         }
         return ignoredTypes.contains(type) ? .ignored(type: type) : .unknown(type: type)
     }
@@ -229,12 +229,12 @@ public enum RealtimeEvent: Sendable, Equatable {
         let reason = try r.object("status_details")?.string("reason") ?? ""
         var usage = TokenUsage()
         if let u = try r.object("usage") {
-            usage.inputTokens = Int(try u.int("input_tokens") ?? 0)
-            usage.outputTokens = Int(try u.int("output_tokens") ?? 0)
-            if let d = try u.object("input_token_details") { usage.inputTextTokens = Int(try d.int("text_tokens") ?? 0) }
+            usage.inputTokens = try count(u, "input_tokens")
+            usage.outputTokens = try count(u, "output_tokens")
+            if let d = try u.object("input_token_details") { usage.inputTextTokens = try count(d, "text_tokens") }
             if let d = try u.object("output_token_details") {
-                usage.outputTextTokens = Int(try d.int("text_tokens") ?? 0)
-                usage.outputAudioTokens = Int(try d.int("audio_tokens") ?? 0)
+                usage.outputTextTokens = try count(d, "text_tokens")
+                usage.outputAudioTokens = try count(d, "audio_tokens")
                 usage.detailed = true
             }
         }
@@ -246,6 +246,12 @@ public enum RealtimeEvent: Sendable, Equatable {
             throw protocolError(type, "unknown response.status")
         }
         return ResponseDone(responseID: id, status: status, statusReason: reason, usage: usage, metadata: metadata)
+    }
+
+    /// A token count; one that does not fit `Int` is invalid, as in Go, rather than a trap.
+    private static func count(_ o: WireJSON.Object, _ name: String) throws -> Int {
+        guard let v = Int(exactly: try o.int(name) ?? 0) else { throw WireJSON.Invalid() }
+        return v
     }
 
     /// The event's `error` object, classified; a missing error or `error.type` is a protocol error.

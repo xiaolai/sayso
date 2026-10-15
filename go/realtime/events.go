@@ -176,7 +176,8 @@ func protocolError(typ, why string) error {
 
 func missing(typ, field string) error { return protocolError(typ, "missing "+field) }
 
-var errNotJSON = protocolError("", "not valid JSON")
+// errNotJSON is a fresh error each time, so a caller annotating one cannot change another's.
+func errNotJSON() error { return protocolError("", "not valid JSON") }
 
 // DecodeEvent decodes one server event by its type. The whole event must be strict JSON (package wire); then only
 // the fields of its type are read, so an unknown or ignored type is never refused for the shape of a field this
@@ -185,25 +186,25 @@ var errNotJSON = protocolError("", "not valid JSON")
 func DecodeEvent(data []byte) (Event, error) {
 	root, err := wire.Parse(data)
 	if err != nil {
-		return nil, errNotJSON
+		return nil, errNotJSON()
 	}
 	if root.IsNull() {
 		return nil, protocolError("", "missing type")
 	}
 	w, err := wire.AsObject(root)
 	if err != nil {
-		return nil, errNotJSON
+		return nil, errNotJSON()
 	}
 	typ, ok, err := w.String("type")
 	if err != nil {
-		return nil, errNotJSON
+		return nil, errNotJSON()
 	}
 	if !ok || typ == "" {
 		return nil, protocolError("", "missing type")
 	}
 	ev, err := decodeTyped(typ, w)
 	if errors.Is(err, wire.ErrInvalid) {
-		return nil, errNotJSON
+		return nil, protocolError(typ, "a field has the wrong type") // the type is known: name it
 	}
 	if err != nil {
 		return nil, err
@@ -447,6 +448,9 @@ func decodeUsage(u wire.Object) (TokenUsage, error) {
 	if err != nil {
 		return t, err
 	}
+	if !fitsInt(in) || !fitsInt(out) {
+		return t, wire.ErrInvalid
+	}
 	t.InputTokens, t.OutputTokens = int(in), int(out)
 	if d, ok, err := u.Object("input_token_details"); err != nil {
 		return t, err
@@ -454,6 +458,9 @@ func decodeUsage(u wire.Object) (TokenUsage, error) {
 		text, _, err := d.Int("text_tokens")
 		if err != nil {
 			return t, err
+		}
+		if !fitsInt(text) {
+			return t, wire.ErrInvalid
 		}
 		t.InputTextTokens = int(text)
 	}
@@ -468,10 +475,16 @@ func decodeUsage(u wire.Object) (TokenUsage, error) {
 		if err != nil {
 			return t, err
 		}
+		if !fitsInt(text) || !fitsInt(audio) {
+			return t, wire.ErrInvalid
+		}
 		t.OutputTextTokens, t.OutputAudioTokens, t.Detailed = int(text), int(audio), true
 	}
 	return t, nil
 }
+
+// fitsInt reports whether v survives conversion to int, which is 32 bits on some platforms.
+func fitsInt(v int64) bool { return int64(int(v)) == v }
 
 // decodeError reads the event's error object; a missing error or error.type is a protocol error.
 func decodeError(typ string, w wire.Object) (*openaihttp.Error, error) {

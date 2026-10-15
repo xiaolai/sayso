@@ -11,6 +11,8 @@ import (
 	"errors"
 	"io"
 	"strconv"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ErrInvalid is any document or field the rules refuse.
@@ -187,14 +189,21 @@ func (o Object) Array(name string) ([]Node, bool, error) {
 	return e, true, nil
 }
 
-// StringMap returns an object member whose values are strings (null is "").
+// StringMap returns an object member whose values are strings (null is ""). Two names that are canonically
+// equivalent ("\u00e9" and "e\u0301") are ErrInvalid: Swift's String-keyed map cannot hold both, so both refuse them.
 func (o Object) StringMap(name string) (map[string]string, bool, error) {
 	m, ok, err := o.Object(name)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
 	out := make(map[string]string, len(m))
+	seen := make(map[string]bool, len(m))
 	for k := range m {
+		nfc := norm.NFC.String(k)
+		if seen[nfc] {
+			return nil, false, ErrInvalid
+		}
+		seen[nfc] = true
 		s, _, err := m.String(k)
 		if err != nil {
 			return nil, false, err
