@@ -113,7 +113,16 @@ func svSuperscripts(_ s: String) -> String {
     guard s.unicodeScalars.contains(where: svSuperscriptDigits.contains) else { return s }
     var out = String.UnicodeScalarView()
     var prev = false
-    for r in s.unicodeScalars {
+    let rs = Array(s.unicodeScalars)
+    for (k, r) in rs.enumerated() {
+        // A superscript sign before superscript digits belongs to the exponent ("2⁻³" is 2^-3); left in place it
+        // would fold to a minus before the caret and could be dropped.
+        if (r == "⁻" || r == "⁺") && !prev && k + 1 < rs.count && svSuperscriptDigits.contains(rs[k + 1]) {
+            out.append(contentsOf: " ^".unicodeScalars)
+            out.append(r == "⁻" ? "−" : "+")
+            prev = true
+            continue
+        }
         if let i = svSuperscriptDigits.firstIndex(of: r) {
             if !prev { out.append(contentsOf: " ^".unicodeScalars) }
             out.append(Unicode.Scalar(UInt8(0x30 + i)))
@@ -239,7 +248,8 @@ func split(_ s: String, _ sep: Unicode.Scalar) -> [String] {
 }
 
 /// Format characters, enclosing marks and variation selectors go; a zero width space is a word break; every Unicode
-/// decimal digit becomes ASCII at scalar level; − and ⁄ become - and /.
+/// decimal digit becomes ASCII at scalar level; ⁄ becomes /. The minus sign − stays: it is always spoken (a sign or an
+/// operator), where "-" may also join words, so folding it into "-" let "x−y" read as "xy".
 func preNormalize(_ s: String) -> String {
     var out = String.UnicodeScalarView()
     for r in s.unicodeScalars {
@@ -248,8 +258,6 @@ func preNormalize(_ s: String) -> String {
             out.append(" ")  // zero width space marks a word break (UAX #14 ZW); deleting it glued "now"+"here"
         } else if p.generalCategory == .format || p.generalCategory == .enclosingMark || p.isVariationSelector {
             continue
-        } else if r == "−" {
-            out.append("-")
         } else if r == "⁄" {
             out.append("/")
         } else if p.generalCategory == .decimalNumber && !svDigit(r), let v = p.numericValue {

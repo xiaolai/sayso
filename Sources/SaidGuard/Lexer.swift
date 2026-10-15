@@ -37,12 +37,17 @@ func svBetweenNumbers(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     while n < rs.count && isSpace(rs[n]) { n += 1 }
     if p >= 1 && rs[p] == "%" {
         p -= 1
+        while p >= 0 && isSpace(rs[p]) { p -= 1 }  // "5 % - 2 %"
     } else if p >= 2 && svOrdinalSuffixAt(rs, p - 1) {
         p -= 2
     }
+    if n < rs.count && svMinus(rs[n]) && svSignAt(rs, n) { n += 1 }  // a signed operand ("5 - -2")
     return p >= 0 && svDigit(rs[p]) && n < rs.count
         && (svDigit(rs[n]) || rs[n] == "." && n + 1 < rs.count && svDigit(rs[n + 1]))
 }
+
+/// The hyphen-minus or the minus sign.
+func svMinus(_ r: Unicode.Scalar) -> Bool { r == "-" || r == "−" }
 
 /// `rs[i..<i+2]` is "st", "nd", "rd" or "th" in any case.
 func svOrdinalSuffixAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
@@ -53,10 +58,10 @@ func svOrdinalSuffixAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     }
 }
 
-/// A '-' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an exponent
+/// A '-' or '−' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an exponent
 /// sign ("1e-3"); after a letter it is a joiner ("JIRA-10442") and after a digit a range ("3-4").
 func svSignAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
-    if rs[i] != "-" || i + 1 >= rs.count { return false }
+    if !svMinus(rs[i]) || i + 1 >= rs.count { return false }
     if !svDigit(rs[i + 1]) && !(rs[i + 1] == "." && i + 2 < rs.count && svDigit(rs[i + 2])) { return false }
     if i == 0 { return true }
     let p = rs[i - 1]
@@ -75,7 +80,9 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     var out: [SvRaw] = []
     var prevEnd = 0
     func emit(_ kind: SvKind, _ i: Int, _ j: Int) {
-        out.append(SvRaw(text: svString(rs[i..<j]), kind: kind, gap: svString(rs[prevEnd..<i])))
+        // One sign, however written: "−5" reads as "-5".
+        let text = kind == .number && rs[i] == "−" ? "-" + svString(rs[i + 1..<j]) : svString(rs[i..<j])
+        out.append(SvRaw(text: text, kind: kind, gap: svString(rs[prevEnd..<i])))
         prevEnd = j
     }
     var i = 0
@@ -104,9 +111,10 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
         } else if svSpokenSymbol(r) || (r == "-" && svBetweenNumbers(rs, i)) {
             emit(.symbol, i, i + 1)
             i += 1
-        } else if hanNumbers && isHanNumeral(r) {
+        } else if hanNumbers && isHanNumeral(r) && !(i + 1 < rs.count && isMark(rs[i + 1])) {
+            // A numeral carrying a mark is a character like any other ("一́"), as the transcript side reads it.
             var j = i
-            while j < rs.count && isHanNumeral(rs[j]) { j += 1 }
+            while j < rs.count && isHanNumeral(rs[j]) && !(j + 1 < rs.count && isMark(rs[j + 1])) { j += 1 }
             emit(.hanRun, i, j)
             i = j
         } else if isUnspaced(r) {
@@ -118,7 +126,10 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
             // "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
             // initials ("E.G. White"), lexed letter by letter like any other.
             let m = goLower(svString(rs[i..<min(i + 4, rs.count)]))
-            if (m.hasPrefix("e.g") || m.hasPrefix("i.e")) && !isUpper(rs[i + 2]) && (i == 0 || !svLetter(rs[i - 1]))
+            // Not inside a domain ("www.e.g.com"), where its letters are labels.
+            if (m.hasPrefix("e.g") || m.hasPrefix("i.e")) && !isUpper(rs[i + 2])
+                && (i == 0 || (!svLetter(rs[i - 1]) && rs[i - 1] != "."))
+                && !(i + 4 < rs.count && rs[i + 3] == "." && svLetter(rs[i + 4]))
                 && (i + 3 >= rs.count || !svLetter(rs[i + 3]))
             {
                 emit(.word, i, i + 3)

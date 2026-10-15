@@ -3371,5 +3371,212 @@
   "language": "en",
   "expect": false,
   "note": "Inside an expression the dash is a spoken minus."
+ },
+ {
+  "id": "said-155",
+  "component": "said-guard",
+  "script": "5 % − 2 %",
+  "transcript": "5 % 2 %",
+  "language": "en",
+  "expect": false,
+  "note": "A spaced minus sign between percentages is spoken; U+2212 is never a joiner (round 2)."
+ },
+ {
+  "id": "said-156",
+  "component": "said-guard",
+  "script": "5 % - 2 %",
+  "transcript": "5 % 2 %",
+  "language": "en",
+  "expect": false,
+  "note": "A spaced hyphen-minus after a detached percent sign is still between numbers (round 2)."
+ },
+ {
+  "id": "said-157",
+  "component": "said-guard",
+  "script": "5 % - 2 %",
+  "transcript": "5 % minus 2 %",
+  "language": "en",
+  "expect": true,
+  "note": "Control: the minus may be read."
+ },
+ {
+  "id": "said-158",
+  "component": "said-guard",
+  "script": "5 - -2 = 7",
+  "transcript": "5 -2 = 7",
+  "language": "en",
+  "expect": false,
+  "note": "The binary minus before a signed operand is spoken (round 2)."
+ },
+ {
+  "id": "said-159",
+  "component": "said-guard",
+  "script": "5 - -2 = 7",
+  "transcript": "5 minus minus 2 equals 7",
+  "language": "en",
+  "expect": true,
+  "note": "Control: both minuses read."
+ },
+ {
+  "id": "said-160",
+  "component": "said-guard",
+  "script": "x−y=0",
+  "transcript": "xy equals zero",
+  "language": "en",
+  "expect": false,
+  "note": "U+2212 between letters is a minus, not a joining hyphen (round 2)."
+ },
+ {
+  "id": "said-161",
+  "component": "said-guard",
+  "script": "x−y=0",
+  "transcript": "x minus y equals zero",
+  "language": "en",
+  "expect": true,
+  "note": "Control: the minus sign read."
+ },
+ {
+  "id": "said-162",
+  "component": "said-guard",
+  "script": "2⁻³",
+  "transcript": "two cubed",
+  "language": "en",
+  "expect": false,
+  "note": "A superscript minus belongs to the exponent; dropping it is a dropped sign (round 2)."
+ },
+ {
+  "id": "said-163",
+  "component": "said-guard",
+  "script": "2⁻³",
+  "transcript": "two to the power of minus three",
+  "language": "en",
+  "expect": true,
+  "note": "Control: the signed exponent read."
+ },
+ {
+  "id": "said-164",
+  "component": "said-guard",
+  "script": "−5",
+  "transcript": "-5",
+  "language": "en",
+  "expect": true,
+  "note": "The minus sign and the hyphen-minus are one sign before a number."
+ },
+ {
+  "id": "said-165",
+  "component": "said-guard",
+  "script": "5 − 2",
+  "transcript": "5 - 2",
+  "language": "en",
+  "expect": true,
+  "note": "Between numbers the two minuses are written either way."
+ },
+ {
+  "id": "said-166",
+  "component": "said-guard",
+  "script": "2^2",
+  "transcript": "two ^ two",
+  "language": "en",
+  "expect": true,
+  "note": "A caret with the exponent in words (round 2)."
+ },
+ {
+  "id": "said-167",
+  "component": "said-guard",
+  "script": "一́",
+  "transcript": "一́",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity: a Han numeral carrying a mark is a character as the transcript reads it (round 2)."
+ },
+ {
+  "id": "said-168",
+  "component": "said-guard",
+  "script": "一万零一百五",
+  "transcript": "10150",
+  "language": "zh",
+  "expect": true,
+  "note": "A zero that skips a higher place does not make the dropped last unit a units digit (round 2)."
+ },
+ {
+  "id": "said-169",
+  "component": "said-guard",
+  "script": "一万零一百五",
+  "transcript": "10105",
+  "language": "zh",
+  "expect": false,
+  "note": "Control: 一万零一百五 is not 10105."
+ },
+ {
+  "id": "said-170",
+  "component": "said-guard",
+  "script": "二",
+  "transcript": "两",
+  "language": "zh",
+  "expect": true,
+  "note": "A lone 二 is the number two, also spelled 两 (round 2)."
+ },
+ {
+  "id": "said-171",
+  "component": "said-guard",
+  "script": "I met Alice。 Dr Smith arrived.",
+  "transcript": "I met Alice。 Drive Smith arrived.",
+  "language": "en",
+  "expect": false,
+  "note": "The ideographic full stop ends the sentence, so Dr is not a road after Alice (round 2)."
+ },
+ {
+  "id": "said-172",
+  "component": "said-guard",
+  "script": "one.Next",
+  "transcript": "1 Next",
+  "language": "en",
+  "expect": true,
+  "note": "A capitalised continuation is no domain, so one is a number word (round 2)."
+ },
+ {
+  "id": "said-173",
+  "component": "said-guard",
+  "script": "www.e.g.com",
+  "transcript": "www dot e dot g dot com",
+  "language": "en",
+  "expect": true,
+  "note": "Inside a domain the letters of e.g are labels (round 2)."
+ },
+ {
+  "id": "said-174",
+  "component": "said-guard",
+  "script": "douze mille un",
+  "transcript": "12000 1",
+  "language": "fr",
+  "expect": false,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "A run of number words beyond the table is one number or none, never a prefix and a remainder (round 2)."
+ },
+ {
+  "id": "said-175",
+  "component": "said-guard",
+  "script": "1 000 000 000 000 000",
+  "transcript": "un billion 000",
+  "language": "fr",
+  "expect": false,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "A grouped number beyond the spell-out bound is as written; its prefix is never spelled (round 2)."
+ },
+ {
+  "id": "said-176",
+  "component": "said-guard",
+  "script": "1 000",
+  "transcript": "mille",
+  "language": "fr",
+  "expect": true,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "Control: a grouped number within the bound is spelled."
  }
 ]

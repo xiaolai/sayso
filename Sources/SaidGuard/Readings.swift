@@ -296,6 +296,9 @@ func svHanValue(_ run: [Unicode.Scalar]) -> UInt64? {
             pending = -1
             lastUnit = u
             any = true
+            // A zero before this unit skipped a higher place (一万零一百五); only a zero after the last unit makes the
+            // final digit a units digit (一百零五).
+            zeroInSection = false
             continue
         }
         var group = section
@@ -440,6 +443,8 @@ func svHanUnit(_ run: String) -> SvUnit {
         // digit of a string, so neither has a reading in digits.
         if rs.count == 2 || (rs.count > 2 && rs.contains("两")) { return unit }
         unit.append(lit(svString(rs.map { Unicode.Scalar(UInt8(0x30 + svHanDigit[$0]!)) })))
+        // A lone digit is a number: its other spellings (二 and 两, 零 and 〇).
+        if rs.count == 1 { unit += svHanSeqs(UInt64(svHanDigit[rs[0]]!)) }
         return unit
     }
     guard let n = svParseHan(rs) else { return unit }
