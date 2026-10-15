@@ -154,86 +154,33 @@ public final class HTTPClient: Sendable {
     }
 
     /// The classified error for a non-2xx reply: the provider body `{"error": {"message", "type", "code", "param"}}`
-    /// is read when it has that shape, every string scrubbed.
+    /// is read with the wire rules (spec/session.md, wire JSON) when it has that shape, every string scrubbed; a body
+    /// that is not strict JSON, or has a field of the wrong type, yields no fields.
     public static func errorReply(status: Int, requestID: String, body: Data, route: String) -> RealtimeError {
         var type = "", code = "", param = "", message = ""
-        if let object = try? JSONSerialization.jsonObject(with: body, options: [.fragmentsAllowed]) as? [String: Any],
-            let fields = ProviderError(object["error"])
+        if let root = try? WireJSON.parse(body), let o = try? WireJSON.Object(root),
+            let fields = try? ProviderError(o)
         {
             (type, code, param, message) = (fields.type, fields.code, fields.param, fields.message)
         }
         let scrubbedCode = Secret.scrub(code)
         let errorClass = RealtimeError.classify(status: status, code: scrubbedCode)
         return RealtimeError(
-            errorClass, status: status, type: Secret.scrub(type), code: scrubbedCode, param: Secret.scrub(param),
-            message: Secret.scrub(message), requestID: Secret.scrub(requestID),
-            route: errorClass == .routeDenied ? route : "")
+            errorClass, status: status, type: type, code: scrubbedCode, param: param, message: message,
+            requestID: requestID, route: errorClass == .routeDenied ? route : "")
     }
 }
 
-/// The provider error object, read with Go's decoding rules: a field of the wrong type discards the whole body.
+/// The provider error object; a field of the wrong type discards the whole body.
 struct ProviderError {
-    let type: String, code: String, param: String, message: String
+    var type = "", code = "", param = "", message = ""
 
-    init?(_ value: Any?) {
-        guard let value, !(value is NSNull) else {
-            (type, code, param, message) = ("", "", "", "")
-            return
-        }
-        guard let object = value as? [String: Any] else { return nil }
-        guard let message = JSONField.string(object["message"]), let type = JSONField.string(object["type"]),
-            let param = JSONField.string(object["param"])
-        else { return nil }
-        (self.message, self.type, self.param) = (message, type, param)
-        self.code = JSONField.rawString(object["code"])
-    }
-}
-
-/// Field readers that follow Go's `encoding/json` rules for the shapes this package declares, so both
-/// implementations accept and refuse the same documents.
-enum JSONField {
-    /// A string, or "" for null or absence; nil for any other type.
-    static func string(_ v: Any?) -> String? {
-        switch v {
-        case nil, is NSNull: return ""
-        case let s as String: return s
-        default: return nil
-        }
-    }
-
-    static func isBool(_ n: NSNumber) -> Bool { CFGetTypeID(n) == CFBooleanGetTypeID() }
-
-    /// An integer number, 0 for null or absence; nil for a fraction or exponent, a bool or any other type.
-    static func int(_ v: Any?) -> Int64? {
-        switch v {
-        case nil, is NSNull: return 0
-        case let n as NSNumber where !isBool(n) && !CFNumberIsFloatType(n): return n.int64Value
-        default: return nil
-        }
-    }
-
-    /// Any number, 0 for null or absence; nil for a bool or any other type.
-    static func double(_ v: Any?) -> Double? {
-        switch v {
-        case nil, is NSNull: return 0
-        case let n as NSNumber where !isBool(n): return n.doubleValue
-        default: return nil
-        }
-    }
-
-    /// A provider `code`: a string as itself, a number as its decimal text, null or absence as "", anything else as
-    /// its JSON text.
-    static func rawString(_ v: Any?) -> String {
-        switch v {
-        case nil, is NSNull: return ""
-        case let s as String: return s
-        case let n as NSNumber where isBool(n): return n.boolValue ? "true" : "false"
-        case let n as NSNumber: return n.stringValue
-        default:
-            guard let v, let data = try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed, .sortedKeys])
-            else { return "" }
-            return String(decoding: data, as: UTF8.self)
-        }
+    init(_ body: WireJSON.Object) throws {
+        guard let e = try body.object("error") else { return }
+        message = try e.string("message") ?? ""
+        type = try e.string("type") ?? ""
+        param = try e.string("param") ?? ""
+        code = try e.code("code")
     }
 }
 

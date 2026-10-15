@@ -53,9 +53,30 @@ is `session_expired`, `invalid_api_key` or `session_not_found`, or its type is `
 | `conversation.item.input_audio_transcription.failed` | `item_id`, `error.type` | item id, the classified error |
 
 A documented type the package does not consume (`session.updated`, `response.output_item.added`, …; the list is in
-the fixtures) is **ignored**. Any other type is **unknown**: passed through raw and counted, as API drift. A session delivers both, each with
-its raw bytes, so an app can read a type the package does not decode. Invalid
-JSON, a missing `type`, a missing required field, bad base64 or an unknown `response.status` is a `protocol` error
-that names the event type only, never the payload.
+the fixtures) is **ignored**. Any other type is **unknown**: passed through raw and counted, as API drift. A session
+delivers both, each with its raw bytes, so an app can read a type the package does not decode. Invalid JSON, a
+missing `type`, a field of the wrong type, a missing required field, bad base64 or an unknown `response.status` is
+a `protocol` error that names the event type only, never the payload. Only the fields of a consumed type are read,
+so an ignored or unknown event is never refused for the shape of a field the package does not consume.
+
+`delta` is standard base64 as Go's `StdEncoding` reads it, padded, with padding only at the end; trailing bits are
+ignored; CR and LF are refused.
+
+## Wire JSON
+
+Every JSON document the provider sends (an event, an error body, a mint reply) is read with one rule set, so the
+implementations accept and refuse the same documents whatever their JSON libraries do:
+
+- the document is one RFC 8259 value, with only whitespace around it, in valid UTF-8 (no byte order mark); a
+  `\u` surrogate escape must be a high one followed by a low one;
+- no object, at any depth, has two members with the same name after unescaping;
+- nesting is at most 10,000 levels (Go's `jsontext` limit);
+- member names match exactly; null is the same as absence;
+- a string field must be a string; an integer field is a number written without fraction or exponent that fits a
+  signed 64-bit integer; a float field is a number within the range of a double;
+- a provider `code` is its string, or for any other value its exact JSON text.
+
+Go reads through `encoding/json/jsontext`; Swift has its own validator, because `JSONSerialization` folds none of
+these the same way.
 
 Not in the contract: pooling, recycling, out-of-band request shape, instructions, turn watchdogs, renewal.

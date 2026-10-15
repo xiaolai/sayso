@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -142,14 +142,29 @@ func TransportError(msg string, err error) error {
 // maxErrorBody bounds how much of an error response is read.
 const maxErrorBody = 64 << 10
 
-// apiErrorBody is the provider error shape {"error":{"message","type","code","param"}}.
-type apiErrorBody struct {
-	Error struct {
-		Message string          `json:"message"`
-		Type    string          `json:"type"`
-		Code    json.RawMessage `json:"code"` // string or number in the wild
-		Param   *string         `json:"param"`
-	} `json:"error"`
+// providerError reads the provider error shape {"error":{"message","type","code","param"}} with the wire rules
+// (package wire): a body that is not strict JSON, or a field of the wrong type, yields no fields at all.
+func providerError(body []byte) (message, typ, code, param string) {
+	root, err := wire.Parse(body)
+	if err != nil {
+		return "", "", "", ""
+	}
+	o, err := wire.AsObject(root)
+	if err != nil {
+		return "", "", "", ""
+	}
+	e, ok, err := o.Object("error")
+	if err != nil || !ok {
+		return "", "", "", ""
+	}
+	m, _, err1 := e.String("message")
+	t, _, err2 := e.String("type")
+	p, _, err3 := e.String("param")
+	c, err4 := e.Code("code")
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+		return "", "", "", ""
+	}
+	return m, t, c, p
 }
 
 // CheckResponse returns nil for a 2xx response and a classified *Error otherwise, reading at most 64 KiB of the body
@@ -165,32 +180,13 @@ func CheckResponse(resp *http.Response, route string) error {
 		RequestID: secret.Scrub(resp.Header.Get("x-request-id")),
 		Route:     route,
 	}
-	var parsed apiErrorBody
-	if json.Unmarshal(body, &parsed) == nil {
-		e.Message = secret.Scrub(parsed.Error.Message)
-		e.Type = secret.Scrub(parsed.Error.Type)
-		e.Code = secret.Scrub(RawString(parsed.Error.Code))
-		if parsed.Error.Param != nil {
-			e.Param = secret.Scrub(*parsed.Error.Param)
-		}
-	}
+	message, typ, code, param := providerError(body)
+	e.Message, e.Type, e.Code, e.Param = secret.Scrub(message), secret.Scrub(typ), secret.Scrub(code), secret.Scrub(param)
 	e.Class = classifyStatus(resp.StatusCode, e.Code)
 	if e.Class != ClassRouteDenied {
 		e.Route = ""
 	}
 	return e
-}
-
-// RawString reads a JSON string or number as text: a provider `code` is either in the wild. null and absence are "".
-func RawString(raw json.RawMessage) string {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	return string(raw)
 }
 
 // classifyStatus holds the HTTP rows of the taxonomy. The WebSocket rows are in wsclass.go.
