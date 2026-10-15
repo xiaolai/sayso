@@ -3578,5 +3578,302 @@
    "spellout:fr"
   ],
   "note": "Control: a grouped number within the bound is spelled."
+ },
+ {
+  "id": "said-177",
+  "component": "said-guard",
+  "script": "-,5",
+  "transcript": "5",
+  "language": "fr",
+  "expect": false,
+  "note": "A sign before a comma decimal is kept: the sign and the decimal comma were dropped."
+ },
+ {
+  "id": "said-178",
+  "component": "said-guard",
+  "script": "Il fait -,5 degrés",
+  "transcript": "Il fait 5 degrés",
+  "language": "fr",
+  "expect": false,
+  "note": "A signed comma decimal in a sentence keeps its sign."
+ },
+ {
+  "id": "said-179",
+  "component": "said-guard",
+  "script": "-,5",
+  "transcript": "-,5",
+  "language": "fr",
+  "expect": true,
+  "note": "Control: the signed comma decimal as written."
+ },
+ {
+  "id": "said-180",
+  "component": "said-guard",
+  "script": "5 - +2 = 3",
+  "transcript": "5 +2 = 3",
+  "language": "en",
+  "expect": false,
+  "note": "A minus before a signed operand is spoken; dropping it leaves 5 +2."
+ },
+ {
+  "id": "said-181",
+  "component": "said-guard",
+  "script": "5 - +2 = 3",
+  "transcript": "5 + 2 = 3",
+  "language": "en",
+  "expect": false,
+  "note": "The minus before +2 was dropped."
+ },
+ {
+  "id": "said-182",
+  "component": "said-guard",
+  "script": "5 - +2 = 3",
+  "transcript": "five minus plus two equals three",
+  "language": "en",
+  "expect": true,
+  "note": "Control: both operators named."
+ },
+ {
+  "id": "said-183",
+  "component": "said-guard",
+  "script": "5 - ,2",
+  "transcript": "5 ,2",
+  "language": "fr",
+  "expect": false,
+  "note": "A minus before a comma decimal is spoken."
+ },
+ {
+  "id": "said-184",
+  "component": "said-guard",
+  "script": "5 - ,2",
+  "transcript": "5 - ,2",
+  "language": "fr",
+  "expect": true,
+  "note": "Control: as written."
+ },
+ {
+  "id": "said-185",
+  "component": "said-guard",
+  "script": "五 - 二 = 三",
+  "transcript": "五 二 = 三",
+  "language": "zh",
+  "expect": false,
+  "note": "A minus between Han numerals is spoken."
+ },
+ {
+  "id": "said-186",
+  "component": "said-guard",
+  "script": "五-二=三",
+  "transcript": "五二=三",
+  "language": "zh",
+  "expect": false,
+  "note": "A tight minus in a Han expression is spoken, as in 5-2=3."
+ },
+ {
+  "id": "said-187",
+  "component": "said-guard",
+  "script": "五-二",
+  "transcript": "五二",
+  "language": "zh",
+  "expect": true,
+  "note": "Control: a tight dash outside an expression may be silent, as in 3-4."
+ },
+ {
+  "id": "said-188",
+  "component": "said-guard",
+  "script": "5 - 2 = 3",
+  "transcript": "5 -2 = 3",
+  "language": "en",
+  "expect": true,
+  "note": "A minus touching the right number is still a minus between numbers."
+ },
+ {
+  "id": "said-189",
+  "component": "said-guard",
+  "script": "5 -2",
+  "transcript": "5 negative 2",
+  "language": "en",
+  "expect": false,
+  "note": "A minus after a number is an operator, not a sign: a false mismatch accepted for 5 -2 = 3 to match 5 - 2 = 3."
+ },
+ {
+  "id": "said-190",
+  "component": "said-guard",
+  "script": "Say ‘hello’.",
+  "transcript": "Say hello.",
+  "language": "en",
+  "expect": true,
+  "note": "Paired single quotation marks are unspoken."
+ },
+ {
+  "id": "said-191",
+  "component": "said-guard",
+  "script": "Say 'hello'.",
+  "transcript": "Say hello.",
+  "language": "en",
+  "expect": true,
+  "note": "Paired ASCII single quotes are unspoken."
+ },
+ {
+  "id": "said-192",
+  "component": "said-guard",
+  "script": "He said ‘no’ and left.",
+  "transcript": "He said no and left.",
+  "language": "en",
+  "expect": true,
+  "note": "Paired quotation marks inside a sentence."
+ },
+ {
+  "id": "said-193",
+  "component": "said-guard",
+  "script": "’Tis the season’s end.",
+  "transcript": "Tis the seasons end.",
+  "language": "en",
+  "expect": false,
+  "note": "Unpaired marks stay apostrophes: an elision and a possessive."
+ },
+ {
+  "id": "said-194",
+  "component": "said-guard",
+  "script": "the students’ books",
+  "transcript": "the students books",
+  "language": "en",
+  "expect": false,
+  "note": "A trailing possessive mark with no opener stays an apostrophe."
+ },
+ {
+  "id": "said-195",
+  "component": "said-guard",
+  "script": "e-mail.com",
+  "transcript": "email dot com",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated domain label may be joined, as a hyphenated word may."
+ },
+ {
+  "id": "said-196",
+  "component": "said-guard",
+  "script": "e-mail.example.com",
+  "transcript": "email dot example dot com",
+  "language": "en",
+  "expect": true,
+  "note": "Joined labels in a longer domain."
+ },
+ {
+  "id": "said-197",
+  "component": "said-guard",
+  "script": "a T",
+  "transcript": "at",
+  "language": "fr",
+  "expect": false,
+  "note": "Two letters with a or I are never joined into a word, in any language."
+ },
+ {
+  "id": "said-198",
+  "component": "said-guard",
+  "script": "I B M",
+  "transcript": "IBM",
+  "language": "fr",
+  "expect": true,
+  "note": "Control: three letters join in any language."
+ },
+ {
+  "id": "said-199",
+  "component": "said-guard",
+  "script": "one-point-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-one",
+  "transcript": "1.00000000000000000000000000000000000000000000001",
+  "language": "en",
+  "expect": false,
+  "note": "49 words once the hyphens are split: beyond the 48-word bound, as written only."
+ },
+ {
+  "id": "said-200",
+  "component": "said-guard",
+  "script": "one-point-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-zero-one",
+  "transcript": "1.0000000000000000000000000000000000000000000001",
+  "language": "en",
+  "expect": true,
+  "note": "Control: 48 words, within the bound."
+ },
+ {
+  "id": "said-201",
+  "component": "said-guard",
+  "script": "Main St. Next turn left.",
+  "transcript": "Main saint. Next turn left.",
+  "language": "en",
+  "expect": true,
+  "note": "Residual: after a sentence's first word and before a capital, St reads saint, as Visit St. John needs; Main St. Next cannot be told from it."
+ },
+ {
+  "id": "said-202",
+  "component": "said-guard",
+  "script": "Main St. Next turn left.",
+  "transcript": "Main street. Next turn left.",
+  "language": "en",
+  "expect": false,
+  "note": "The cost of that residual: a false mismatch."
+ },
+ {
+  "id": "said-203",
+  "component": "said-guard",
+  "script": "neuf mille neuf cent quatre vingt dix neuf mille",
+  "transcript": "9999 1000",
+  "language": "fr",
+  "expect": false,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "A run of number words longer than the spell-out bound is never read as a prefix number plus the rest."
+ },
+ {
+  "id": "said-204",
+  "component": "said-guard",
+  "script": "neuf mille neuf cent quatre vingt dix neuf",
+  "transcript": "9999",
+  "language": "fr",
+  "expect": true,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "Control: within the bound."
+ },
+ {
+  "id": "said-205",
+  "component": "said-guard",
+  "script": "vier-vier",
+  "transcript": "viervier",
+  "language": "de",
+  "expect": true,
+  "note": "A run of number words not in the table keeps its plain readings, joined too."
+ },
+ {
+  "id": "said-206",
+  "component": "said-guard",
+  "script": "UN",
+  "transcript": "U N",
+  "language": "fr",
+  "expect": true,
+  "note": "A number word in capitals keeps its code reading."
+ },
+ {
+  "id": "said-207",
+  "component": "said-guard",
+  "script": "UN",
+  "transcript": "1",
+  "language": "fr",
+  "expect": true,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "Control: and its value."
+ },
+ {
+  "id": "said-208",
+  "component": "said-guard",
+  "script": "四十二",
+  "transcript": "42",
+  "language": "ja",
+  "expect": false,
+  "note": "Accepted false mismatch: Japanese kanji numerals also spell words (一緒, 七夕), so a run is not read as a value."
  }
 ]

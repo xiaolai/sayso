@@ -140,38 +140,56 @@ final class SpellOut: @unchecked Sendable {
         return ([lit(tokens(written))], j - k)
     }
 
-    /// A number written in the locale's words, at most `maxPhraseWords` words with no punctuation inside: one unit
-    /// read as written or in digits, and how many raws it spans. A run of the table's words that is not exactly the
-    /// locale's spelling of a number in the table is one unit read as written only; nil when there is no such run.
-    func wordNumberUnit(_ raws: [SvRaw], _ partsOf: [[String]], _ k: Int) -> (SvUnit, Int)? {
+    /// A number written in the locale's words, at most `maxPhraseWords` raws with no punctuation inside: one unit read
+    /// as written or in digits, and how many raws it spans. `ordinary(k)` is the unit raw k has as a plain word (split
+    /// or joined, letter by letter as a code); "as written" keeps each raw's readings. A run of the table's words that
+    /// is not exactly the locale's spelling of a number in the table, or is longer than the bound, is its raws read as
+    /// plain words; nil when there is no such run.
+    func wordNumberUnits(_ raws: [SvRaw], _ partsOf: [[String]], _ k: Int, ordinary: (Int) -> SvUnit) -> ([SvUnit], Int)? {
         let (values, vocabulary) = numberTables()
         var parts: [String] = []
-        var ends: [Int] = []  // ends[l-1]: the words in the first l raws
         var j = k
-        while j < raws.count && j < k + Self.maxPhraseWords && word(raws, j) && (j == k || !raws[j].punctBefore) {
+        // The whole run of number words is scanned, past the bound too: it is one number or none, and a prefix of it is
+        // never read alone, or "douze mille un", beyond the table, would read "12000 1".
+        while j < raws.count && word(raws, j) && (j == k || !raws[j].punctBefore) {
             let p = partsOf[j]
             // Every spelling is made of the table's words, so a phrase reaching any other word is no longer a number.
             if p.isEmpty || !p.allSatisfy(vocabulary.contains) { break }
             parts += p
-            ends.append(parts.count)
             j += 1
         }
-        // The whole run of number words is one number or none: a prefix of it is never read alone, or
-        // "douze mille un", beyond the table, would read "12000 1". A run not in the table is as written only.
-        guard let total = ends.last else { return nil }
-        let phrase = Array(parts[..<total])
-        guard let v = values[phrase.joined(separator: " ")] else { return ([lit(phrase)], ends.count) }
+        let used = j - k
+        guard used > 0 else { return nil }
+        let plainWords = (k..<j).map(ordinary)
+        guard used <= Self.maxPhraseWords, let v = values[parts.joined(separator: " ")],
+            var unit = Self.product(plainWords)
+        else { return (plainWords, used) }
         let n = NSDecimalNumber(decimal: v)
         lock.lock()
         let forms = [plain.string(from: n), grouped.string(from: n)]
         lock.unlock()
-        var unit: SvUnit = [lit(phrase)]
         for f in forms {
             guard let f else { continue }
             let reading = lit(tokens(f))
             if !reading.isEmpty && !unit.contains(reading) { unit.append(reading) }
         }
-        return (unit, ends.count)
+        return ([unit], used)
+    }
+
+    /// Every concatenation of one reading per unit, or nil beyond 64 readings, when the words stay plain words.
+    private static func product(_ units: [SvUnit]) -> SvUnit? {
+        var out: SvUnit = [[]]
+        for u in units {
+            var next: SvUnit = []
+            for a in out {
+                for b in u {
+                    next.append(a + b)
+                    if next.count > 64 { return nil }
+                }
+            }
+            out = next
+        }
+        return out
     }
 
     /// The locale's spellings of every number to 10,000, the thousands to 100,000, and the powers up to a trillion,

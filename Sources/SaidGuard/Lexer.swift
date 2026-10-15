@@ -28,8 +28,9 @@ func svSpokenSymbol(_ r: Unicode.Scalar) -> Bool {
     return true
 }
 
-/// A '-' with a number on each side, spaced or not ("5 - 2", "3-4", "5% - 2%", "1st - 3rd"), is spoken (minus, to).
-/// A number on the left may end in a percent sign or an ordinal suffix, as the lexer reads it.
+/// A '-' with a number on each side, spaced or not ("5 - 2", "3-4", "5 -2", "5% - 2%", "1st - 3rd", "五 - 二"), is
+/// spoken (minus, to). A number on the left may end in a percent sign or an ordinal suffix, as the lexer reads it; the
+/// one on the right may carry a sign ("5 - -2", "5 - +2") or start with a decimal point or comma ("5 - .2", "5 - ,2").
 func svBetweenNumbers(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     var p = i - 1
     var n = i + 1
@@ -41,9 +42,17 @@ func svBetweenNumbers(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     } else if p >= 2 && svOrdinalSuffixAt(rs, p - 1) {
         p -= 2
     }
-    if n < rs.count && svMinus(rs[n]) && svSignAt(rs, n) { n += 1 }  // a signed operand ("5 - -2")
-    return p >= 0 && svDigit(rs[p]) && n < rs.count
-        && (svDigit(rs[n]) || rs[n] == "." && n + 1 < rs.count && svDigit(rs[n + 1]))
+    if n < rs.count && ((svMinus(rs[n]) && svSignAt(rs, n)) || (rs[n] == "+" && svOperandAt(rs, n + 1))) {
+        n += 1  // a signed operand ("5 - -2", "5 - +2")
+    }
+    return p >= 0 && (svDigit(rs[p]) || isHanNumeral(rs[p])) && svOperandAt(rs, n)
+}
+
+/// A number starts at `rs[i]`: a digit, a Han numeral, or a decimal point or comma before a digit.
+func svOperandAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
+    guard i < rs.count else { return false }
+    return svDigit(rs[i]) || isHanNumeral(rs[i])
+        || ((rs[i] == "." || rs[i] == ",") && i + 1 < rs.count && svDigit(rs[i + 1]))
 }
 
 /// The hyphen-minus or the minus sign.
@@ -58,25 +67,28 @@ func svOrdinalSuffixAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     }
 }
 
-/// A '-' or '−' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an exponent
-/// sign ("1e-3"); after a letter it is a joiner ("JIRA-10442") and after a digit a range ("3-4").
+/// A '-' or '−' before a digit, or a decimal point or comma before one ("-.5", "-,5"), is a sign at the start, after a
+/// space or punctuation, or as an exponent sign ("1e-3"); after a letter it is a joiner ("JIRA-10442"), and after a
+/// number, spaced or not, a minus ("3-4", "5 -2").
 func svSignAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     if !svMinus(rs[i]) || i + 1 >= rs.count { return false }
-    if !svDigit(rs[i + 1]) && !(rs[i + 1] == "." && i + 2 < rs.count && svDigit(rs[i + 2])) { return false }
+    if !svDigit(rs[i + 1]) && !((rs[i + 1] == "." || rs[i + 1] == ",") && i + 2 < rs.count && svDigit(rs[i + 2])) {
+        return false
+    }
     if i == 0 { return true }
     let p = rs[i - 1]
     if (p == "e" || p == "E") && i >= 2 && svDigit(rs[i - 2]) { return true }
     return !svLetter(p) && !svDigit(p) && !isMark(p)
 }
 
-private func isHanNumeral(_ r: Unicode.Scalar) -> Bool {
+func isHanNumeral(_ r: Unicode.Scalar) -> Bool {
     svHanDigit[r] != nil || svHanBigUnit[r] != nil || svHanSmallUnit[r] != nil
 }
 
 private let svNumberSeparators = Set(".,/:".unicodeScalars)
 
 func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
-    let rs = Array(s.unicodeScalars)
+    let rs = svUnquote(Array(s.unicodeScalars))
     var out: [SvRaw] = []
     var prevEnd = 0
     func emit(_ kind: SvKind, _ i: Int, _ j: Int) {
@@ -88,7 +100,7 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     var i = 0
     while i < rs.count {
         let r = rs[i]
-        if svDigit(r) || svSignAt(rs, i)
+        if svDigit(r) || (svSignAt(rs, i) && !svBetweenNumbers(rs, i))
             || (r == "." && i + 1 < rs.count && svDigit(rs[i + 1]) && (i == 0 || !svDigit(rs[i - 1])))
             || (r == "," && i + 1 < rs.count && svDigit(rs[i + 1]) && (i == 0 || isSpace(rs[i - 1])))
         {
@@ -108,7 +120,7 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
             if j < rs.count && rs[j] == "%" { j += 1 }
             emit(.number, i, j)
             i = j
-        } else if svSpokenSymbol(r) || (r == "-" && svBetweenNumbers(rs, i)) {
+        } else if svSpokenSymbol(r) || (svMinus(r) && svBetweenNumbers(rs, i)) {
             emit(.symbol, i, i + 1)
             i += 1
         } else if hanNumbers && isHanNumeral(r) && !(i + 1 < rs.count && isMark(rs[i + 1])) {
@@ -159,6 +171,38 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
         }
     }
     return out
+}
+
+private let svQuoteOpeners = Set("([{\"“«".unicodeScalars)
+private let svSentenceEndScalars = Set(".!?。".unicodeScalars)
+
+/// Replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"', so the words
+/// inside are not read as elisions or possessives. An opener stands at a word start after a space, an opening bracket
+/// or the start; a closer at a word end before a space, punctuation or the end; a pair stays within a sentence. An
+/// unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n roll").
+func svUnquote(_ input: [Unicode.Scalar]) -> [Unicode.Scalar] {
+    var rs = input
+    var open = -1
+    for i in rs.indices {
+        let r = rs[i]
+        if !isApostrophe(r) {
+            if svSentenceEndScalars.contains(r) { open = -1 }
+            continue
+        }
+        let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
+            && svLetter(rs[i + 1])
+        let closer = i > 0 && (svLetter(rs[i - 1]) || isMark(rs[i - 1]) || svDigit(rs[i - 1]))
+            && (i + 1 == rs.count || isSpace(rs[i + 1])
+                || (svUnspokenPunct.contains(rs[i + 1]) && !isApostrophe(rs[i + 1])))
+        if closer && open >= 0 {
+            rs[open] = "\""
+            rs[i] = "\""
+            open = -1
+        } else if opener {
+            open = i
+        }
+    }
+    return rs
 }
 
 // --- transcript side: normalisation only ---

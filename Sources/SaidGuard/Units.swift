@@ -123,7 +123,7 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             // Spaced, the reading is the letters as written. Joined, two letters with an article or pronoun among them
             // would make a word ("a T" = "at"), so a joined reading needs three letters or none of a, I.
             var unit: SvUnit = [lit(letters)]
-            if letters.count >= 3 || !(english && (letters.contains("a") || letters.contains("i"))) {
+            if letters.count >= 3 || (!letters.contains("a") && !letters.contains("i")) {
                 unit.append(lit(letters.joined()))
             }
             units.append(unit)
@@ -142,12 +142,25 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         if labels.count >= 2 {  // "one.Next" has no second lowercase label: a number word and a word
             var parts: [String] = []
             var dotted: [String] = []
+            var joined: [String] = []
+            var joinedDotted: [String] = []
+            var hyphen = false
             for (i, l) in labels.enumerated() {
-                if i > 0 { dotted.append("dot") }
+                if i > 0 {
+                    dotted.append("dot")
+                    joinedDotted.append("dot")
+                }
+                hyphen = hyphen || partsOf[l].count > 1
                 parts += partsOf[l]
                 dotted += partsOf[l]
+                joined.append(partsOf[l].joined())
+                joinedDotted.append(partsOf[l].joined())
             }
-            units.append([lit(parts), lit(dotted)])
+            var unit: SvUnit = [lit(parts), lit(dotted)]
+            if hyphen {  // "e-mail.com" = "email dot com", as a hyphenated word may be joined
+                unit += [lit(joined), lit(joinedDotted)]
+            }
+            units.append(unit)
             k = j - 1
             continue
         }
@@ -159,7 +172,8 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             var j = k
             while j < raws.count && j < k + svMaxPhraseWords && word(j) && (j == k || !raws[j].punctBefore) {
                 let parts = partsOf[j]
-                if parts.isEmpty || !parts.allSatisfy(svPhraseWord) { break }
+                // The bound counts words, hyphenated ones too.
+                if parts.isEmpty || !parts.allSatisfy(svPhraseWord) || words.count + parts.count > svMaxPhraseWords { break }
                 words += parts
                 ends.append(words.count)
                 j += 1
@@ -178,8 +192,11 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             if found { continue }
         }
         // A number in the locale's words ("vier", "vingt et un"): a spelling of the value it is parsed as.
-        if let spell, let (unit, used) = spell.wordNumberUnit(raws, partsOf, k) {
-            units.append(unit)
+        if let spell,
+            let (found, used) = spell.wordNumberUnits(
+                raws, partsOf, k, ordinary: { svWordUnit(raws, $0, lower($0), partsOf[$0], english, innerCapital, nextCapital) })
+        {
+            units += found
             k += used - 1
             continue
         }
@@ -276,7 +293,7 @@ func svWithCodeReadings(_ unit: SvUnit, _ raws: [SvRaw], _ k: Int, _ low: String
 /// score's dash is not in one. One pass over the raws, so a long chain costs its length.
 func svExpressions(_ raws: [SvRaw]) -> [Bool] {
     var inside = [Bool](repeating: false, count: raws.count)
-    func operand(_ j: Int) -> Bool { raws[j].kind == .number || raws[j].kind == .symbol }
+    func operand(_ j: Int) -> Bool { raws[j].kind == .number || raws[j].kind == .hanRun || raws[j].kind == .symbol }
     var i = 0
     while i < raws.count {
         guard operand(i) else {
