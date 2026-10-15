@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -309,5 +310,137 @@ func TestMintBody(t *testing.T) {
 	}
 	if _, err := realtime.MintBody(nil, time.Minute); err == nil {
 		t.Error("nil session accepted")
+	}
+}
+
+// A refused handshake is classified from its status and request id, never its body (spec/session.md): Swift cannot
+// read it, so neither implementation does. A reply that should have upgraded is protocol.
+func TestHandshakeRefusalIsClassifiedByStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		class  openaihttp.Class
+	}{
+		{"401 with missing_scope in the body is auth-expired", http.StatusUnauthorized, openaihttp.ClassAuthExpired},
+		{"200 without an upgrade is protocol", http.StatusOK, openaihttp.ClassProtocol},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("x-request-id", "req_ws")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":{"code":"missing_scope","type":"invalid_request_error"}}`))
+			}))
+			t.Cleanup(hs.Close)
+			c, base := fakeopenai.Client(t, hs.URL)
+			_, err := realtime.Dial(context.Background(), config(c, base))
+			wantClass(t, err, tc.class)
+			var e *openaihttp.Error
+			if errors.As(err, &e); e.Status != tc.status || e.RequestID != "req_ws" || e.Code != "" {
+				t.Fatalf("status %d request id %q code %q", e.Status, e.RequestID, e.Code)
+			}
+		})
+	}
+}
+
+// A malformed 101 that the server holds open is bounded by the handshake timeout, not by the library's 3 s cleanup.
+func TestMalformedUpgradeIsBoundedByTheHandshakeTimeout(t *testing.T) {
+	hold := make(chan struct{})
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buf, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_ = buf.Flush()
+		<-hold
+	}))
+	t.Cleanup(func() { close(hold); hs.Close() })
+	c, base := fakeopenai.Client(t, hs.URL)
+	cfg := config(c, base)
+	cfg.HandshakeTimeout = 300 * time.Millisecond
+	start := time.Now()
+	_, err := realtime.Dial(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("a malformed upgrade opened")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Dial took %v with a 300 ms handshake timeout", d)
+	}
+}
+
+type badEvent struct{}
+
+func (badEvent) MarshalJSON() ([]byte, error) { return nil, errors.New("ek_canary_from_marshaller") }
+
+// An event that does not encode is internal with a fixed message: the marshaller's text is never returned.
+func TestSendEncodeFailureHasAFixedMessage(t *testing.T) {
+	s := dialHandler(t, func(c *websocket.Conn) { _, _, _ = c.Read(context.Background()) }, nil)
+	err := s.Send(context.Background(), badEvent{})
+	wantClass(t, err, openaihttp.ClassInternal)
+	if strings.Contains(err.Error(), "canary") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A write stalled on a peer that stopped reading does not hold later sends past their deadline, and Close ends both
+// with ErrClosed.
+func TestStalledWriteDoesNotHoldLaterSends(t *testing.T) {
+	stopped := make(chan struct{})
+	hs := fakeopenai.WebSocket(t, func(c *websocket.Conn) { <-stopped }, nil) // never reads
+	t.Cleanup(func() { close(stopped) })
+	c, base := fakeopenai.Client(t, hs.URL)
+	cfg := config(c, base)
+	var started, sent atomic.Int64
+	cfg.Trace = func(dir string, _ []byte) { // runs holding the write turn, just before the write
+		if dir == "client" {
+			started.Add(1)
+		}
+	}
+	s, err := realtime.Dial(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	big := map[string]string{"type": "x", "pad": strings.Repeat("A", 8<<20)}
+	first := make(chan error, 1)
+	go func() {
+		for {
+			if err := s.Send(context.Background(), big); err != nil {
+				first <- err
+				return
+			}
+			sent.Add(1)
+		}
+	}()
+	// The socket buffers fill: a write has started and has not finished for a while.
+	for quiet, start := 0, time.Now(); quiet < 5; time.Sleep(100 * time.Millisecond) {
+		if started.Load() == sent.Load()+1 {
+			quiet++
+		} else {
+			quiet = 0
+		}
+		if time.Since(start) > 30*time.Second {
+			t.Fatal("writes never stalled")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	begin := time.Now()
+	err = s.Send(ctx, map[string]string{"type": "y"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second Send = %v, want its deadline", err)
+	}
+	if d := time.Since(begin); d > 2*time.Second {
+		t.Fatalf("second Send took %v", d)
+	}
+	_ = s.Close()
+	select {
+	case err := <-first:
+		if !errors.Is(err, realtime.ErrClosed) {
+			t.Fatalf("stalled Send after Close = %v, want ErrClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stalled Send did not end after Close")
 	}
 }

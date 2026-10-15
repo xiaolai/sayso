@@ -51,7 +51,9 @@ public struct Minter: SecretSource {
     /// Mints a secret for `session`, an encoded JSON object (the session shape is the app's). On `auth-expired` it asks
     /// the credentials to refresh after that token and retries once; a second `auth-expired` is `auth-expired`.
     public func secret(session: Data) async throws -> ClientSecret {
-        guard timeout > 0 else { throw RealtimeError(.internal, message: "Minter needs a positive timeout") }
+        guard Deadline.nanoseconds(timeout) != nil else {
+            throw RealtimeError(.internal, message: "Minter needs a positive, finite timeout")
+        }
         let body = try Self.body(session: session, lifetimeSeconds: lifetimeSeconds)
         let token = try await credentials.token()
         do {

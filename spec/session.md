@@ -6,7 +6,11 @@ Component `session`. Product `RealtimeConnection` (Swift), package `realtime` (G
 ## Connection (`NET-03`)
 
 - `wss://api.openai.com/v1/realtime?model=<model>` with `Authorization: Bearer ek_…`, under the same origin policy
-  and proxy as HTTP ([http-and-mint](http-and-mint.md)). A refused handshake is classified like an HTTP reply.
+  and proxy as HTTP ([http-and-mint](http-and-mint.md)). A refused handshake is classified like an HTTP reply from
+  its status and `x-request-id` alone: its body is never read, because URLSession does not expose it, so a 401 is
+  `auth-expired` whatever error code its body names. A reply that should have upgraded (a 2xx, or a 101 that is not
+  a valid upgrade) is `protocol`, with its status. The handshake timeout bounds the whole handshake, a malformed 101
+  included.
 - The handshake timeout and the read limit are required arguments (Mochi 4,000,000 bytes; Checkmate 2,000,000 for
   the recorder and 2 MiB elsewhere; recite 16 MiB). The size check runs before JSON decoding: a message longer
   than the limit is `protocol` and is never decoded.
