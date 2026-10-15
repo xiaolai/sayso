@@ -21,21 +21,21 @@ public struct OriginPolicy: Sendable {
     /// A policy that also allows `host:port` test origins, over `http`/`ws` or `https`/`wss`. For tests only: each host
     /// must be loopback (`127.0.0.0/8`, `::1`) or `localhost`, so a misuse can never send a bearer off the machine.
     public init(testOrigins: [String], realNetworkGuard: (@Sendable () -> String?)? = nil) throws {
+        var canonical: Set<String> = []
         for origin in testOrigins {
-            guard let colon = origin.lastIndex(of: ":"), !origin[origin.index(after: colon)...].isEmpty,
-                Int(origin[origin.index(after: colon)...]) != nil
+            let digits = origin.lastIndex(of: ":").map { origin[origin.index(after: $0)...] } ?? ""
+            guard let colon = origin.lastIndex(of: ":"), !digits.isEmpty, digits.allSatisfy({ ("0"..."9").contains($0) }),
+                let port = Int(digits), (1...65535).contains(port)
             else { throw RealtimeError(.internal, message: "test origin \(origin): want host:port") }
             let host = Self.unbracketed(String(origin[..<colon]))
             guard Self.isLoopback(host) else {
                 throw RealtimeError(.internal, message: "test origin \(origin) is not a loopback host")
             }
+            // Stored as check() spells them: the host bracketed only when it holds a colon, the port in decimal
+            // without leading zeros, as URLComponents reports it.
+            canonical.insert(Self.bracketed(host) + ":" + String(port))
         }
-        // Stored as check() spells them: the host bracketed only when it holds a colon.
-        self.testOrigins = Set(
-            testOrigins.map { o in
-                let colon = o.lastIndex(of: ":")!
-                return Self.bracketed(Self.unbracketed(String(o[..<colon]))) + String(o[colon...])
-            })
+        self.testOrigins = canonical
         self.realNetworkGuard = realNetworkGuard
     }
 
@@ -118,6 +118,8 @@ public final class HTTPClient: Sendable {
         }
         config.httpShouldSetCookies = false
         config.urlCache = nil
+        // Stored credentials would let URLSession add Authorization after the origin policy saw the request.
+        config.urlCredentialStorage = nil
         self.session = URLSession(configuration: config, delegate: RefuseRedirect(), delegateQueue: nil)
     }
 
@@ -219,6 +221,24 @@ final class RefuseRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) { completionHandler(nil) }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) { answerChallenge(challenge, completionHandler) }
+}
+
+/// Server trust is left to the system; every other challenge (HTTP Basic, Digest, NTLM, client certificates) is
+/// refused, so URLSession never adds a credential the origin policy did not see. The 401 itself is delivered.
+func answerChallenge(
+    _ challenge: URLAuthenticationChallenge,
+    _ completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+) {
+    if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+        completionHandler(.performDefaultHandling, nil)
+    } else {
+        completionHandler(.rejectProtectionSpace, nil)
+    }
 }
 
 /// The class of a failure that is not already classified: the caller's cancellation, or a broken connection. One the
@@ -234,48 +254,68 @@ func transportError(_ error: Error, _ what: String) -> Error {
 }
 
 /// Runs `operation` and fails it as `network` when it has not finished within `seconds`; every failure is classified.
-/// At the deadline the operation is cancelled and awaited: if it then ends with a classified HTTP reply (a status
-/// whose body was cut short by the deadline), that reply wins over the timeout, as it does in Go.
+/// The deadline is an instant fixed at the start, and a result is accepted only when the operation produced it before
+/// that instant, so a late timer cannot admit a late success. At the deadline the operation is cancelled and awaited:
+/// if it then ends with a classified HTTP reply (a status whose body was cut short by the deadline), that reply wins
+/// over the timeout, as it does in Go. The caller's own cancellation is `cancelled`, whatever the operation made of it.
 func withDeadline<T: Sendable>(
     seconds: TimeInterval, what: String, _ operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: Deadline.duration(seconds) ?? .zero)
     do {
         return try await withThrowingTaskGroup(of: DeadlineOutcome<T>.self) { group in
-            group.addTask { .value(try await operation()) }
             group.addTask {
-                try await Task.sleep(nanoseconds: Deadline.nanoseconds(seconds) ?? 0)
+                let v = try await operation()
+                return .value(v, inTime: clock.now < deadline)
+            }
+            group.addTask {
+                try await Task.sleep(until: deadline, clock: clock)
                 return .expired
             }
             defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw CancellationError() }
-            if case .value(let v) = first { return v }
-            group.cancelAll()
             let timedOut = RealtimeError(.network, message: "\(what) timed out after \(seconds) s")
+            guard let first = try await group.next() else { throw CancellationError() }
+            if case .value(let v, let inTime) = first {
+                if inTime { return v }
+                throw timedOut
+            }
+            group.cancelAll()
             do {
-                if case .value(let v)? = try await group.next() { return v }
+                // Only a success produced before the instant: the operation can finish between the timer and here.
+                if case .value(let v, true)? = try await group.next() { return v }
             } catch let e as RealtimeError where e.status != 0 {
                 throw e
             } catch {}
             throw timedOut
         }
     } catch {
+        // The task group's cancellation never reaches this task, so a cancelled caller is told apart from the
+        // deadline here: an error body cut short by the caller's cancellation must not become an HTTP refusal.
+        if Task.isCancelled { throw RealtimeError(.cancelled, message: what + " cancelled") }
         throw transportError(error, what)
     }
 }
 
 /// The first child of ``withDeadline(seconds:what:_:)`` to finish.
 private enum DeadlineOutcome<T: Sendable>: Sendable {
-    case value(T)
+    case value(T, inTime: Bool)
     case expired
 }
 
 /// Seconds to a timer's nanoseconds, refusing what would trap the conversion.
 enum Deadline {
-    /// Nil unless `seconds` is positive, finite and fits `UInt64` nanoseconds (about 584 years).
+    /// Nil unless `seconds` is positive, finite and fits `Int64` nanoseconds (about 292 years), so every caller can
+    /// build a `Duration` or a `UInt64` sleep from it without trapping.
     static func nanoseconds(_ seconds: TimeInterval) -> UInt64? {
         guard seconds > 0, seconds.isFinite else { return nil }
         let ns = seconds * 1_000_000_000
-        guard ns < 0x1p64 else { return nil }  // 2⁶⁴: every smaller Double converts
+        guard ns < 0x1p63 else { return nil }  // 2⁶³: every smaller Double converts to Int64
         return UInt64(ns)
+    }
+
+    /// The `Duration` of a validated `seconds`.
+    static func duration(_ seconds: TimeInterval) -> Duration? {
+        nanoseconds(seconds).map { .nanoseconds(Int64($0)) }
     }
 }

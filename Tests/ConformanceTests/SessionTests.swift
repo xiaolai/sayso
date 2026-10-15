@@ -168,7 +168,7 @@ final class SessionBehaviourTests: XCTestCase {
         let m = try await session.next()
         XCTAssertEqual(m.event, .unknown(type: "response.function_call_arguments.done"))
         XCTAssertEqual(m.raw, raw)
-        XCTAssertEqual(session.unknownCounts, ["response.function_call_arguments.done": 1])
+        XCTAssertEqual(session.unknownCounts, [UnknownTypeCount(type: "response.function_call_arguments.done", count: 1)])
         await session.close()
     }
 
