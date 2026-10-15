@@ -48,12 +48,3 @@ func run(t *testing.T, component string, r runner) {
 	}
 	t.Logf("%s: %d fixtures, %d passed", component, len(cases), passed)
 }
-
-func notImplemented(*testing.T, fixtures.Case) (fixtures.Outcome, string) {
-	return fixtures.Fail, "not implemented"
-}
-
-func TestCredentials(t *testing.T) { run(t, "credentials", notImplemented) }
-func TestMint(t *testing.T)        { run(t, "mint", notImplemented) }
-func TestSession(t *testing.T)     { run(t, "session", notImplemented) }
-func TestPCM16(t *testing.T)       { run(t, "pcm16", notImplemented) }

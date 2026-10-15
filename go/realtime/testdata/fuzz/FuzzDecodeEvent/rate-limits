@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"type\":\"rate_limits.updated\",\"rate_limits\":[{\"name\":\"tokens\",\"limit\":1,\"remaining\":0}]}")

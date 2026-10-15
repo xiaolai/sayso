@@ -49,7 +49,8 @@ numeric comparison. The result is absolute, a file, and executable. An explicit 
   pipes (our ends are closed and the readers abandoned).
 - **Messages.** Newline-delimited JSON-RPC. A line longer than 4 MiB, or a line that is not JSON, is `codex-error`.
   Notifications are ignored. A server request (a message with both `id` and `method`, such as an approval) is
-  answered with a JSON-RPC error and never acted on. Stderr is kept up to 64 KiB, scrubbed, for diagnostics only.
+  answered with a JSON-RPC error and never acted on. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+  because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout; expiry is `codex-error`.
 - **Sequence.**
   1. `initialize` with `clientInfo`; the version is the number after the first `/` in `userAgent`. A version below

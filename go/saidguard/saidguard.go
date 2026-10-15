@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/xiaolai/sayso/go/internal/numwords"
+	"github.com/xiaolai/sayso/go/numwords"
 	"golang.org/x/text/unicode/norm"
 	"golang.org/x/text/width"
 )
@@ -1431,3 +1431,8 @@ func (s *svSet) orShifted(src *svSet, e *svMask) {
 		}
 	}
 }
+
+// ParseHanNumeral reads s as a Chinese numeral written in characters (一百一十, 两万五, 一〇八) and reports false for
+// a run that is not a well-formed numeral (一五一十, 亿万, 零十), or overflows. It is the strict parser the said
+// guard uses; package canon shares it.
+func ParseHanNumeral(s string) (uint64, bool) { return svParseHan([]rune(s)) }

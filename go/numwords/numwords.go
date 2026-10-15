@@ -1,6 +1,6 @@
-// Package numwords spells numbers as English words, for the said guard's
-// readings. It comes from recite (github.com/xiaolai/recite), where the
-// canonicaliser and the spoken-form rules share it.
+// Package numwords spells numbers as English words. The said guard's readings,
+// the canonicaliser (package canon) and a consumer's own spoken-form rules
+// share it, so all of them read a digit string the same way.
 package numwords
 
 import "strings"

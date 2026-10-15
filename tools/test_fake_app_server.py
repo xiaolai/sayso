@@ -45,6 +45,29 @@ class Fake(unittest.TestCase):
         _, out, _, _ = converse(scenario, [{"id": i, "method": "m"} for i in range(3)])
         self.assertEqual([("result" in o, "error" in o) for o in out], [(True, False), (False, True), (False, True)])
 
+    def test_steps_count_across_starts_sharing_a_record(self):
+        scenario = {"methods": {"m": [{"result": {"n": 1}}, {"result": {"n": 2}}]}}
+        with tempfile.TemporaryDirectory() as d:
+            sc, rec = pathlib.Path(d, "s.json"), pathlib.Path(d, "r.jsonl")
+            sc.write_text(json.dumps(scenario))
+            env = dict(os.environ, SAYSO_FAKE_SCENARIO=str(sc), SAYSO_FAKE_RECORD=str(rec))
+            seen = []
+            for _ in range(3):
+                p = subprocess.run([sys.executable, "-I", str(FAKE)], input=json.dumps({"id": 1, "method": "m"}) + "\n",
+                                   capture_output=True, text=True, env=env, timeout=20)
+                seen.append(json.loads(p.stdout.splitlines()[0])["result"]["n"])
+        self.assertEqual(seen, [1, 2, 2])
+
+    def test_steps_advance_without_a_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            sc = pathlib.Path(d, "s.json")
+            sc.write_text(json.dumps({"methods": {"m": [{"result": {"n": 1}}, {"result": {"n": 2}}]}}))
+            env = {k: v for k, v in os.environ.items() if k != "SAYSO_FAKE_RECORD"}
+            env["SAYSO_FAKE_SCENARIO"] = str(sc)
+            p = subprocess.run([sys.executable, "-I", str(FAKE)], input="".join(json.dumps({"id": i, "method": "m"}) + "\n" for i in range(3)),
+                               capture_output=True, text=True, env=env, timeout=20)
+        self.assertEqual([json.loads(l)["result"]["n"] for l in p.stdout.splitlines()], [1, 2, 2])
+
     def test_server_request_comes_first(self):
         scenario = {"serverRequest": {"id": "srv-1", "method": "execCommandApproval", "params": {}}, "methods": {"getAuthStatus": [{"result": {}}]}}
         _, out, _, _ = converse(scenario, [{"id": 1, "method": "getAuthStatus", "params": {}}])

@@ -17,13 +17,15 @@ Scenario keys (all optional):
   descendant           start a process in its own session that holds stdout and stderr open for 30 s, and record
                        its pid as {"descendant": pid}
   ignoreTerm           ignore SIGTERM, so only SIGKILL ends the process
-  methods              {method: [step, ...]}; call n of a method uses step n, and the last step repeats. A step is
+  methods              {method: [step, ...]}; call n of a method uses step n, and the last step repeats. Calls are
+                       counted across starts that share SAYSO_FAKE_RECORD, because a client starts one child per
+                       fetch or refresh. A step is
                        {"result": ...} | {"error": {"code", "message"}} | {"raw": "line"} | {"exit": code} |
                        {"rawLineBytes": n} (one line of n bytes, then a newline),
                        optionally with "delayMs". A method with no steps answers -32601.
   byParams             {method: [{"when": {param: value}, "steps": [...]}]}: the first entry whose `when` matches the
                        call's params, by equality of each named key, is used instead of `methods`; each entry
-                       counts its own calls
+                       counts its own calls, across starts like `methods`
 
 {"$jwt": {...claims}} anywhere in a reply is replaced by an unsigned JWT (spec/fixtures.md).
 """
@@ -56,13 +58,38 @@ def substitute(value):
     return value
 
 
+MEMORY: list = []  # the requests of this start, when there is no record
+
+
 def record(entry: dict) -> None:
     path = os.environ.get("SAYSO_FAKE_RECORD")
     if not path:
+        if "req" in entry:
+            MEMORY.append(entry["req"])
         return
     entry["pid"] = os.getpid()
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def recorded_requests() -> list:
+    """Every request in the record so far, across starts; this start's requests when there is no record."""
+    path = os.environ.get("SAYSO_FAKE_RECORD")
+    if not path:
+        return MEMORY
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [e["req"] for e in map(json.loads, f) if "req" in e]
+
+
+def step_key(msg: dict, methods: dict, by_params: dict):
+    """The steps a request is answered from, and the key its calls are counted under."""
+    method, params = msg["method"], msg.get("params") or {}
+    for i, entry in enumerate(by_params.get(method, [])):
+        if all(params.get(k) == v for k, v in entry["when"].items()):
+            return entry["steps"], f"{method}#{i}"
+    return methods.get(method), method
 
 
 def send(message: dict) -> None:
@@ -87,7 +114,6 @@ def main() -> int:
 
     methods = scenario.get("methods", {})
     by_params = scenario.get("byParams", {})
-    calls: dict = {}
     pending_server_request = scenario.get("serverRequest")
 
     for line in sys.stdin:
@@ -102,22 +128,18 @@ def main() -> int:
         record({"req": msg})
         if "id" not in msg or "method" not in msg:
             continue  # a notification, or the client's answer to a server request
-        method, params = msg["method"], msg.get("params") or {}
+        method = msg["method"]
         if method == "initialize" and "initialize" not in methods:
             version = scenario.get("version", "0.162.1")
             agent = "codex_cli_rs" if version is None else f"codex_cli_rs/{version} (Fake 1.0; test)"
             send({"id": msg["id"], "result": {"userAgent": agent}})
             continue
-        steps, key = methods.get(method), method
-        for i, entry in enumerate(by_params.get(method, [])):
-            if all(params.get(k) == v for k, v in entry["when"].items()):
-                steps, key = entry["steps"], f"{method}#{i}"
-                break
+        steps, key = step_key(msg, methods, by_params)
         if not steps:
             send({"id": msg["id"], "error": {"code": -32601, "message": f"Method not found: {method}"}})
             continue
-        n = calls.get(key, 0)
-        calls[key] = n + 1
+        # This request is already recorded, so the earlier calls are the matches before the last one.
+        n = sum(1 for r in recorded_requests() if "id" in r and "method" in r and step_key(r, methods, by_params)[1] == key) - 1
         step = steps[min(n, len(steps) - 1)]
         if step.get("delayMs"):
             time.sleep(step["delayMs"] / 1000)

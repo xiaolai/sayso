@@ -3,15 +3,18 @@
 Shared building blocks for apps that use a local Codex sign-in to drive OpenAI's Realtime API. Specified once, and
 implemented in Go and Swift against one shared set of fixtures.
 
-Status: early. The contract and its fixtures cover every component; only the said guard is implemented so far, in Go.
+Status: early. The contract and its fixtures cover every component. Go implements all five; Swift none yet.
 
 | Component | Spec | Go | Swift |
 |---|---|---|---|
-| Credentials: the local Codex sign-in | [`spec/credentials.md`](spec/credentials.md) | not yet | not yet |
-| Minting a Realtime client secret | [`spec/http-and-mint.md`](spec/http-and-mint.md) | not yet | not yet |
-| WebSocket session and typed events | [`spec/session.md`](spec/session.md) | not yet | not yet |
-| PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | not yet | not yet |
+| Credentials: the local Codex sign-in | [`spec/credentials.md`](spec/credentials.md) | `go/codexauth`, `go/codexapp` | not yet |
+| Minting a Realtime client secret | [`spec/http-and-mint.md`](spec/http-and-mint.md) | `go/realtime`, `go/openaihttp` | not yet |
+| WebSocket session and typed events | [`spec/session.md`](spec/session.md) | `go/realtime` | not yet |
+| PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | `go/pcm16` | not yet |
 | Said guard: did the model read exactly this script? | [`spec/said-guard.md`](spec/said-guard.md) | `go/saidguard` | not yet |
+
+Go also has `go/secret` (the scrubber and the redacting secret types), `go/canon` (a symmetric canonicaliser for
+scoring speech-to-text, outside the fixture contract) and `go/numwords`.
 
 How the implementations are held to one behaviour: [`spec/parity.md`](spec/parity.md). Fixture format:
 [`spec/fixtures.md`](spec/fixtures.md).
@@ -50,4 +53,4 @@ The Go tests read `../fixtures` from this checkout, and fail if the fixtures are
 
 ## Licence
 
-ISC. `go/internal/numwords` comes from [recite](https://github.com/xiaolai/recite).
+ISC. `go/numwords`, `go/canon` and much of the Go module come from [recite](https://github.com/xiaolai/recite).

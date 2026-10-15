@@ -1,0 +1,374 @@
+package codexauth
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/xiaolai/sayso/go/codexapp"
+	"github.com/xiaolai/sayso/go/secret"
+)
+
+// Source chooses where the token comes from.
+type Source string
+
+// Sources.
+const (
+	SourceAuto  Source = "auto"  // Codex when it resolves, else auth.json
+	SourceCodex Source = "codex" // Codex only
+	SourceFile  Source = "file"  // auth.json only
+)
+
+const (
+	backoffStart = 60 * time.Second
+	backoffMax   = 15 * time.Minute
+)
+
+// Config describes how to obtain the token.
+type Config struct {
+	Source    Source // "" means SourceAuto
+	Bin       string // an explicitly chosen executable (a path, or a name looked up in PATH); "" resolves
+	CodexHome string // "" means CODEX_HOME from Env, else unset
+	Home      string // the user's home folder; "" means os.UserHomeDir
+	Env       []string
+	// Candidates are the folders searched after PATH; nil means codexapp.Candidates(Home).
+	Candidates []string
+	// Margin is how much lifetime a token must have left; below it, it is refreshed before use. Required.
+	Margin time.Duration
+	// Timeout bounds every app-server call. Required.
+	Timeout time.Duration
+	Now     func() time.Time // nil means time.Now
+	Logger  *slog.Logger     // nil discards
+	// ClientName is sent to Codex as clientInfo.name; "" means "sayso".
+	ClientName string
+	// Guard, if set, runs before an executable is started or auth.json is read, with its path; an error refuses.
+	// A consumer uses it to keep unit tests away from the real Codex and the real sign-in.
+	Guard func(path string) error
+	// OnFileRetry, if set, runs before the one re-read of auth.json after a parse failure. For tests.
+	OnFileRetry func()
+}
+
+// Info describes the latest fetch.
+type Info struct {
+	Bin          string // the resolved executable; "" when none
+	MissingBin   string // the explicit executable that did not resolve
+	Source       Source // SourceCodex or SourceFile: where the latest token came from, or was looked for
+	CodexHome    string // the CODEX_HOME in force; "" when unset
+	CodexVersion string // "" when unknown
+}
+
+// Credentials hands out the bearer and owns the refresh policy: single-flight, a refresh succeeds when the token it
+// returns is fresh, and a failure backs off from 60 s, doubling to 15 min, without a permanent budget. It is safe for
+// concurrent use and lives as long as the caller wants; Codex runs only during a fetch or a refresh.
+type Credentials struct {
+	cfg  Config
+	path string // PATH of the inherited environment
+
+	lock        chan struct{} // held across a fetch or refresh
+	cur         *secret.Token
+	refreshable bool // cur came from Codex
+	backoff     time.Duration
+	retryAt     time.Time
+	info        Info
+	// refresh asks for a refreshed token; refreshCodex, replaced only by this package's tests.
+	refresh func(context.Context) (secret.Token, error)
+}
+
+// New validates cfg and returns credentials that fetch on first use.
+func New(cfg Config) (*Credentials, error) {
+	if cfg.Margin <= 0 || cfg.Timeout <= 0 {
+		return nil, errors.New("codexauth: Margin and Timeout are required")
+	}
+	switch cfg.Source {
+	case "":
+		cfg.Source = SourceAuto
+	case SourceAuto, SourceCodex, SourceFile:
+	default:
+		return nil, fmt.Errorf("codexauth: unknown source %q", cfg.Source)
+	}
+	if cfg.Env == nil {
+		cfg.Env = os.Environ()
+	}
+	if cfg.Home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("codexauth: locate the home folder: %w", err)
+		}
+		cfg.Home = h
+	}
+	path := ""
+	for _, kv := range cfg.Env {
+		if name, value, _ := strings.Cut(kv, "="); name == "CODEX_HOME" && cfg.CodexHome == "" {
+			cfg.CodexHome = value
+		} else if name == "PATH" {
+			path = value
+		}
+	}
+	if cfg.Candidates == nil {
+		cfg.Candidates = codexapp.Candidates(cfg.Home)
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+	c := &Credentials{cfg: cfg, path: path, lock: make(chan struct{}, 1)}
+	c.refresh = c.refreshCodex
+	return c, nil
+}
+
+func (c *Credentials) acquire(ctx context.Context) error {
+	select {
+	case c.lock <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Credentials) release() { <-c.lock }
+
+// Info returns what the latest fetch found.
+func (c *Credentials) Info() Info {
+	if c.acquire(context.Background()) != nil {
+		return Info{}
+	}
+	defer c.release()
+	return c.info
+}
+
+// fresh reports whether t has at least the margin left; a token of unknown expiry is fresh, and the provider decides.
+func (c *Credentials) fresh(t secret.Token) bool {
+	return t.Expires.IsZero() || t.Expires.Sub(c.cfg.Now()) >= c.cfg.Margin
+}
+
+// Token returns a fresh bearer, fetching on first use and refreshing when less than the margin remains. A token from
+// auth.json is re-read rather than refreshed. The error is an *Error carrying the state.
+func (c *Credentials) Token(ctx context.Context) (secret.Token, error) {
+	if err := c.acquire(ctx); err != nil {
+		return secret.Token{}, err
+	}
+	defer c.release()
+	if c.cur == nil || (!c.refreshable && !c.fresh(*c.cur)) {
+		if err := c.fetchLocked(ctx); err != nil {
+			return secret.Token{}, err
+		}
+	}
+	if c.fresh(*c.cur) {
+		return *c.cur, nil
+	}
+	return c.refreshLocked(ctx)
+}
+
+// RefreshAfter is called when a request made with stale was refused as auth-expired. When stale was already
+// replaced, the replacement is returned without a refresh; otherwise a refresh runs, within the backoff.
+func (c *Credentials) RefreshAfter(ctx context.Context, stale secret.Token) (secret.Token, error) {
+	if err := c.acquire(ctx); err != nil {
+		return secret.Token{}, err
+	}
+	defer c.release()
+	if c.cur != nil && c.cur.Bearer() != stale.Bearer() {
+		return *c.cur, nil
+	}
+	if c.cur == nil || !c.refreshable {
+		if err := c.fetchLocked(ctx); err != nil {
+			return secret.Token{}, err
+		}
+		if c.cur.Bearer() != stale.Bearer() && c.fresh(*c.cur) {
+			return *c.cur, nil
+		}
+		if !c.refreshable {
+			return secret.Token{}, fail(StateExpired, "auth.json holds the refused token, and the file source cannot refresh", nil)
+		}
+	}
+	return c.refreshLocked(ctx)
+}
+
+// refreshLocked asks Codex for a refreshed token, within the backoff. The caller holds the lock.
+func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
+	if !c.refreshable {
+		return secret.Token{}, fail(StateExpired, "the token in auth.json is expiring, and the file source cannot refresh", nil)
+	}
+	now := c.cfg.Now()
+	if now.Before(c.retryAt) {
+		return secret.Token{}, fail(StateExpired, "the last refresh failed; the next attempt waits for the backoff", nil)
+	}
+	tok, err := c.refresh(ctx)
+	if err == nil && !c.fresh(tok) {
+		err = errors.New("Codex returned a token that is still within the margin")
+	}
+	if err != nil {
+		if c.backoff == 0 {
+			c.backoff = backoffStart
+		} else {
+			c.backoff = min(2*c.backoff, backoffMax)
+		}
+		c.retryAt = now.Add(c.backoff)
+		return secret.Token{}, fail(StateExpired, "the refresh did not renew the sign-in", err)
+	}
+	c.backoff, c.retryAt = 0, time.Time{}
+	c.cur = &tok
+	return tok, nil
+}
+
+// fetchLocked obtains a token from the source and installs it. The caller holds the lock.
+func (c *Credentials) fetchLocked(ctx context.Context) error {
+	tok, refreshable, e := c.fetch(ctx)
+	if e != nil {
+		e.CodexVersion = c.info.CodexVersion
+		return e
+	}
+	c.cur, c.refreshable = &tok, refreshable
+	return nil
+}
+
+func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
+	c.info = Info{CodexHome: c.cfg.CodexHome}
+	if c.cfg.Source == SourceFile {
+		tok, e := c.fileToken(false)
+		return tok, false, e
+	}
+	bin, err := codexapp.Resolve(c.cfg.Bin, c.path, c.cfg.Candidates)
+	if err != nil {
+		if c.cfg.Bin != "" || c.cfg.Source == SourceCodex {
+			c.info.MissingBin = c.cfg.Bin
+			return secret.Token{}, false, fail(StateNoCodex, "no Codex executable resolved", err)
+		}
+		tok, e := c.fileToken(true)
+		return tok, false, e
+	}
+	c.info.Bin = bin
+	return c.codexToken(ctx, bin)
+}
+
+// fileToken reads auth.json. fallback marks the file source as the fallback for a missing executable: a missing
+// file is then no-codex.
+func (c *Credentials) fileToken(fallback bool) (secret.Token, *Error) {
+	c.info.Source = SourceFile
+	path, e := authFilePath(c.cfg.CodexHome, c.cfg.Home)
+	if e != nil {
+		return secret.Token{}, e
+	}
+	if c.cfg.Guard != nil {
+		if err := c.cfg.Guard(path); err != nil {
+			return secret.Token{}, fail(StateCodexError, "reading auth.json was refused", err)
+		}
+	}
+	tok, e := readAuthFile(path, c.cfg.OnFileRetry)
+	if e != nil && fallback && e.State == StateNoSignInFile {
+		return secret.Token{}, fail(StateNoCodex, "no Codex executable resolved and auth.json does not exist", e.Err)
+	}
+	return tok, e
+}
+
+func (c *Credentials) start(ctx context.Context, bin string) (*codexapp.Client, *Error) {
+	cl, err := codexapp.Start(ctx, codexapp.Config{
+		Bin: bin, CodexHome: c.cfg.CodexHome, Env: c.cfg.Env, Timeout: c.cfg.Timeout, Logger: c.cfg.Logger,
+		ClientName: c.cfg.ClientName, Guard: c.cfg.Guard,
+	})
+	if err != nil {
+		return nil, fail(StateCodexError, "Codex app-server did not start", err)
+	}
+	c.info.CodexVersion = codexapp.Version(cl.UserAgent())
+	if v := c.info.CodexVersion; v != "" && codexapp.VersionLess(v, MinCodexVersion) {
+		_ = cl.Close()
+		e := fail(StateCodexTooOld, "Codex is older than "+MinCodexVersion, nil)
+		e.CodexVersion = v
+		return nil, e
+	}
+	return cl, nil
+}
+
+// codexToken asks a fresh app-server child: metadata first, and the token only for a ChatGPT sign-in, so an API key
+// is never requested.
+func (c *Credentials) codexToken(ctx context.Context, bin string) (secret.Token, bool, *Error) {
+	c.info.Source = SourceCodex
+	cl, e := c.start(ctx, bin)
+	if e != nil {
+		return secret.Token{}, false, e
+	}
+	defer func() { _ = cl.Close() }()
+	meta, err := cl.GetAuthStatus(ctx, false, false)
+	var rpc *codexapp.RPCError
+	if errors.As(err, &rpc) && rpc.Code == codexapp.CodeMethodNotFound {
+		_ = cl.Close()
+		return c.storeFallback(ctx, bin)
+	}
+	if err != nil {
+		return secret.Token{}, false, fail(StateCodexError, "Codex app-server getAuthStatus failed", err)
+	}
+	if !meta.RequiresOpenAIAuth {
+		return secret.Token{}, false, fail(StateProviderWithoutOpenAIAuth, "the provider in force needs no OpenAI sign-in", nil)
+	}
+	if e := classifyMode(meta.Method); e != nil {
+		return secret.Token{}, false, e
+	}
+	tok, e := tokenFrom(cl.GetAuthStatus(ctx, true, false))
+	return tok, e == nil, e
+}
+
+// storeFallback runs when Codex lacks getAuthStatus: a fresh child's config/read decides whether auth.json is
+// Codex's authority. A running app-server keeps the store it started with, so the answer comes from a new child.
+func (c *Credentials) storeFallback(ctx context.Context, bin string) (secret.Token, bool, *Error) {
+	cl, e := c.start(ctx, bin)
+	if e != nil {
+		return secret.Token{}, false, e
+	}
+	store, err := cl.CredentialsStore(ctx)
+	_ = cl.Close()
+	if err != nil {
+		return secret.Token{}, false, fail(StateCodexError, "Codex app-server config/read failed", err)
+	}
+	if store != "" && store != "file" {
+		e := fail(StateAppServerAuthUnavailable, "Codex lacks getAuthStatus and keeps its sign-in in "+store, nil)
+		return secret.Token{}, false, e
+	}
+	tok, e := c.fileToken(false)
+	return tok, false, e
+}
+
+// refreshCodex asks a fresh child to refresh the sign-in.
+func (c *Credentials) refreshCodex(ctx context.Context) (secret.Token, error) {
+	bin, err := codexapp.Resolve(c.cfg.Bin, c.path, c.cfg.Candidates)
+	if err != nil {
+		return secret.Token{}, err
+	}
+	cl, e := c.start(ctx, bin)
+	if e != nil {
+		return secret.Token{}, e
+	}
+	defer func() { _ = cl.Close() }()
+	tok, e := tokenFrom(cl.GetAuthStatus(ctx, true, true))
+	if e != nil {
+		return secret.Token{}, e
+	}
+	return tok, nil
+}
+
+// tokenFrom checks the method again on a token reply: a changed method is classified like the metadata reply.
+func tokenFrom(full codexapp.AuthStatus, err error) (secret.Token, *Error) {
+	if err != nil {
+		return secret.Token{}, fail(StateCodexError, "Codex app-server getAuthStatus failed", err)
+	}
+	if e := classifyMode(full.Method); e != nil {
+		return secret.Token{}, e
+	}
+	if full.Token() == "" {
+		return secret.Token{}, fail(StateCodexError, "Codex reported a ChatGPT sign-in without a token", nil)
+	}
+	return newToken(full.Token(), "codex"), nil
+}
+
+// String names the source only, never the cached token.
+func (c *Credentials) String() string { return "codexauth.Credentials{" + string(c.cfg.Source) + "}" }
+
+// GoString redacts like String.
+func (c *Credentials) GoString() string { return c.String() }
+
+// Format redacts like String for every verb.
+func (c *Credentials) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(c.String())) }

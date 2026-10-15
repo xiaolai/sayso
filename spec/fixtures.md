@@ -37,7 +37,8 @@ across all files and names its `component`. A case may list `requires` (capabili
 `tools/fake-app-server.py` is the one scripted `codex` both test suites run. A harness installs it as `$binDir/codex`
 and passes the case's `setup.server` object, written to a file, in `SAYSO_FAKE_SCENARIO`. Each start appends one
 JSON line `{"spawn": {"argv", "env", "pid"}}` to `SAYSO_FAKE_RECORD`, and each received message
-`{"req": <message>, "pid"}`. The scenario keys are documented at the top of the script.
+`{"req": <message>, "pid"}`. Scripted replies count calls across every start that shares the record, because a
+client starts one child per fetch or refresh. The scenario keys are documented at the top of the script.
 
 ## Case shapes
 
@@ -71,7 +72,7 @@ JSON line `{"spawn": {"argv", "env", "pid"}}` to `SAYSO_FAKE_RECORD`, and each r
 | `mode`, `codexVersion` | the reported mode or version |
 | `spawns` | how many times `codex` was started |
 | `argv` | the arguments of every start |
-| `requests` | the exact sequence of messages the fake received, across starts: `method`, `params` that must match exactly when given, `notification: true` for a message without `id` |
+| `requests` | the exact sequence of requests and notifications the fake received, across starts (the client's answers to server requests are not counted): `method`, `params` that must match exactly when given, `notification: true` for a message without `id` |
 | `envAbsent`, `envEquals`, `pathStartsWith` | the child's environment |
 | `binDir` | the folder the resolved executable is in |
 | `childrenExited` | no started child is alive when the probe returns |
@@ -96,7 +97,7 @@ refresh), `replies` (in order: `status`, `headers`, and `json` or `body`; `bodyP
 
 `kind`: `close` (`code`, `reason`) → `expect.class`; `error-event` (`event`) → `expect.class`, `fatal`, `code`,
 `type`, `param`; `size` (`readLimit`, `messageBytes`) → `expect.class` (`null`: accepted); `event` (`raw`, the exact
-text) → `expect` with `type` and fields, or `protocolError` (the type named, `null` when there is none),
+text) → `expect` with `type` and fields, or `protocolError` (the type the error must name; `null`: it need not name one),
 `ignored`, or `unknown` (the type). `pcmHex` is the decoded audio.
 
 ### `pcm16` (`pcm16.json`)

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":500,\"message\":\"m\"}}")

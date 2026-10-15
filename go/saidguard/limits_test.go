@@ -34,7 +34,7 @@ func TestBounds(t *testing.T) {
 		if got {
 			t.Errorf("%s: matched, want false", c.name)
 		}
-		if elapsed > time.Second {
+		if elapsed > raceFactor*time.Second {
 			t.Errorf("%s: took %v", c.name, elapsed)
 		}
 		t.Logf("%s: %v", c.name, elapsed)
