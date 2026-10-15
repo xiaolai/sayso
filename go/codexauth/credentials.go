@@ -34,7 +34,10 @@ type Config struct {
 	Bin       string // an explicitly chosen executable (a path, or a name looked up in PATH); "" resolves
 	CodexHome string // "" means CODEX_HOME from Env, else unset
 	Home      string // the user's home folder; "" means os.UserHomeDir
-	Env       []string
+	// ConfineCodexHome, when set, is the folder a CODEX_HOME must resolve inside for auth.json to be read (a
+	// sandboxed app confines it to the home folder). "" confines nothing; ownership is checked either way.
+	ConfineCodexHome string
+	Env              []string
 	// Candidates are the folders searched after PATH; nil means codexapp.Candidates(Home).
 	Candidates []string
 	// Margin is how much lifetime a token must have left; below it, it is refreshed before use. Required.
@@ -250,9 +253,9 @@ func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
 // file is then no-codex.
 func (c *Credentials) fileToken(fallback bool) (secret.Token, *Error) {
 	c.info.Source = SourceFile
-	path, e := authFilePath(c.cfg.CodexHome, c.cfg.Home)
+	path, e := authFilePath(c.cfg.CodexHome, c.cfg.Home, c.cfg.ConfineCodexHome)
 	if e != nil {
-		return secret.Token{}, e
+		return secret.Token{}, c.fallbackState(e, fallback)
 	}
 	if c.cfg.Guard != nil {
 		if err := c.cfg.Guard(path); err != nil {
@@ -260,10 +263,19 @@ func (c *Credentials) fileToken(fallback bool) (secret.Token, *Error) {
 		}
 	}
 	tok, e := readAuthFile(path, c.cfg.OnFileRetry)
-	if e != nil && fallback && e.State == StateNoSignInFile {
-		return secret.Token{}, fail(StateNoCodex, "no Codex executable resolved and auth.json does not exist", e.Err)
+	if e != nil {
+		return secret.Token{}, c.fallbackState(e, fallback)
 	}
-	return tok, e
+	return tok, nil
+}
+
+// fallbackState turns a missing or unusable auth.json into no-codex when the file was only the fallback for a
+// missing executable: with no usable file either, the fix is to install Codex. A sign-in state stays as it is.
+func (c *Credentials) fallbackState(e *Error, fallback bool) *Error {
+	if fallback && (e.State == StateNoSignInFile || e.State == StateCodexError) {
+		return fail(StateNoCodex, "no Codex executable resolved and auth.json is missing or unusable", e)
+	}
+	return e
 }
 
 func (c *Credentials) start(ctx context.Context, bin string) (*codexapp.Client, *Error) {
@@ -321,6 +333,11 @@ func (c *Credentials) storeFallback(ctx context.Context, bin string) (secret.Tok
 	}
 	store, err := cl.CredentialsStore(ctx)
 	_ = cl.Close()
+	var rpc *codexapp.RPCError
+	if errors.As(err, &rpc) && rpc.Code == codexapp.CodeMethodNotFound {
+		// Without config/read the store cannot be confirmed to be the file, so the file is not Codex's authority.
+		return secret.Token{}, false, fail(StateAppServerAuthUnavailable, "Codex lacks getAuthStatus and config/read", err)
+	}
 	if err != nil {
 		return secret.Token{}, false, fail(StateCodexError, "Codex app-server config/read failed", err)
 	}

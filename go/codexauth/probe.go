@@ -2,6 +2,7 @@ package codexauth
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -9,7 +10,7 @@ import (
 type Status struct {
 	State   State
 	Info    Info
-	Mode    string    // the reported sign-in mode for unsupported-auth, scrubbed and bounded
+	Mode    string    // the sign-in mode: "chatgpt" when ready, else as Error.Mode
 	Expires time.Time // the token's expiry when ready; zero when unknown
 	Err     error     // the failure of a non-ready state, for diagnostics
 	// Creds is the credentials object the probe used. It is ready to hand out the token when State is ready, and a
@@ -25,11 +26,12 @@ func Probe(ctx context.Context, cfg Config) (*Status, error) {
 	}
 	tok, err := c.Token(ctx)
 	st := &Status{State: StateOf(err), Info: c.Info(), Err: err, Creds: c}
-	if e, ok := err.(*Error); ok {
+	var e *Error
+	if errors.As(err, &e) {
 		st.Mode = e.Mode
 	}
 	if err == nil {
-		st.Expires = tok.Expires
+		st.Expires, st.Mode = tok.Expires, modeChatGPT
 	}
 	return st, nil
 }

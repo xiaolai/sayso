@@ -1,5 +1,5 @@
 {
- "count": 589,
+ "count": 591,
  "fixtures": [
   {
    "id": "app-ready",
@@ -218,6 +218,12 @@
    "requires": []
   },
   {
+   "id": "app-method-missing-config-missing",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
    "id": "app-no-codex-file-fallback",
    "file": "app-server/app-server.jsonl",
    "component": "credentials",
@@ -291,6 +297,12 @@
   },
   {
    "id": "auth-file-missing-fallback",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-unreadable-fallback",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []

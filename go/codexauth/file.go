@@ -21,8 +21,9 @@ const (
 )
 
 // authFilePath returns $CODEX_HOME/auth.json when codexHome resolves, after following links, to a folder the user
-// owns inside home, and ~/.codex/auth.json when codexHome is unset. A set CODEX_HOME that fails is codex-error.
-func authFilePath(codexHome, home string) (string, *Error) {
+// owns, inside confine when that is set, and ~/.codex/auth.json when codexHome is unset. A set CODEX_HOME that fails
+// is codex-error.
+func authFilePath(codexHome, home, confine string) (string, *Error) {
 	if codexHome == "" {
 		return filepath.Join(home, ".codex", "auth.json"), nil
 	}
@@ -33,13 +34,15 @@ func authFilePath(codexHome, home string) (string, *Error) {
 	if err != nil {
 		return "", fail(StateCodexError, "CODEX_HOME does not resolve", err)
 	}
-	realHome, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		return "", fail(StateCodexError, "the home folder does not resolve", err)
-	}
-	rel, err := filepath.Rel(realHome, real)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fail(StateCodexError, "CODEX_HOME is outside the home folder", nil)
+	if confine != "" {
+		root, err := filepath.EvalSymlinks(confine)
+		if err != nil {
+			return "", fail(StateCodexError, "the folder CODEX_HOME is confined to does not resolve", err)
+		}
+		rel, err := filepath.Rel(root, real)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fail(StateCodexError, "CODEX_HOME is outside the folder it is confined to", nil)
+		}
 	}
 	fi, err := os.Stat(real)
 	if err != nil || !fi.IsDir() {

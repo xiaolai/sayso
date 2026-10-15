@@ -65,18 +65,21 @@ numeric comparison. The result is absolute, a file, and executable. An explicit 
   `config/read {includeLayers: false}`; a running app-server keeps the store it started with, so the answer must
   come from a new child. Its `result.config.cli_auth_credentials_store` decides: `file` (or absent) uses the file
   source below; `keyring`, `auto` and `ephemeral` are `app-server-auth-unavailable`, so a stale `auth.json` left after
-  a move to the keychain is never used.
+  a move to the keychain is never used. A Codex that lacks `config/read` too cannot confirm the file:
+  `app-server-auth-unavailable`; any other `config/read` failure is `codex-error`.
 - **Read-only `CODEX_HOME`.** Codex cannot start there (it creates state before `initialize`); that exit is
   `codex-error`, not a reason to read the file.
 
 ## The file source (`AUTH-02`)
 
-- **Location.** `$CODEX_HOME/auth.json` when `CODEX_HOME` resolves, after following links, to a folder the user owns
-  inside the home folder; otherwise a set `CODEX_HOME` is `codex-error`. Unset: `~/.codex/auth.json`.
+- **Location.** `$CODEX_HOME/auth.json` when `CODEX_HOME` resolves, after following links, to a folder the user
+  owns, and, when the caller confines it (a sandboxed app confines it to the home folder; the fixtures run confined
+  to `$home`), inside that folder; otherwise a set `CODEX_HOME` is `codex-error`. Unset: `~/.codex/auth.json`.
 - **Read.** One `open` with `O_NOFOLLOW | O_NONBLOCK`; `fstat` on that descriptor must show a regular file owned by
   the user and smaller than 64 KiB (65,536 bytes is refused); the bytes are read from that descriptor, bounded.
   A link, a FIFO, a folder, a foreign owner or an oversize file is `codex-error`. A missing file is
-  `no-sign-in-file` (or `no-codex` when the file source was only the fallback for a missing executable). The raw
+  `no-sign-in-file`. When the file source was only the fallback for a missing executable, a missing or unusable
+  file (and a failing `CODEX_HOME`) is `no-codex` instead: with no usable file either, the fix is to install Codex. The raw
   bytes are wiped after decoding. The file is never written.
 - **Torn write.** A parse failure is retried once after a short delay (Codex may be rewriting the file); a second
   failure is `codex-error`.

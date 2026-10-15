@@ -37,7 +37,7 @@ const MinCodexVersion = "0.162.0"
 // auth-expired for StateExpired, codex-error for Codex and file failures, and auth-mode for the sign-in states.
 type Error struct {
 	State        State
-	Mode         string // the reported sign-in mode, scrubbed and bounded; "" when none
+	Mode         string // the reported sign-in mode (api-key, unsupported-auth), scrubbed and bounded; "" otherwise
 	CodexVersion string // "" when unknown
 	Err          error
 }
@@ -94,7 +94,9 @@ func classifyMode(mode string) *Error {
 	case "":
 		return fail(StateNotSignedIn, "Codex is not signed in", nil)
 	case modeAPIKey:
-		return fail(StateAPIKey, "Codex is signed in with an API key", nil)
+		e := fail(StateAPIKey, "Codex is signed in with an API key", nil)
+		e.Mode = modeAPIKey
+		return e
 	}
 	e := fail(StateUnsupported, "Codex is signed in with an unsupported mode", nil)
 	e.Mode = cleanMode(mode)

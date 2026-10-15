@@ -33,6 +33,24 @@
   "note": "The file was only the fallback for a missing executable: the fix is to install Codex."
  },
  {
+  "id": "auth-file-unreadable-fallback",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "fallback",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "raw": "{\"tokens\":"
+   }
+  },
+  "expect": {
+   "state": "no-codex"
+  },
+  "note": "With no Codex executable, an unusable auth.json leaves installing Codex as the fix: no-codex, not codex-error."
+ },
+ {
   "id": "auth-file-chatgpt-tokens-only",
   "component": "credentials",
   "setup": {
