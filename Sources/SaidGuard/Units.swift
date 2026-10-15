@@ -1,0 +1,299 @@
+import Foundation
+
+// --- units ---
+
+private let svTitles = ["Mr": "mister", "Mrs": "missus", "Ms": "miz", "Dr": "doctor"]
+private let svSuffixTitles = ["Jr": "junior", "Sr": "senior"]
+private let svTitleAbbrev = ["mister": "mr", "missus": "mrs", "doctor": "dr", "saint": "st"]
+private let svCaseFree: [String: [String]] = [
+    "vs": ["versus"], "etc": ["et", "cetera"], "e.g": ["for", "example"], "i.e": ["that", "is"],
+]
+private let svAbbreviated = ["for example": "e.g", "et cetera": "etc", "that is": "i.e"]
+
+/// Letters of a spelled code are separated by spaces or initials' dots ("U.S.A."), nothing else.
+func svSpelledGap(_ gap: String) -> Bool { trimSpace(gap.replacingOccurrences(of: ".", with: "")).isEmpty }
+
+func word(_ raws: [SvRaw], _ k: Int) -> Bool { k >= 0 && k < raws.count && raws[k].kind == .word }
+
+func svIsCapitalised(_ s: String) -> Bool { s.unicodeScalars.first.map(isUpper) ?? false }
+
+func svAllCaps(_ s: String) -> Bool { goUpper(s) == s && goLower(s) != s }
+
+func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
+    let base = baseLanguage(language)
+    let raws = svLex(svPre(s), hanNumbers: base == "zh")
+    let english = base == "en"
+    let spell = SpellOut.forLanguage(language)
+    var units: [SvUnit] = []
+    // Each raw's lower-case text and its parts between joiners, computed once: the phrase scans below revisit a raw
+    // up to svMaxPhraseWords times.
+    let lowers = raws.map { svNormApostrophes(svLower($0.text, language)) }
+    let partsOf = lowers.map { fieldsFunc($0, svJoiner) }
+    func word(_ k: Int) -> Bool { SaidGuard.word(raws, k) }
+    func lower(_ k: Int) -> String { lowers[k] }
+    // A capitalised word inside a sentence ("Main" in "on Main St."), not the first word of one.
+    func innerCapital(_ k: Int) -> Bool {
+        word(k) && k > 0 && svIsCapitalised(raws[k].text) && !containsAny(raws[k].gap, ".!?:")
+    }
+    func nextCapital(_ k: Int) -> Bool { word(k + 1) && svIsCapitalised(raws[k + 1].text) }
+
+    // Spoken zeros: "oh" or "o" in a run of digits and number words with no punctuation inside ("oh oh seven",
+    // "X O 4"), English only.
+    var zero = [Bool](repeating: false, count: raws.count)
+    if english {
+        func digitish(_ k: Int) -> Bool {
+            if raws[k].kind == .number { return true }
+            return word(k) && svNumberWordValue(lower(k)) != nil
+        }
+        func oh(_ k: Int) -> Bool { word(k) && (lower(k) == "oh" || lower(k) == "o") }
+        var k = 0
+        while k < raws.count {
+            var j = k
+            var hasDigit = false
+            while j < raws.count && (digitish(j) || oh(j)) && (j == k || !raws[j].punctBefore) {
+                hasDigit = hasDigit || digitish(j)
+                j += 1
+            }
+            for m in k..<j { zero[m] = hasDigit && oh(m) }
+            if j == k { j += 1 }
+            k = j
+        }
+    }
+    func singleLetter(_ k: Int) -> Bool {
+        if !word(k) || zero[k] { return false }
+        let t = Array(raws[k].text.unicodeScalars)
+        return t.count == 1 && t[0].value < 128 && isLetter(t[0])
+    }
+
+    var k = 0
+    while k < raws.count {
+        defer { k += 1 }
+        let r = raws[k]
+        switch r.kind {
+        case .number:
+            if let spell, let (unit, used) = spell.groupedNumberUnit(raws, k, language) {
+                units.append(unit)
+                k += used - 1
+                continue
+            }
+            units += svNumberUnits(r.text, language, spell)
+            continue
+        case .hanRun:
+            units.append(svHanUnit(r.text))
+            continue
+        case .unspacedChar:
+            units.append([lit(svLower(r.text, language))])
+            continue
+        case .symbol:
+            if english && r.text == "^" && k + 1 < raws.count && raws[k + 1].gap.isEmpty
+                && (raws[k + 1].text == "2" || raws[k + 1].text == "3")
+            {
+                let next = raws[k + 1].text
+                let power = next == "2" ? "squared" : "cubed"
+                let w = NumWords.cardinal(UInt64(next)!)[0]
+                units.append([lit("^", next), lit(power), lit("to", "the", "power", "of", w)])
+                k += 1
+                continue
+            }
+            var unit = svSymbolUnit(r.text, english)
+            if r.text == "-" && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty && !svInExpression(raws, k) {
+                unit.append([])  // a range or score ("3-4", "1-0") is often read with no word for the dash
+            }
+            units.append(unit)
+            continue
+        case .word:
+            break
+        }
+        let low = lower(k)
+        if zero[k] {
+            units.append([[["oh", "o", "zero", "0"]]])
+            continue
+        }
+        // A run of single letters is a spelled code, transcribed spaced or joined ("X J" = "XJ").
+        if singleLetter(k) && singleLetter(k + 1) && svSpelledGap(raws[k + 1].gap) {
+            var j = k
+            var letters: [String] = []
+            while j < raws.count && singleLetter(j) && (j == k || svSpelledGap(raws[j].gap)) {
+                letters.append(lower(j))
+                j += 1
+            }
+            // Spaced, the reading is the letters as written. Joined, two letters with an article or pronoun among them
+            // would make a word ("a T" = "at"), so a joined reading needs three letters or none of a, I.
+            var unit: SvUnit = [lit(letters)]
+            if letters.count >= 3 || !(english && (letters.contains("a") || letters.contains("i"))) {
+                unit.append(lit(letters.joined()))
+            }
+            units.append(unit)
+            k = j - 1
+            continue
+        }
+        // A number in words ("a hundred and sixty", "forty-two", "minus seven", "three point five percent",
+        // "twenty-first"): the longest prefix of at most svMaxPhraseWords words that reads as one number.
+        if english, let first = partsOf[k].first, svPhraseWord(first) {
+            var words: [String] = []
+            var ends: [Int] = []  // ends[l-1]: the words in the first l raws
+            var j = k
+            while j < raws.count && j < k + svMaxPhraseWords && word(j) && (j == k || !raws[j].punctBefore) {
+                let parts = partsOf[j]
+                if parts.isEmpty || !parts.allSatisfy(svPhraseWord) { break }
+                words += parts
+                ends.append(words.count)
+                j += 1
+            }
+            var found = false
+            var l = ends.count
+            while l > 0 && !found {
+                if let digits = svParseEnglishPhrase(words[..<ends[l - 1]]) {
+                    let unit = [lit(Array(words[..<ends[l - 1]]))] + svNumberUnits(digits, language, nil)[0]
+                    units.append(unit)
+                    k += l - 1
+                    found = true
+                }
+                l -= 1
+            }
+            if found { continue }
+        }
+        // A number in the locale's words ("vier", "vingt et un"): a spelling of the value it is parsed as.
+        if let spell, let (unit, used) = spell.wordNumberUnit(raws, partsOf, k) {
+            units.append(unit)
+            k += used - 1
+            continue
+        }
+        // "for example" and "et cetera" may be transcribed abbreviated.
+        if english && word(k + 1) && !raws[k + 1].punctBefore {
+            if let abbr = svAbbreviated[low + " " + lower(k + 1)] {
+                units.append([lit(low, lower(k + 1)), lit(abbr)])
+                k += 1
+                continue
+            }
+        }
+        // A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
+        // sentence run together ("end.Next") are not domains.
+        if word(k + 1) && raws[k + 1].gap == "." && low == r.text {
+            var j = k + 1
+            var parts = [low]
+            while j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text && raws[j].text.utf8.count >= 2 {
+                parts.append(lower(j))
+                j += 1
+            }
+            if parts.count >= 2 && low.utf8.count >= 2 {
+                var dotted: [String] = []
+                for (i, p) in parts.enumerated() {
+                    if i > 0 { dotted.append("dot") }
+                    dotted.append(p)
+                }
+                units.append([lit(parts), lit(dotted)])
+                k = j - 1
+                continue
+            }
+        }
+        units.append(svWordUnit(raws, k, low, partsOf[k], english, innerCapital, nextCapital))
+    }
+    return units
+}
+
+func svWordUnit(
+    _ raws: [SvRaw], _ k: Int, _ low: String, _ parts: [String], _ english: Bool, _ innerCapital: (Int) -> Bool,
+    _ nextCapital: (Int) -> Bool
+) -> SvUnit {
+    let r = raws[k]
+    var unit: SvUnit = [lit(parts)]
+    if parts.count > 1 { unit.append(lit(parts.joined())) }  // "e-mail" = "email"
+    if !english { return svWithCodeReadings(unit, raws, k, low) }
+    let bare = r.text.hasSuffix(".") ? String(r.text.dropLast()) : r.text
+    // A title only with its capital and before a name: "ms" is milliseconds, "5 Ms." is no one. "Dr" and "St" after a
+    // capitalised word inside a sentence are a road ("Take Oak Dr.", "Main St. Next").
+    let road =
+        !containsAny(r.gap, ".!?")
+        && (innerCapital(k - 1) || (word(raws, k - 1) && svIsCapitalised(raws[k - 1].text) && !nextCapital(k)))
+    if let exp = svTitles[bare], nextCapital(k), !(road && bare == "Dr") { unit.append(lit(exp)) }
+    if let exp = svSuffixTitles[bare], word(raws, k - 1), svIsCapitalised(raws[k - 1].text) {
+        unit.append(lit(exp))  // after a name: "John Smith Jr."
+    }
+    if bare == "Dr" && road {
+        unit.append(lit("drive"))
+    } else if bare == "St" && road {
+        unit.append(lit("street"))
+    } else if bare == "St" && nextCapital(k) && !road {
+        unit.append(lit("saint"))
+    }
+    if let abbr = svTitleAbbrev[low], nextCapital(k) {
+        unit.append(lit(abbr))  // "Doctor Smith" may be transcribed "Dr. Smith"
+    }
+    // "vs", "etc", "e.g", "i.e" expand only in lower case (a capital first letter is a sentence start): "VS Code" is a
+    // code and "E.G. White" initials.
+    let tail = svString(bare.unicodeScalars.dropFirst())
+    if let exp = svCaseFree[goLower(bare)], goLower(tail) == tail {
+        unit.append(lit(exp))
+        if bare.contains(".") {
+            unit.append(lit(split(goLower(bare), ".")))
+            unit.append(lit(goLower(bare).replacingOccurrences(of: ".", with: "")))
+        }
+    }
+    return svWithCodeReadings(unit, raws, k, low)
+}
+
+/// Common short English words written in capitals for emphasis ("Turn ON", "He said NO"); they are never spelled.
+/// Short codes that are also words (US, IT) are ambiguous; they stay codes, and OK is spelled.
+private let svCapsWords: Set<String> = Set(
+    """
+    AM AN AS AT BE BY DO GO HE HI IF IN IS ME MY NO OF OH ON OR SO TO UP WE YO
+    ALL AND ANY ARE ASK BAD BIG BOY BUT CAN DAY DID END FAR FEW FOR GET GOT HAD HAS HER HEY HIM HIS HOT HOW ITS LET
+    LOT MAN MAY NEW NOT NOW OFF OLD ONE OUR OUT OWN PUT RUN SAY SEE SET SHE SIT TOO TOP TRY TWO USE WAS WAY WHO WHY
+    WIN YES YET YOU
+    """.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init))
+
+/// A letter-by-letter reading for a code: an all-capital word of two or three letters, or of up to six with no vowel
+/// ("API", "HTML"), unless a neighbour is capitalised too (a shouted "STOP NOW"); and two or three letters written
+/// against a number ("mp3", "Nf3"), or a capital code of up to six against one ("JIRA-10442").
+func svWithCodeReadings(_ unit: SvUnit, _ raws: [SvRaw], _ k: Int, _ low: String) -> SvUnit {
+    let text = raws[k].text
+    let n = text.unicodeScalars.count
+    // A capital neighbour that is a word, not a code, makes this shouting ("STOP NOW"); two codes stay codes ("API URL").
+    func shout(_ j: Int) -> Bool {
+        if j < 0 || j >= raws.count || raws[j].kind != .word || !svAllCaps(raws[j].text) { return false }
+        return (raws[j].text.unicodeScalars.count >= 4 && containsAny(raws[j].text, "AEIOUY"))
+            || svCapsWords.contains(raws[j].text)
+    }
+    func attached(_ gap: String) -> Bool { gap.isEmpty || gap == "-" }
+    let glued =
+        (k + 1 < raws.count && raws[k + 1].kind == .number && attached(raws[k + 1].gap))
+        || (k > 0 && raws[k - 1].kind == .number && attached(raws[k].gap))
+    let plain = !containsAny(text, "'-‐‑")
+    let code =
+        svAllCaps(text) && !svCapsWords.contains(text) && !shout(k - 1) && !shout(k + 1)
+        && ((n >= 2 && n <= 3) || (n <= 6 && (glued || !containsAny(goUpper(text), "AEIOUY"))))
+    if plain && (code || (glued && n >= 2 && n <= 3)) { return unit + [lit(svSplitRunes(low))] }
+    return unit
+}
+
+/// The dash at k sits among numbers and another operator ("5-2=3"), so it is a spoken minus.
+func svInExpression(_ raws: [SvRaw], _ k: Int) -> Bool {
+    for step in [-1, 1] {
+        var j = k + step
+        while j >= 0 && j < raws.count && (raws[j].kind == .number || raws[j].kind == .symbol) {
+            if raws[j].kind == .symbol && raws[j].text != "-" { return true }
+            if (step == 1 && !trimSpace(raws[j].gap).isEmpty) || (step == -1 && !trimSpace(raws[j + 1].gap).isEmpty) {
+                break
+            }
+            j += step
+        }
+    }
+    return false
+}
+
+/// The English names of spoken symbols. A symbol without a name matches only itself.
+private let svSymbolNames: [String: [String]] = [
+    "%": ["percent"], "+": ["plus"], "=": ["equals", "equal", "is"], "&": ["and"], "@": ["at"],
+    "°": ["degrees", "degree"], "-": ["minus", "to"], "×": ["times", "multiplied by"], "÷": ["divided by"],
+    "<": ["less than"], ">": ["greater than"], "≠": ["not equal to", "does not equal"], "#": ["number", "hash", "sharp"],
+    "*": ["star", "asterisk", "times"], "′": ["prime"], "^": ["to the power of"],
+]
+
+func svSymbolUnit(_ sym: String, _ english: Bool) -> SvUnit {
+    var unit: SvUnit = [lit(sym)]
+    if english {
+        for n in svSymbolNames[sym] ?? [] { unit.append(lit(n.split(separator: " ").map(String.init))) }
+    }
+    return unit
+}
