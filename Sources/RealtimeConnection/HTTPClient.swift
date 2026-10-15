@@ -173,7 +173,9 @@ public final class HTTPClient: Sendable {
             if over {
                 bytes.task.cancel()
                 body.resetBytes(in: 0..<body.count)
-                throw RealtimeError(.protocol, status: http.statusCode, message: "reply exceeds \(limit) bytes")
+                throw RealtimeError(
+                    .protocol, status: http.statusCode, message: "reply exceeds \(limit) bytes",
+                    requestID: headers["x-request-id"] ?? "")
             }
             return HTTPReply(status: http.statusCode, headers: headers, body: body)
         }

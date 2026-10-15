@@ -68,11 +68,23 @@ func MintBody(session any, lifetime time.Duration) ([]byte, error) {
 	if lifetime <= 0 || lifetime%time.Second != 0 {
 		return nil, fmt.Errorf("realtime: lifetime %v is not a positive whole number of seconds", lifetime)
 	}
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
+	// The session must encode as one strict JSON object, as Swift requires of its bytes. The encoder's error is not
+	// passed on: it can quote a session value (a json.Number, a marshaler's message).
+	var sb bytes.Buffer
+	enc := json.NewEncoder(&sb)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(mintBody{Session: session, ExpiresAfter: expiresAfter{Anchor: "created_at", Seconds: int64(lifetime / time.Second)}}); err != nil {
-		return nil, fmt.Errorf("realtime: encode mint body: %w", err)
+	if err := enc.Encode(session); err != nil {
+		return nil, errors.New("realtime: the session does not encode as JSON")
+	}
+	encoded := bytes.TrimSuffix(sb.Bytes(), []byte("\n"))
+	if root, err := wire.Parse(encoded); err != nil || root.Kind() != '{' {
+		return nil, errors.New("realtime: the session is not a JSON object")
+	}
+	var b bytes.Buffer
+	enc = json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(mintBody{Session: json.RawMessage(encoded), ExpiresAfter: expiresAfter{Anchor: "created_at", Seconds: int64(lifetime / time.Second)}}); err != nil {
+		return nil, errors.New("realtime: the mint body does not encode as JSON")
 	}
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
@@ -116,7 +128,7 @@ func (m *Minter) Secret(ctx context.Context, session any) (secret.ClientSecret, 
 func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secret.ClientSecret, error) {
 	ctx, cancel := context.WithTimeout(ctx, m.Timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(m.BaseURL, "/")+mintPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(m.BaseURL, "/")+mintPath, bytes.NewReader(body))
 	if err != nil {
 		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: mint request", Err: err}
 	}
@@ -124,10 +136,15 @@ func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secre
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := m.Client.Do(req)
 	if err != nil {
-		if !isClassified(err) {
+		var e *openaihttp.Error
+		if !errors.As(err, &e) {
 			return secret.ClientSecret{}, openaihttp.TransportError("realtime: mint", err)
 		}
-		return secret.ClientSecret{}, fmt.Errorf("realtime: mint: %w", err)
+		// The policy's or the redirect refusal, without the *url.Error around it, whose text quotes the redirect's
+		// Location verbatim.
+		refused := *e
+		refused.Message = "realtime: mint: " + e.Message
+		return secret.ClientSecret{}, &refused
 	}
 	if err := openaihttp.CheckResponse(resp, m.Route); err != nil {
 		return secret.ClientSecret{}, err
@@ -163,11 +180,4 @@ func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secre
 		return secret.ClientSecret{}, refuse("mint reply value is missing, empty or longer than 4096 bytes")
 	}
 	return secret.NewClientSecret(value, time.Unix(expires, 0)), nil
-}
-
-// isClassified reports an *openaihttp.Error in the chain: the origin policy's refusal (internal by design) or a
-// refused redirect (protocol). Any other failure of Do is a broken connection.
-func isClassified(err error) bool {
-	var e *openaihttp.Error
-	return errors.As(err, &e)
 }
