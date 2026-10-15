@@ -43,8 +43,11 @@ func svWithAllAnds(_ words: [String]) -> [String] {
     return out
 }
 
-func svCommaDigits(_ n: UInt64) -> String {
-    let s = Array(String(n))
+func svCommaDigits(_ n: UInt64) -> String { svGroupDigits(String(n)) }
+
+/// A string of digits with thousands commas ("1000000000000000" → "1,000,000,000,000,000").
+func svGroupDigits(_ digits: String) -> String {
+    let s = Array(digits)
     var out = ""
     for (i, c) in s.enumerated() {
         if i > 0 && (s.count - i) % 3 == 0 { out.append(",") }
@@ -150,11 +153,13 @@ func svNumberUnits(_ text: String, _ language: String, _ spell: SpellOut?) -> [S
         if svIsGrouped(intPart) {
             intPart = intPart.replacingOccurrences(of: ",", with: "")
             grouped = true
-        } else if frac.isEmpty && sign.isEmpty && suffix.isEmpty && !percent {
+        } else if frac.isEmpty && sign.isEmpty && suffix.isEmpty {
+            // A list ("1,2,3"; "1,2,3%" ends in a percentage, as the transcript side cuts it).
+            let parts = split(intPart, ",")
             var out: [SvUnit] = []
-            for p in split(intPart, ",") {
+            for (i, p) in parts.enumerated() {
                 if p.isEmpty || !svAllDigits(p) { return literal() }
-                out += svNumberUnits(p, language, spell)
+                out += svNumberUnits(i == parts.count - 1 && percent ? p + "%" : p, language, spell)
             }
             return out
         } else {
@@ -177,8 +182,8 @@ func svNumberUnits(_ text: String, _ language: String, _ spell: SpellOut?) -> [S
     var digitForms = [intPart + fracText]
     if intPart.isEmpty {
         digitForms.append("0" + fracText)
-    } else if cardinal && n >= 1000 {
-        digitForms.append(svCommaDigits(n) + fracText)
+    } else if !leadingZero && intPart.utf8.count >= 4 {
+        digitForms.append(svGroupDigits(intPart) + fracText)  // also beyond the cardinal range
     }
     for d in digitForms {
         unit.append(lit(sign + d + suffix))
@@ -188,7 +193,12 @@ func svNumberUnits(_ text: String, _ language: String, _ spell: SpellOut?) -> [S
         }
     }
     if base == "zh" {
-        if cardinal && sign.isEmpty && suffix.isEmpty && frac.isEmpty { unit += svHanSeqs(n) }
+        // The Han spellings reach further than the English cardinals: up to svHanMax (一千万亿 and beyond).
+        if !intPart.isEmpty && !leadingZero && parsed != nil && n <= svHanMax && sign.isEmpty && suffix.isEmpty
+            && frac.isEmpty
+        {
+            unit += svHanSeqs(n)
+        }
         return finish(unit)
     }
 
@@ -197,12 +207,17 @@ func svNumberUnits(_ text: String, _ language: String, _ spell: SpellOut?) -> [S
     if intPart.isEmpty {  // ".5"
         words.append(cat(lit("point"), fracWords))
         words.append(cat([svZeroAlt], lit("point"), fracWords))
+    } else if !cardinal && grouped {
+        // beyond the cardinal range a grouped number is as written, never digit by digit
     } else if !cardinal {  // "007", "01.5", more than fifteen digits: digit by digit
         var w = svWordsWithZero(NumWords.digits(intPart))
         if !frac.isEmpty { w = cat(w, lit("point"), fracWords) }
         words.append(w)
     } else if !frac.isEmpty {
         for f in svCardinalForms(n) { words.append(cat(lit(f), lit("point"), fracWords)) }
+        if intPart.utf8.count >= 4 && !grouped {
+            words.append(cat(svWordsWithZero(NumWords.digits(intPart)), lit("point"), fracWords))  // "1234.5"
+        }
     } else if !suffix.isEmpty {
         for f in svCardinalForms(n) { words.append(lit(NumWords.ordinal(f))) }
     } else {
@@ -312,6 +327,9 @@ func svHanValue(_ run: [Unicode.Scalar]) -> UInt64? {
 }
 
 private let svHanNumerals: [String] = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+
+/// The largest value svRenderHan writes: its 亿 group stays below 一万万.
+let svHanMax: UInt64 = 9_999_999_999_999_999
 
 func svRenderSection(_ n: UInt64, _ leadingTen: Bool) -> String {
     var out = ""
@@ -496,6 +514,7 @@ let svOrdinalWords: [String: String] = {
         m[NumWords.ordinal(c)[0]] = c[0]
     }
     for s in ["hundred", "thousand", "million", "billion", "trillion"] { m[NumWords.ordinal([s])[0]] = s }
+    m["zeroth"] = "zero"
     return m
 }()
 

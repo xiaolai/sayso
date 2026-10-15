@@ -20,6 +20,7 @@ func TestBounds(t *testing.T) {
 		{"domain-middle", strings.Repeat("dot.dot ", 5000), strings.Repeat("dot ", 12500) + "x"},
 		{"han-repeat", strings.Repeat("一亿", 10000), "wrong"},
 		{"hyphen-chain", strings.Repeat("ab", 8000), strings.Repeat("a-b-", 8000) + "x"},
+		{"dash-chain", strings.Repeat("1-", 32767) + "1", "wrong"},
 	}
 	for _, c := range cases {
 		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {
@@ -53,6 +54,21 @@ func TestHanStrict(t *testing.T) {
 	for s, want := range good {
 		if n, ok := svParseHan([]rune(s)); !ok || n != want {
 			t.Errorf("%s: got %d %v, want %d", s, n, ok, want)
+		}
+	}
+}
+
+// ParseHanNumeral also reads digit strings, except the two-digit approximations and strings with 两.
+func TestParseHanNumeralDigitStrings(t *testing.T) {
+	good := map[string]uint64{"一〇八": 108, "二〇二四": 2024, "零": 0, "〇": 0, "两": 2, "七": 7, "一百一": 110}
+	for s, want := range good {
+		if n, ok := ParseHanNumeral(s); !ok || n != want {
+			t.Errorf("%s: got %d %v, want %d", s, n, ok, want)
+		}
+	}
+	for _, s := range []string{"三五", "两三", "一两三", "九九九九九九九九九九九九九九九九九九九九九", ""} {
+		if n, ok := ParseHanNumeral(s); ok {
+			t.Errorf("%s parsed as %d", s, n)
 		}
 	}
 }

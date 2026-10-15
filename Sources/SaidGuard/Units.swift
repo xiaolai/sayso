@@ -36,6 +36,7 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         word(k) && k > 0 && svIsCapitalised(raws[k].text) && !containsAny(raws[k].gap, ".!?:")
     }
     func nextCapital(_ k: Int) -> Bool { word(k + 1) && svIsCapitalised(raws[k + 1].text) }
+    let inExpression = svExpressions(raws)
 
     // Spoken zeros: "oh" or "o" in a run of digits and number words with no punctuation inside ("oh oh seven",
     // "X O 4"), English only.
@@ -91,12 +92,14 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                 let next = raws[k + 1].text
                 let power = next == "2" ? "squared" : "cubed"
                 let w = NumWords.cardinal(UInt64(next)!)[0]
-                units.append([lit("^", next), lit(power), lit("to", "the", "power", "of", w)])
+                units.append([
+                    lit("^", next), lit(power), lit("to", "the", "power", "of", w), lit("to", "the", "power", "of", next),
+                ])
                 k += 1
                 continue
             }
             var unit = svSymbolUnit(r.text, english)
-            if r.text == "-" && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty && !svInExpression(raws, k) {
+            if r.text == "-" && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty && !inExpression[k] {
                 unit.append([])  // a range or score ("3-4", "1-0") is often read with no word for the dash
             }
             units.append(unit)
@@ -124,6 +127,27 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                 unit.append(lit(letters.joined()))
             }
             units.append(unit)
+            k = j - 1
+            continue
+        }
+        // A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
+        // sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
+        // domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
+        if word(k + 1) && raws[k + 1].gap == "." && low == r.text {
+            var j = k + 1
+            var labels = [k]
+            while j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+                labels.append(j)
+                j += 1
+            }
+            var parts: [String] = []
+            var dotted: [String] = []
+            for (i, l) in labels.enumerated() {
+                if i > 0 { dotted.append("dot") }
+                parts += partsOf[l]
+                dotted += partsOf[l]
+            }
+            units.append([lit(parts), lit(dotted)])
             k = j - 1
             continue
         }
@@ -164,26 +188,6 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             if let abbr = svAbbreviated[low + " " + lower(k + 1)] {
                 units.append([lit(low, lower(k + 1)), lit(abbr)])
                 k += 1
-                continue
-            }
-        }
-        // A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
-        // sentence run together ("end.Next") are not domains.
-        if word(k + 1) && raws[k + 1].gap == "." && low == r.text {
-            var j = k + 1
-            var parts = [low]
-            while j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text && raws[j].text.utf8.count >= 2 {
-                parts.append(lower(j))
-                j += 1
-            }
-            if parts.count >= 2 && low.utf8.count >= 2 {
-                var dotted: [String] = []
-                for (i, p) in parts.enumerated() {
-                    if i > 0 { dotted.append("dot") }
-                    dotted.append(p)
-                }
-                units.append([lit(parts), lit(dotted)])
-                k = j - 1
                 continue
             }
         }
@@ -267,19 +271,28 @@ func svWithCodeReadings(_ unit: SvUnit, _ raws: [SvRaw], _ k: Int, _ low: String
     return unit
 }
 
-/// The dash at k sits among numbers and another operator ("5-2=3"), so it is a spoken minus.
-func svInExpression(_ raws: [SvRaw], _ k: Int) -> Bool {
-    for step in [-1, 1] {
-        var j = k + step
-        while j >= 0 && j < raws.count && (raws[j].kind == .number || raws[j].kind == .symbol) {
-            if raws[j].kind == .symbol && raws[j].text != "-" { return true }
-            if (step == 1 && !trimSpace(raws[j].gap).isEmpty) || (step == -1 && !trimSpace(raws[j + 1].gap).isEmpty) {
-                break
-            }
-            j += step
+/// Marks each raw that sits in an expression: a run of numbers and symbols joined by nothing but space that holds an
+/// operator other than "-" ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so in "1-0. #1" the
+/// score's dash is not in one. One pass over the raws, so a long chain costs its length.
+func svExpressions(_ raws: [SvRaw]) -> [Bool] {
+    var inside = [Bool](repeating: false, count: raws.count)
+    func operand(_ j: Int) -> Bool { raws[j].kind == .number || raws[j].kind == .symbol }
+    var i = 0
+    while i < raws.count {
+        guard operand(i) else {
+            i += 1
+            continue
         }
+        var j = i
+        var op = false
+        while j < raws.count && operand(j) && (j == i || !raws[j].punctBefore) {
+            op = op || (raws[j].kind == .symbol && raws[j].text != "-")
+            j += 1
+        }
+        for m in i..<j { inside[m] = op }
+        i = j
     }
-    return false
+    return inside
 }
 
 /// The English names of spoken symbols. A symbol without a name matches only itself.

@@ -12,6 +12,7 @@ package saidguard
 //   - Matching is a bitset simulation over transcript positions, linear in the frontier it actually carries.
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ const MaxBytes = 64 << 10
 // Matches reports whether the model's own transcript (said) is a reading of the script (spoken) in language, a
 // BCP 47 tag ("en", "zh-Hans"). An empty script never matches.
 func Matches(said, spoken, language string) bool {
-	if len(said) > MaxBytes || len(spoken) > MaxBytes {
+	if len(said) > MaxBytes || len(spoken) > MaxBytes || svOverlongMarks(said) || svOverlongMarks(spoken) {
 		return false
 	}
 	units := svScriptUnits(spoken, language)
@@ -43,6 +44,34 @@ func Matches(said, spoken, language string) bool {
 }
 
 // --- normalisation shared by both sides ---
+
+// svMaxMarkRun bounds a run of combining marks. Normalisers differ beyond 30 (Go's inserts U+034F to keep the text
+// stream-safe, Foundation's does not), so a side with a longer run never matches; a lowercase mapping can add one
+// mark (İ → i̇), hence 29.
+const svMaxMarkRun = 29
+
+// svOverlongMarks reports a run of more than svMaxMarkRun non-starters (canonical combining class above zero, or
+// a Hangul medial or final jamo) in the compatibility decomposition of s, or of s after the deletions of
+// preNormalize, which can join two runs.
+func svOverlongMarks(s string) bool {
+	return svMarkRun(s) || svMarkRun(preNormalize(norm.NFKC.String(svSuperscripts(strings.ToValidUTF8(s, " ")))))
+}
+
+func svMarkRun(s string) bool {
+	run := 0
+	for _, r := range s {
+		for _, x := range norm.NFKD.String(string(r)) {
+			if norm.NFD.PropertiesString(string(x)).CCC() != 0 || x >= 0x1160 && x <= 0x11FF || x >= 0xD7B0 && x <= 0xD7FF {
+				if run++; run > svMaxMarkRun {
+					return true
+				}
+			} else {
+				run = 0
+			}
+		}
+	}
+	return false
+}
 
 func svPre(s string) string {
 	s = svSuperscripts(strings.ToValidUTF8(s, " "))
@@ -122,7 +151,8 @@ func svSpokenSymbol(r rune) bool {
 	return true
 }
 
-// svBetweenNumbers: a '-' with a number on each side, spaced or not ("5 - 2", "3-4"), is spoken (minus, to).
+// svBetweenNumbers: a '-' with a number on each side, spaced or not ("5 - 2", "3-4", "5% - 2%", "1st - 3rd"), is
+// spoken (minus, to). A number on the left may end in a percent sign or an ordinal suffix, as the lexer reads it.
 func svBetweenNumbers(rs []rune, i int) bool {
 	p, n := i-1, i+1
 	for p >= 0 && unicode.IsSpace(rs[p]) {
@@ -131,7 +161,24 @@ func svBetweenNumbers(rs []rune, i int) bool {
 	for n < len(rs) && unicode.IsSpace(rs[n]) {
 		n++
 	}
-	return p >= 0 && svDigit(rs[p]) && n < len(rs) && svDigit(rs[n])
+	if p >= 1 && rs[p] == '%' {
+		p--
+	} else if p >= 2 && svOrdinalSuffixAt(rs, p-1) {
+		p -= 2
+	}
+	return p >= 0 && svDigit(rs[p]) && n < len(rs) && (svDigit(rs[n]) || rs[n] == '.' && n+1 < len(rs) && svDigit(rs[n+1]))
+}
+
+// svOrdinalSuffixAt: rs[i:i+2] is "st", "nd", "rd" or "th" in any case.
+func svOrdinalSuffixAt(rs []rune, i int) bool {
+	if i < 0 || i+2 > len(rs) {
+		return false
+	}
+	switch strings.ToLower(string(rs[i : i+2])) {
+	case "st", "nd", "rd", "th":
+		return true
+	}
+	return false
 }
 
 func svDigit(r rune) bool { return r >= '0' && r <= '9' }
@@ -213,8 +260,9 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			emit(svUnspacedChar, i, j)
 			i = j
 		case svLetter(r) || isApostrophe(r) && i+1 < len(rs) && svLetter(rs[i+1]):
-			// "e.g." and "i.e." are one word.
-			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && (i == 0 || !svLetter(rs[i-1])) && (i+3 >= len(rs) || !svLetter(rs[i+3])) {
+			// "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
+			// initials ("E.G. White"), lexed letter by letter like any other.
+			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && !unicode.IsUpper(rs[i+2]) && (i == 0 || !svLetter(rs[i-1])) && (i+3 >= len(rs) || !svLetter(rs[i+3])) {
 				emit(svWord, i, i+3)
 				i += 3
 				if i < len(rs) && rs[i] == '.' {
@@ -232,7 +280,7 @@ func svLex(s string, hanNumbers bool) []svRaw {
 				case isApostrophe(c) && (j > i || j+1 < len(rs) && svLetter(rs[j+1])):
 					j++
 					continue
-				case svJoiner(c) && j > i && j+1 < len(rs) && svLetter(rs[j+1]) && svLetter(rs[j-1]):
+				case svJoiner(c) && j > i && j+1 < len(rs) && svLetter(rs[j+1]) && (svLetter(rs[j-1]) || unicode.IsMark(rs[j-1])):
 					j++
 					continue
 				}
@@ -275,12 +323,18 @@ func svTranscriptTokens(s, language string) []svTok {
 			for i, part := range parts {
 				out = append(out, svTok{part, i < len(parts)-1})
 			}
-		case t.kind == svNumber && strings.HasSuffix(text, "%"):
-			out = append(out, svTok{text: strings.TrimSuffix(text, "%")}, svTok{text: "%"})
-		case t.kind == svNumber && svCommaList(text, language):
-			// "1,2,3" is three numbers, cut as the script side cuts it; commas are not spoken
-			for _, p := range strings.Split(text, ",") {
-				out = append(out, svTok{text: p})
+		case t.kind == svNumber:
+			body, percent := strings.CutSuffix(text, "%")
+			if svCommaList(body, language) {
+				// "1,2,3" is three numbers, cut as the script side cuts it; commas are not spoken
+				for _, p := range strings.Split(body, ",") {
+					out = append(out, svTok{text: p})
+				}
+			} else {
+				out = append(out, svTok{text: body})
+			}
+			if percent {
+				out = append(out, svTok{text: "%"})
 			}
 		default:
 			out = append(out, svTok{text: text})
@@ -372,8 +426,10 @@ func svWithAllAnds(words []string) []string {
 	return out
 }
 
-func svCommaDigits(n uint64) string {
-	s := strconv.FormatUint(n, 10)
+func svCommaDigits(n uint64) string { return svGroupDigits(strconv.FormatUint(n, 10)) }
+
+// svGroupDigits writes a string of digits with thousands commas ("1000000000000000" → "1,000,000,000,000,000").
+func svGroupDigits(s string) string {
 	var b strings.Builder
 	for i, c := range s {
 		if i > 0 && (len(s)-i)%3 == 0 {
@@ -510,11 +566,16 @@ func svNumberUnits(text, language string) []svUnit {
 		switch {
 		case svIsGrouped(intPart):
 			intPart, grouped = strings.ReplaceAll(intPart, ",", ""), true
-		case frac == "" && sign == "" && suffix == "" && !percent:
+		case frac == "" && sign == "" && suffix == "":
+			// A list ("1,2,3"; "1,2,3%" ends in a percentage, as the transcript side cuts it).
+			parts := strings.Split(intPart, ",")
 			var out []svUnit
-			for _, p := range strings.Split(intPart, ",") {
+			for i, p := range parts {
 				if p == "" || !svAllDigits(p) {
 					return literal()
+				}
+				if i == len(parts)-1 && percent {
+					p += "%"
 				}
 				out = append(out, svNumberUnits(p, language)...)
 			}
@@ -541,8 +602,8 @@ func svNumberUnits(text, language string) []svUnit {
 	digitForms := []string{intPart + fracText}
 	if intPart == "" {
 		digitForms = append(digitForms, "0"+fracText)
-	} else if cardinal && n >= 1000 {
-		digitForms = append(digitForms, svCommaDigits(n)+fracText)
+	} else if !leadingZero && len(intPart) >= 4 {
+		digitForms = append(digitForms, svGroupDigits(intPart)+fracText) // also beyond the cardinal range
 	}
 	for _, d := range digitForms {
 		unit = append(unit, lit(sign+d+suffix))
@@ -551,7 +612,8 @@ func svNumberUnits(text, language string) []svUnit {
 		}
 	}
 	if base == "zh" {
-		if cardinal && sign == "" && suffix == "" && frac == "" {
+		// The Han spellings reach further than the English cardinals: up to svHanMax (一千万亿 and beyond).
+		if intPart != "" && !leadingZero && err == nil && n <= svHanMax && sign == "" && suffix == "" && frac == "" {
 			unit = append(unit, svHanSeqs(n)...)
 		}
 		return finish(unit)
@@ -562,6 +624,7 @@ func svNumberUnits(text, language string) []svUnit {
 	switch {
 	case intPart == "": // ".5"
 		words = append(words, cat(lit("point"), fracWords), cat(svSeq{svZeroAlt}, lit("point"), fracWords))
+	case !cardinal && grouped: // beyond the cardinal range a grouped number is as written, never digit by digit
 	case !cardinal: // "007", "01.5", more than fifteen digits: digit by digit
 		w := svWordsWithZero(numwords.Digits(intPart))
 		if frac != "" {
@@ -571,6 +634,9 @@ func svNumberUnits(text, language string) []svUnit {
 	case frac != "":
 		for _, f := range svCardinalForms(n) {
 			words = append(words, cat(lit(f...), lit("point"), fracWords))
+		}
+		if len(intPart) >= 4 && !grouped {
+			words = append(words, cat(svWordsWithZero(numwords.Digits(intPart)), lit("point"), fracWords)) // "1234.5"
 		}
 	case suffix != "":
 		for _, f := range svCardinalForms(n) {
@@ -703,6 +769,9 @@ func svHanValue(run []rune) (uint64, bool) {
 }
 
 var svHanNumerals = []rune{'零', '一', '二', '三', '四', '五', '六', '七', '八', '九'}
+
+// svHanMax is the largest value svRenderHan writes: its 亿 group stays below 一万万.
+const svHanMax = 1e16 - 1
 
 func svRenderSection(n uint64, leadingTen bool) string {
 	var b strings.Builder
@@ -942,6 +1011,7 @@ var svOrdinalWords = func() map[string]string {
 	for _, s := range []string{"hundred", "thousand", "million", "billion", "trillion"} {
 		m[numwords.Ordinal([]string{s})[0]] = s
 	}
+	m["zeroth"] = "zero"
 	return m
 }()
 
@@ -1037,6 +1107,7 @@ func svScriptUnits(s, language string) []svUnit {
 		return word(k) && k > 0 && svIsCapitalised(raws[k].text) && !strings.ContainsAny(raws[k].gap, ".!?:")
 	}
 	nextCapital := func(k int) bool { return word(k+1) && svIsCapitalised(raws[k+1].text) }
+	inExpression := svExpressions(raws)
 
 	// Spoken zeros: "oh" or "o" in a run of digits and number words with no punctuation inside ("oh oh seven",
 	// "X O 4"), English only.
@@ -1092,12 +1163,12 @@ func svScriptUnits(s, language string) []svUnit {
 			if english && r.text == "^" && k+1 < len(raws) && raws[k+1].gap == "" && (raws[k+1].text == "2" || raws[k+1].text == "3") {
 				power := map[string]string{"2": "squared", "3": "cubed"}[raws[k+1].text]
 				w := numwords.Cardinal(uint64(raws[k+1].text[0] - '0'))[0]
-				units = append(units, svUnit{lit("^", raws[k+1].text), lit(power), lit("to", "the", "power", "of", w)})
+				units = append(units, svUnit{lit("^", raws[k+1].text), lit(power), lit("to", "the", "power", "of", w), lit("to", "the", "power", "of", raws[k+1].text)})
 				k++
 				continue
 			}
 			unit := svSymbolUnit(r.text, english)
-			if r.text == "-" && r.gap == "" && k+1 < len(raws) && raws[k+1].gap == "" && !svInExpression(raws, k) {
+			if r.text == "-" && r.gap == "" && k+1 < len(raws) && raws[k+1].gap == "" && !inExpression[k] {
 				unit = append(unit, svSeq{}) // a range or score ("3-4", "1-0") is often read with no word for the dash
 			}
 			units = append(units, unit)
@@ -1123,6 +1194,27 @@ func svScriptUnits(s, language string) []svUnit {
 				unit = append(unit, lit(strings.Join(letters, "")))
 			}
 			units = append(units, unit)
+			k = j - 1
+			continue
+		}
+		// A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
+		// sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
+		// domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
+		if j := k + 1; word(j) && raws[j].gap == "." && low == r.text {
+			labels := []string{low}
+			for j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+				labels = append(labels, lower(j))
+				j++
+			}
+			var parts, dotted []string
+			for i, l := range labels {
+				if i > 0 {
+					dotted = append(dotted, "dot")
+				}
+				ws := strings.FieldsFunc(l, svJoiner)
+				parts, dotted = append(parts, ws...), append(dotted, ws...)
+			}
+			units = append(units, svUnit{lit(parts...), lit(dotted...)})
 			k = j - 1
 			continue
 		}
@@ -1162,27 +1254,6 @@ func svScriptUnits(s, language string) []svUnit {
 			if abbr := map[string]string{"for example": "e.g", "et cetera": "etc", "that is": "i.e"}[pair]; abbr != "" {
 				units = append(units, svUnit{lit(low, lower(k+1)), lit(abbr)})
 				k++
-				continue
-			}
-		}
-		// A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
-		// sentence run together ("end.Next") are not domains.
-		if j := k + 1; word(j) && raws[j].gap == "." && low == r.text {
-			parts := []string{low}
-			for j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text && len(raws[j].text) >= 2 {
-				parts = append(parts, lower(j))
-				j++
-			}
-			if len(parts) >= 2 && len(low) >= 2 {
-				var dotted []string
-				for i, p := range parts {
-					if i > 0 {
-						dotted = append(dotted, "dot")
-					}
-					dotted = append(dotted, p)
-				}
-				units = append(units, svUnit{lit(parts...), lit(dotted...)})
-				k = j - 1
 				continue
 			}
 		}
@@ -1270,19 +1341,27 @@ func svWithCodeReadings(unit svUnit, raws []svRaw, k int, low string) svUnit {
 	return unit
 }
 
-// svInExpression: the dash at k sits among numbers and another operator ("5-2=3"), so it is a spoken minus.
-func svInExpression(raws []svRaw, k int) bool {
-	for _, step := range []int{-1, 1} {
-		for j := k + step; j >= 0 && j < len(raws) && (raws[j].kind == svNumber || raws[j].kind == svSymbol); j += step {
-			if raws[j].kind == svSymbol && raws[j].text != "-" {
-				return true
-			}
-			if step == 1 && strings.TrimSpace(raws[j].gap) != "" || step == -1 && strings.TrimSpace(raws[j+1].gap) != "" {
-				break
-			}
+// svExpressions marks each raw that sits in an expression: a run of numbers and symbols joined by nothing but space
+// that holds an operator other than "-" ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so in
+// "1-0. #1" the score's dash is not in one. One pass over the raws, so a long chain costs its length.
+func svExpressions(raws []svRaw) []bool {
+	in := make([]bool, len(raws))
+	for i := 0; i < len(raws); {
+		if raws[i].kind != svNumber && raws[i].kind != svSymbol {
+			i++
+			continue
 		}
+		j, op := i, false
+		for j < len(raws) && (raws[j].kind == svNumber || raws[j].kind == svSymbol) && (j == i || !raws[j].punctBefore()) {
+			op = op || raws[j].kind == svSymbol && raws[j].text != "-"
+			j++
+		}
+		for m := i; m < j; m++ {
+			in[m] = op
+		}
+		i = j
 	}
-	return false
+	return in
 }
 
 // svSymbolNames: the English names of spoken symbols. A symbol without a name matches only itself.
@@ -1377,7 +1456,8 @@ func newSvMasks(toks []svTok) map[string][]*svMask {
 		joined := t.text
 		for k := 2; k <= svMaxChain && j+k-1 < len(toks) && toks[j+k-2].link; k++ {
 			joined += toks[j+k-1].text
-			add(joined, k, j)
+			// Normalised again: joined jamo or a base and its mark compose ("ᄀ-ᅡ" is 가), as script tokens are.
+			add(norm.NFKC.String(joined), k, j)
 		}
 	}
 	return m
@@ -1432,7 +1512,31 @@ func (s *svSet) orShifted(src *svSet, e *svMask) {
 	}
 }
 
-// ParseHanNumeral reads s as a Chinese numeral written in characters (一百一十, 两万五, 一〇八) and reports false for
-// a run that is not a well-formed numeral (一五一十, 亿万, 零十), or overflows. It is the strict parser the said
-// guard uses; package canon shares it.
-func ParseHanNumeral(s string) (uint64, bool) { return svParseHan([]rune(s)) }
+// ParseHanNumeral reads s as a Chinese numeral written in characters (一百一十, 两万五, 零), or as a digit string of
+// one digit or three or more (一〇八, 二〇二四), and reports false for a run that is not a well-formed numeral
+// (一五一十, 亿万, 零十), a two-digit string (三五 is "three or five", an approximation), a digit string with 两, or
+// a value that overflows. Units are read by the strict parser the said guard uses; package canon shares it.
+func ParseHanNumeral(s string) (uint64, bool) {
+	rs := []rune(s)
+	digits := len(rs) > 0
+	for _, r := range rs {
+		if _, ok := svHanDigit[r]; !ok {
+			digits = false
+		}
+	}
+	if !digits {
+		return svParseHan(rs)
+	}
+	if len(rs) == 2 || len(rs) > 2 && strings.ContainsRune(s, '两') {
+		return 0, false
+	}
+	var n uint64
+	for _, r := range rs {
+		d := svHanDigit[r]
+		if n > (math.MaxUint64-d)/10 {
+			return 0, false
+		}
+		n = n*10 + d
+	}
+	return n, true
+}

@@ -3128,5 +3128,248 @@
   "transcript": "Meet me on Main street.",
   "language": "en",
   "expect": true
+ },
+ {
+  "id": "said-128",
+  "component": "said-guard",
+  "script": "5% − 2%",
+  "transcript": "5% 2%",
+  "language": "en",
+  "expect": false,
+  "note": "A spoken minus after a percentage is a token: dropping it is a dropped symbol (audit row 90)."
+ },
+ {
+  "id": "said-129",
+  "component": "said-guard",
+  "script": "5% − 2%",
+  "transcript": "5% minus 2%",
+  "language": "en",
+  "expect": true,
+  "note": "The minus between two percentages is read by its name."
+ },
+ {
+  "id": "said-130",
+  "component": "said-guard",
+  "script": "1st - 3rd",
+  "transcript": "1st 3rd",
+  "language": "en",
+  "expect": false,
+  "note": "A spaced dash after an ordinal is spoken (\"first to third\"); dropping it is not a reading."
+ },
+ {
+  "id": "said-131",
+  "component": "said-guard",
+  "script": "Send it to E.G. White.",
+  "transcript": "Send it to E G White.",
+  "language": "en",
+  "expect": true,
+  "note": "Capital initials E.G. are letters, not the abbreviation e.g., so spaced letters read them."
+ },
+ {
+  "id": "said-132",
+  "component": "said-guard",
+  "script": "e.g. this one",
+  "transcript": "for example this one",
+  "language": "en",
+  "expect": true,
+  "note": "Lowercase e.g. still expands."
+ },
+ {
+  "id": "said-133",
+  "component": "said-guard",
+  "script": "हिन्दी-भाषा",
+  "transcript": "हिन्दीभाषा",
+  "language": "hi",
+  "expect": true,
+  "note": "A hyphen after a combining mark joins the word, so the joined reading applies."
+ },
+ {
+  "id": "said-134",
+  "component": "said-guard",
+  "script": "1,2,3 %",
+  "transcript": "1,2,3%",
+  "language": "en",
+  "expect": true,
+  "note": "A comma list is cut into numbers on both sides, with or without the percent sign attached."
+ },
+ {
+  "id": "said-135",
+  "component": "said-guard",
+  "script": "1,2,3%",
+  "transcript": "one two three percent",
+  "language": "en",
+  "expect": true,
+  "note": "A comma list ending in a percentage: the percent belongs to the last number."
+ },
+ {
+  "id": "said-136",
+  "component": "said-guard",
+  "script": "가",
+  "transcript": "ᄀ-ᅡ",
+  "language": "ko",
+  "expect": true,
+  "note": "Joined jamo compose to the script's syllable after normalisation; both implementations compare normalised text."
+ },
+ {
+  "id": "said-137",
+  "component": "said-guard",
+  "script": "1,000,000,000,000,000",
+  "transcript": "one zero zero zero zero zero zero zero zero zero zero zero zero zero zero zero",
+  "language": "en",
+  "expect": false,
+  "note": "A grouped number beyond the cardinal range is never read digit by digit (audit row 95)."
+ },
+ {
+  "id": "said-138",
+  "component": "said-guard",
+  "script": "1000000000000000",
+  "transcript": "1,000,000,000,000,000",
+  "language": "en",
+  "expect": true,
+  "note": "Thousands commas are a reading beyond the cardinal range too."
+ },
+ {
+  "id": "said-139",
+  "component": "said-guard",
+  "script": "1234.5",
+  "transcript": "one two three four point five",
+  "language": "en",
+  "expect": true,
+  "note": "Four or more ungrouped integer digits may be read digit by digit, with the fraction."
+ },
+ {
+  "id": "said-140",
+  "component": "said-guard",
+  "script": "1234.5",
+  "transcript": "one two three four five",
+  "language": "en",
+  "expect": false,
+  "note": "The digit reading keeps its point: dropping it changes the value."
+ },
+ {
+  "id": "said-141",
+  "component": "said-guard",
+  "script": "1000000000000000",
+  "transcript": "一千万亿",
+  "language": "zh",
+  "expect": true,
+  "note": "Han spellings reach beyond the English cardinal range."
+ },
+ {
+  "id": "said-142",
+  "component": "said-guard",
+  "script": "zeroth",
+  "transcript": "0th",
+  "language": "en",
+  "expect": true,
+  "note": "zeroth is the ordinal of zero, as 0th reads zeroth."
+ },
+ {
+  "id": "said-143",
+  "component": "said-guard",
+  "script": "zeroth",
+  "transcript": "0",
+  "language": "en",
+  "expect": false,
+  "note": "An ordinal keeps its suffix."
+ },
+ {
+  "id": "said-144",
+  "component": "said-guard",
+  "script": "x̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅",
+  "transcript": "x̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅͏̅",
+  "language": "en",
+  "expect": false,
+  "note": "More than 29 combining marks in a run never match: normalisers differ beyond 30 (Go inserts U+034F, Foundation does not)."
+ },
+ {
+  "id": "said-145",
+  "component": "said-guard",
+  "script": "x̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅",
+  "transcript": "x̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅",
+  "language": "en",
+  "expect": true,
+  "note": "Twenty-nine combining marks are within the bound."
+ },
+ {
+  "id": "said-146",
+  "component": "said-guard",
+  "script": "-0",
+  "transcript": "null",
+  "language": "de",
+  "expect": false,
+  "note": "Negative zero keeps its sign; the spell-out of zero drops it, so -0 is as written only (audit row 103)."
+ },
+ {
+  "id": "said-147",
+  "component": "said-guard",
+  "script": "e-mail.com",
+  "transcript": "e-mail.com",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated domain label matches itself (identity)."
+ },
+ {
+  "id": "said-148",
+  "component": "said-guard",
+  "script": "e-mail.com",
+  "transcript": "e-mail dot com",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated domain label in the dotted reading."
+ },
+ {
+  "id": "said-149",
+  "component": "said-guard",
+  "script": "2^2",
+  "transcript": "two to the power of 2",
+  "language": "en",
+  "expect": true,
+  "note": "The power reading with the exponent in digits."
+ },
+ {
+  "id": "said-150",
+  "component": "said-guard",
+  "script": "2^2",
+  "transcript": "2 2",
+  "language": "en",
+  "expect": false,
+  "note": "The caret is spoken; dropping it is not a reading."
+ },
+ {
+  "id": "said-151",
+  "component": "said-guard",
+  "script": "one.com",
+  "transcript": "one dot com",
+  "language": "en",
+  "expect": true,
+  "note": "A domain is recognised before number words."
+ },
+ {
+  "id": "said-152",
+  "component": "said-guard",
+  "script": "x.com",
+  "transcript": "x dot com",
+  "language": "en",
+  "expect": true,
+  "note": "A domain label may be one letter."
+ },
+ {
+  "id": "said-153",
+  "component": "said-guard",
+  "script": "The score is 1-0. #1 wins.",
+  "transcript": "The score is one zero. Number one wins.",
+  "language": "en",
+  "expect": true,
+  "note": "A symbol across a sentence boundary does not make the score's dash part of an expression."
+ },
+ {
+  "id": "said-154",
+  "component": "said-guard",
+  "script": "5-2=3",
+  "transcript": "5 2 = 3",
+  "language": "en",
+  "expect": false,
+  "note": "Inside an expression the dash is a spoken minus."
  }
 ]
