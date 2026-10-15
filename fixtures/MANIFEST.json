@@ -1,5 +1,5 @@
 {
- "count": 606,
+ "count": 635,
  "fixtures": [
   {
    "id": "app-ready",
@@ -860,6 +860,138 @@
    "requires": []
   },
   {
+   "id": "event-wire-names-exact",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-duplicate-member",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-duplicate-escaped",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-duplicate-in-unknown",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-unknown-conflicting-shape",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-ignored-conflicting-shape",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-lone-surrogate",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-surrogate-pair",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-trailing-value",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-trailing-space",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-depth-limit",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-depth-over",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-int-overflow",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-int-exponent",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-int-max",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-float-overflow",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-code-exponent",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-code-object",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-base64-crlf",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-base64-surplus-padding",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-base64-unpadded",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-wire-base64-trailing-bits",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
    "id": "mint-ok",
    "file": "mint/mint.json",
    "component": "mint",
@@ -1017,6 +1149,48 @@
   },
   {
    "id": "mint-origin-userinfo",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-wire-error-names-exact",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-wire-error-duplicate",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-wire-error-code-exponent",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-wire-reply-names-exact",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-wire-reply-error-keeps-status",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-refused-twice-keeps-fields",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-secret-registered-opaque",
    "file": "mint/mint.json",
    "component": "mint",
    "requires": []

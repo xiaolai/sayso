@@ -17,8 +17,9 @@ public enum ErrorClass: String, Sendable, Equatable, CaseIterable {
     case `internal`
 }
 
-/// A classified failure. `type`, `code`, `param` and `message` come from the provider's error body or event and are
-/// scrubbed; no header or bearer is ever stored. `message` is for diagnostics, never for display.
+/// A classified failure. `type`, `code`, `param` and `message` come from the provider's error body or event; every
+/// string is scrubbed when the error is built, and ``description`` scrubs again, so a field set afterwards cannot
+/// leak a secret either. No header or bearer is ever stored. `message` is for diagnostics, never for display.
 public struct RealtimeError: Error, Sendable, Equatable, CustomStringConvertible {
     public var errorClass: ErrorClass
     /// The HTTP status; 0 if none.
@@ -43,12 +44,12 @@ public struct RealtimeError: Error, Sendable, Equatable, CustomStringConvertible
     ) {
         self.errorClass = errorClass
         self.status = status
-        self.type = type
-        self.code = code
-        self.param = param
-        self.message = message
-        self.requestID = requestID
-        self.route = route
+        self.type = Secret.scrub(type)
+        self.code = Secret.scrub(code)
+        self.param = Secret.scrub(param)
+        self.message = Secret.scrub(message)
+        self.requestID = Secret.scrub(requestID)
+        self.route = Secret.scrub(route)
         self.fatal = fatal
         self.cause = Secret.scrub(cause)
     }
@@ -60,9 +61,9 @@ public struct RealtimeError: Error, Sendable, Equatable, CustomStringConvertible
         if !code.isEmpty { s += " code=\(code)" }
         if !param.isEmpty { s += " param=\(param)" }
         if !message.isEmpty { s += ": " + message }
-        if !cause.isEmpty { s += ": " + Secret.scrub(cause) }
+        if !cause.isEmpty { s += ": " + cause }
         if !requestID.isEmpty { s += " (request id \(requestID))" }
-        return s
+        return Secret.scrub(s)
     }
 
     /// The HTTP rows of the taxonomy.

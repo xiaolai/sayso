@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -59,7 +58,7 @@ type Session struct {
 	logger *slog.Logger
 	trace  func(dir string, raw []byte)
 
-	writeMu sync.Mutex
+	writeSem chan struct{} // one token: the write in progress
 
 	events     chan item
 	closing    chan struct{}
@@ -101,28 +100,34 @@ func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
 	capture := &upgradeCapture{rt: cfg.Client.Transport}
 	hc := *cfg.Client
 	hc.Transport = capture
+	// The library reads a malformed 101's upgraded body during its cleanup for up to 3 s whatever dctx says, so the
+	// upgraded connection is closed when dctx ends before Dial returns.
+	stop := context.AfterFunc(dctx, capture.close)
 	conn, resp, err := websocket.Dial(dctx, cfg.URL, &websocket.DialOptions{
 		HTTPClient: &hc,
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.Secret.Bearer()}},
 	})
+	if !stop() && err == nil {
+		_ = conn.CloseNow() // the deadline closed the connection as Dial succeeded
+		return nil, openaihttp.TransportError("realtime: open WebSocket", dctx.Err())
+	}
 	if err != nil {
-		if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
-			if cerr := openaihttp.CheckResponse(resp, cfg.Route); cerr != nil {
-				return nil, cerr
-			}
-		}
 		var e *openaihttp.Error
 		if errors.As(err, &e) {
 			return nil, err // the origin policy or a refused redirect
+		}
+		if resp != nil {
+			return nil, handshakeRefused(resp, cfg.Route)
 		}
 		return nil, openaihttp.TransportError("realtime: open WebSocket", err)
 	}
 	conn.SetReadLimit(cfg.ReadLimit)
 	s := &Session{
 		conn:       conn,
-		raw:        capture.conn,
+		raw:        capture.captured(),
 		logger:     logger,
 		trace:      cfg.Trace,
+		writeSem:   make(chan struct{}, 1),
 		events:     make(chan item),
 		closing:    make(chan struct{}),
 		readerDone: make(chan struct{}),
@@ -194,23 +199,40 @@ func (s *Session) Next(ctx context.Context) (Event, error) {
 	}
 }
 
-// Send writes one client event as JSON. Writes are serialised.
+// Send writes one client event as JSON. Writes are serialised; waiting for an earlier write observes ctx and Close.
 func (s *Session) Send(ctx context.Context, event any) error {
 	b, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("realtime: encode event: %w", err)
+		// A fixed message: a custom marshaller's error text could carry anything.
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: the event does not encode"}
 	}
 	select {
 	case <-s.closing:
 		return ErrClosed
 	default:
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	select {
+	case s.writeSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closing:
+		return ErrClosed
+	}
+	defer func() { <-s.writeSem }()
+	select {
+	case <-s.closing:
+		return ErrClosed // closed while this write waited
+	default:
+	}
 	if s.trace != nil {
 		s.trace("client", b)
 	}
 	if err := s.conn.Write(ctx, websocket.MessageText, b); err != nil {
+		select {
+		case <-s.closing:
+			return ErrClosed // our own Close ended the write
+		default:
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -248,19 +270,61 @@ func (s *Session) Close() error {
 	return nil
 }
 
+// handshakeRefused classifies a handshake the server answered without a valid upgrade (spec/session.md): from its
+// status and request id like an HTTP reply, never from its body, which URLSession does not expose to the Swift
+// implementation; a reply that should have upgraded (a 2xx, or a 101 the library refused) is protocol.
+func handshakeRefused(resp *http.Response, route string) error {
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		resp.Body = http.NoBody
+		if err := openaihttp.CheckResponse(resp, route); err != nil {
+			return err
+		}
+	}
+	return &openaihttp.Error{Class: openaihttp.ClassProtocol, Status: resp.StatusCode,
+		RequestID: secret.Scrub(resp.Header.Get("x-request-id")), Message: "realtime handshake: not a WebSocket upgrade"}
+}
+
 // upgradeCapture keeps the upgraded connection of the handshake response, so Close can drop it when the library's
-// close handshake hangs. It wraps the client's transport, so the origin policy and proxy still apply.
+// close handshake hangs, and Dial when its deadline passes. It wraps the client's transport, so the origin policy and
+// proxy still apply.
 type upgradeCapture struct {
 	rt   http.RoundTripper
+	mu   sync.Mutex
 	conn io.Closer
+	done bool // closed by the deadline: a connection captured later is closed at once
 }
 
 func (u *upgradeCapture) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := u.rt.RoundTrip(req)
 	if err == nil && resp.StatusCode == http.StatusSwitchingProtocols {
+		u.mu.Lock()
 		u.conn = resp.Body // an io.ReadWriteCloser for a 101
+		late := u.done
+		u.mu.Unlock()
+		if late {
+			_ = resp.Body.Close()
+		}
 	}
 	return resp, err
+}
+
+func (u *upgradeCapture) close() {
+	u.mu.Lock()
+	u.done = true
+	c := u.conn
+	u.mu.Unlock()
+	if c != nil {
+		_ = c.Close()
+	}
+}
+
+func (u *upgradeCapture) captured() io.Closer {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.conn
 }
 
 // ReadError classifies a failed read: a message over the read limit is a protocol error, a close frame is classified

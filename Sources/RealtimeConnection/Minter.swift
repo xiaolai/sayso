@@ -38,8 +38,9 @@ public struct Minter: SecretSource {
         guard lifetimeSeconds > 0 else {
             throw RealtimeError(.internal, message: "lifetime \(lifetimeSeconds) s is not a positive whole number of seconds")
         }
-        guard (try? JSONSerialization.jsonObject(with: session)) is [String: Any] else {
-            throw RealtimeError(.internal, message: "the session is not a JSON object")
+        // Strict JSON in UTF-8 (no BOM, no UTF-16), since its bytes are embedded in a UTF-8 body as they are.
+        guard let root = try? WireJSON.parse(session), root.kind == UInt8(ascii: "{") else {
+            throw RealtimeError(.internal, message: "the session is not a JSON object in UTF-8")
         }
         var body = Data(#"{"session":"#.utf8)
         body.append(session)
@@ -50,7 +51,9 @@ public struct Minter: SecretSource {
     /// Mints a secret for `session`, an encoded JSON object (the session shape is the app's). On `auth-expired` it asks
     /// the credentials to refresh after that token and retries once; a second `auth-expired` is `auth-expired`.
     public func secret(session: Data) async throws -> ClientSecret {
-        guard timeout > 0 else { throw RealtimeError(.internal, message: "Minter needs a positive timeout") }
+        guard Deadline.nanoseconds(timeout) != nil else {
+            throw RealtimeError(.internal, message: "Minter needs a positive, finite timeout")
+        }
         let body = try Self.body(session: session, lifetimeSeconds: lifetimeSeconds)
         let token = try await credentials.token()
         do {
@@ -91,17 +94,21 @@ public struct Minter: SecretSource {
         request.setValue("Bearer " + token.bearer, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        var reply = try await client.send(request, timeout: timeout, limit: Self.maximumReply, route: route).body
-        defer { reply.resetBytes(in: 0..<reply.count) }  // the reply holds the secret
-        guard let object = try? JSONSerialization.jsonObject(with: reply, options: [.fragmentsAllowed]) else {
-            throw RealtimeError(.protocol, message: "mint reply is not valid JSON")
+        let reply = try await client.send(request, timeout: timeout, limit: Self.maximumReply, route: route)
+        var body = reply.body
+        defer { body.resetBytes(in: 0..<body.count) }  // the reply holds the secret
+        // A reply refused after a 2xx keeps the status and request id, as an HTTP refusal does.
+        func refuse(_ message: String) -> RealtimeError {
+            RealtimeError(.protocol, status: reply.status, message: message, requestID: reply.headers["x-request-id"] ?? "")
         }
-        let fields = object as? [String: Any]
-        guard let fields, let rawExpiry = fields["expires_at"], !(rawExpiry is NSNull),
-            let expires = JSONField.int(rawExpiry)
-        else { throw RealtimeError(.protocol, message: "mint reply lacks an integer expires_at") }
-        guard let value = fields["value"] as? String, !value.isEmpty, value.utf8.count <= Self.maximumSecretBytes else {
-            throw RealtimeError(.protocol, message: "mint reply value is missing, empty or longer than 4096 bytes")
+        guard let root = try? WireJSON.parse(body), let fields = try? WireJSON.Object(root) else {
+            throw refuse("mint reply is not valid JSON")
+        }
+        guard let expires = try? fields.int("expires_at") else {
+            throw refuse("mint reply lacks an integer expires_at")
+        }
+        guard let value = try? fields.string("value"), !value.isEmpty, value.utf8.count <= Self.maximumSecretBytes else {
+            throw refuse("mint reply value is missing, empty or longer than 4096 bytes")
         }
         return ClientSecret(bearer: value, expiresAt: Date(timeIntervalSince1970: TimeInterval(expires)))
     }

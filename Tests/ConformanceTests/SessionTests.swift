@@ -178,10 +178,19 @@ final class SessionBehaviourTests: XCTestCase {
         let server = try FakeWebSocketServer(message: raw)
         defer { server.stop() }
         let session = try await open(server, readLimit: 1 << 20)
-        let waiter = Task { try await session.next() }
-        waiter.cancel()
-        _ = try? await waiter.value
-        let m = try await session.next()
+        // Cancelled before it calls next(), so the outcome does not depend on when the message arrives.
+        let waiter = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await session.next()
+        }
+        do {
+            _ = try await waiter.value
+            XCTFail("a cancelled wait returned a message")
+        } catch is CancellationError {}
+        // Bounded: a lost message would otherwise leave this wait hanging.
+        let m = try await RealtimeDeadline.run(seconds: 5, close: { Task { await session.close() } }) {
+            try await session.next()
+        }
         XCTAssertEqual(m.event, .inputCommitted(itemID: "i"))
         await session.close()
         do {

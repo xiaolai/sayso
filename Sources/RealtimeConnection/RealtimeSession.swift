@@ -78,8 +78,11 @@ public final class RealtimeSession: Sendable {
     public static func open(client: HTTPClient, secret: ClientSecret, configuration: Configuration) async throws
         -> RealtimeSession
     {
-        guard configuration.handshakeTimeout > 0, configuration.readLimit > 0 else {
-            throw RealtimeError(.internal, message: "a realtime session needs a handshake timeout and a read limit")
+        guard Deadline.nanoseconds(configuration.handshakeTimeout) != nil, configuration.readLimit > 0,
+            configuration.readLimit < Int.max
+        else {
+            throw RealtimeError(
+                .internal, message: "a realtime session needs a positive, finite handshake timeout and a read limit")
         }
         var request = URLRequest(url: configuration.url)
         request.setValue("Bearer " + secret.bearer, forHTTPHeaderField: "Authorization")
@@ -97,10 +100,23 @@ public final class RealtimeSession: Sendable {
             }
         } catch {
             task.cancel()
-            if let http = task.response as? HTTPURLResponse, http.statusCode != 101 {
-                throw HTTPClient.errorReply(
-                    status: http.statusCode, requestID: http.value(forHTTPHeaderField: "x-request-id") ?? "",
-                    body: Data(), route: configuration.route)
+            // A reply without a valid upgrade is classified from its status and request id (spec/session.md):
+            // URLSession never exposes a refused handshake's body. A 2xx, or a 101 it refused, is protocol.
+            if !Task.isCancelled, let http = task.response as? HTTPURLResponse {
+                let requestID = http.value(forHTTPHeaderField: "x-request-id") ?? ""
+                if http.statusCode == 101 {
+                    throw RealtimeError(
+                        .protocol, status: 101, message: "realtime handshake: not a WebSocket upgrade",
+                        requestID: requestID)
+                }
+                let refused = HTTPClient.errorReply(
+                    status: http.statusCode, requestID: requestID, body: Data(), route: configuration.route)
+                if refused.errorClass == .protocol {
+                    throw RealtimeError(
+                        .protocol, status: http.statusCode, message: "realtime handshake: not a WebSocket upgrade",
+                        requestID: requestID)
+                }
+                throw refused
             }
             throw error
         }
@@ -145,7 +161,7 @@ public final class RealtimeSession: Sendable {
         let reader = self.reader
         let task = self.task
         let dropped = Task {
-            try? await Task.sleep(nanoseconds: UInt64(Self.closeGrace * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: Deadline.nanoseconds(Self.closeGrace) ?? 0)
             if !Task.isCancelled { task.cancel() }
         }
         await reader.value
@@ -241,13 +257,21 @@ private final class Inbox: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Ends the inbox for ``RealtimeSession/close()``: a buffered message is dropped, and every waiter, now and later,
+    /// gets ``RealtimeSession/Closed``.
     func markClosing() {
         lock.lock()
         closing = true
+        buffered = nil
+        if terminal == nil { terminal = RealtimeSession.Closed() }
+        let error = terminal!
+        let pending = order.compactMap { waiters.removeValue(forKey: $0) }
+        order = []
         let s = space
         space = nil
         lock.unlock()
         s?.resume(returning: false)
+        for w in pending { w.resume(throwing: error) }
     }
 
     /// Waits until the last message was taken; false once the session is closing or has ended.
@@ -269,6 +293,10 @@ private final class Inbox: @unchecked Sendable {
 
     func push(_ result: Result<RealtimeMessage, Error>) {
         lock.lock()
+        if closing || terminal != nil {  // the session ended while the reader was decoding
+            lock.unlock()
+            return
+        }
         if let id = order.first, let waiter = waiters.removeValue(forKey: id) {
             order.removeFirst()
             lock.unlock()
@@ -282,7 +310,8 @@ private final class Inbox: @unchecked Sendable {
     /// Ends the session: every waiter, now and later, gets `error`.
     func finish(_ error: Error) {
         lock.lock()
-        terminal = error
+        if terminal == nil { terminal = error }  // after close(), the reader's own error is not the session's
+        let error = terminal!
         let pending = order.compactMap { waiters.removeValue(forKey: $0) }
         order = []
         let s = space
@@ -300,7 +329,10 @@ private final class Inbox: @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<RealtimeMessage, Error>) in
                 lock.lock()
-                if let result = buffered {
+                if Task.isCancelled {  // before taking a message, so a cancelled call never steals one
+                    lock.unlock()
+                    c.resume(throwing: CancellationError())
+                } else if let result = buffered {
                     buffered = nil
                     let s = space
                     space = nil
@@ -310,9 +342,6 @@ private final class Inbox: @unchecked Sendable {
                 } else if let terminal {
                     lock.unlock()
                     c.resume(throwing: terminal)
-                } else if Task.isCancelled {
-                    lock.unlock()
-                    c.resume(throwing: CancellationError())
                 } else {
                     waiters[id] = c
                     order.append(id)

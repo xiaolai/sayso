@@ -25,13 +25,17 @@ public struct OriginPolicy: Sendable {
             guard let colon = origin.lastIndex(of: ":"), !origin[origin.index(after: colon)...].isEmpty,
                 Int(origin[origin.index(after: colon)...]) != nil
             else { throw RealtimeError(.internal, message: "test origin \(origin): want host:port") }
-            var host = String(origin[..<colon])
-            if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+            let host = Self.unbracketed(String(origin[..<colon]))
             guard Self.isLoopback(host) else {
                 throw RealtimeError(.internal, message: "test origin \(origin) is not a loopback host")
             }
         }
-        self.testOrigins = Set(testOrigins)
+        // Stored as check() spells them: the host bracketed only when it holds a colon.
+        self.testOrigins = Set(
+            testOrigins.map { o in
+                let colon = o.lastIndex(of: ":")!
+                return Self.bracketed(Self.unbracketed(String(o[..<colon]))) + String(o[colon...])
+            })
         self.realNetworkGuard = realNetworkGuard
     }
 
@@ -50,7 +54,7 @@ public struct OriginPolicy: Sendable {
             throw Self.refused("request without URL")
         }
         if components.user != nil || components.password != nil { throw Self.refused("userinfo in URL") }
-        let host = components.host ?? ""
+        let host = Self.unbracketed(components.host ?? "")
         let hostPort = components.port.map { "\(Self.bracketed(host)):\($0)" } ?? Self.bracketed(host)
         if let override = request.value(forHTTPHeaderField: "Host"), override != hostPort {
             throw Self.refused("Host header override")
@@ -63,6 +67,11 @@ public struct OriginPolicy: Sendable {
         if let realNetworkGuard, let why = realNetworkGuard() {
             throw Self.refused("real OpenAI origin over the real network refused: " + why)
         }
+    }
+
+    /// `URLComponents` returns an IPv6 host with or without brackets depending on the Foundation version.
+    private static func unbracketed(_ host: String) -> String {
+        host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
     }
 
     private static func bracketed(_ host: String) -> String { host.contains(":") ? "[\(host)]" : host }
@@ -99,6 +108,14 @@ public final class HTTPClient: Sendable {
     public init(policy: OriginPolicy = OriginPolicy(), configuration: URLSessionConfiguration = .ephemeral) {
         self.policy = policy
         let config = configuration.copy() as? URLSessionConfiguration ?? .ephemeral
+        // Headers a configuration adds are invisible to the origin policy, which sees only the request: a bearer or a
+        // Host override set there could reach any origin, so both are removed.
+        if let extra = config.httpAdditionalHeaders {
+            config.httpAdditionalHeaders = extra.filter { key, _ in
+                guard let name = (key as? String)?.lowercased() else { return true }
+                return name != "authorization" && name != "host"
+            }
+        }
         config.httpShouldSetCookies = false
         config.urlCache = nil
         self.session = URLSession(configuration: config, delegate: RefuseRedirect(), delegateQueue: nil)
@@ -113,8 +130,8 @@ public final class HTTPClient: Sendable {
     public func send(_ request: URLRequest, timeout: TimeInterval, limit: Int, route: String = "") async throws
         -> HTTPReply
     {
-        guard timeout > 0, limit >= 0 else {
-            throw RealtimeError(.internal, message: "HTTPClient.send needs a positive timeout and a limit")
+        guard Deadline.nanoseconds(timeout) != nil, limit >= 0 else {
+            throw RealtimeError(.internal, message: "HTTPClient.send needs a positive, finite timeout and a limit")
         }
         try policy.check(request)
         var request = request
@@ -131,21 +148,30 @@ public final class HTTPClient: Sendable {
                 if let k = k as? String, let v = v as? String { headers[k.lowercased()] = v }
             }
             let ok = (200..<300).contains(http.statusCode)
-            let cap = ok ? limit : Self.maximumErrorBody
+            guard ok else {
+                // At most 64 KiB, and a body that fails to arrive still leaves the reply classified by its status.
+                var body = Data()
+                do {
+                    for try await byte in bytes {
+                        body.append(byte)
+                        if body.count == Self.maximumErrorBody { break }
+                    }
+                } catch {}
+                bytes.task.cancel()
+                defer { body.resetBytes(in: 0..<body.count) }
+                throw Self.errorReply(status: http.statusCode, requestID: headers["x-request-id"] ?? "", body: body, route: route)
+            }
             var body = Data()
             var over = false
             for try await byte in bytes {
-                if body.count == cap {
+                if body.count == limit {
                     over = true
                     break
                 }
                 body.append(byte)
             }
-            guard ok else {
-                defer { body.resetBytes(in: 0..<body.count) }
-                throw Self.errorReply(status: http.statusCode, requestID: headers["x-request-id"] ?? "", body: body, route: route)
-            }
             if over {
+                bytes.task.cancel()
                 body.resetBytes(in: 0..<body.count)
                 throw RealtimeError(.protocol, status: http.statusCode, message: "reply exceeds \(limit) bytes")
             }
@@ -154,86 +180,33 @@ public final class HTTPClient: Sendable {
     }
 
     /// The classified error for a non-2xx reply: the provider body `{"error": {"message", "type", "code", "param"}}`
-    /// is read when it has that shape, every string scrubbed.
+    /// is read with the wire rules (spec/session.md, wire JSON) when it has that shape, every string scrubbed; a body
+    /// that is not strict JSON, or has a field of the wrong type, yields no fields.
     public static func errorReply(status: Int, requestID: String, body: Data, route: String) -> RealtimeError {
         var type = "", code = "", param = "", message = ""
-        if let object = try? JSONSerialization.jsonObject(with: body, options: [.fragmentsAllowed]) as? [String: Any],
-            let fields = ProviderError(object["error"])
+        if let root = try? WireJSON.parse(body), let o = try? WireJSON.Object(root),
+            let fields = try? ProviderError(o)
         {
             (type, code, param, message) = (fields.type, fields.code, fields.param, fields.message)
         }
         let scrubbedCode = Secret.scrub(code)
         let errorClass = RealtimeError.classify(status: status, code: scrubbedCode)
         return RealtimeError(
-            errorClass, status: status, type: Secret.scrub(type), code: scrubbedCode, param: Secret.scrub(param),
-            message: Secret.scrub(message), requestID: Secret.scrub(requestID),
-            route: errorClass == .routeDenied ? route : "")
+            errorClass, status: status, type: type, code: scrubbedCode, param: param, message: message,
+            requestID: requestID, route: errorClass == .routeDenied ? route : "")
     }
 }
 
-/// The provider error object, read with Go's decoding rules: a field of the wrong type discards the whole body.
+/// The provider error object; a field of the wrong type discards the whole body.
 struct ProviderError {
-    let type: String, code: String, param: String, message: String
+    var type = "", code = "", param = "", message = ""
 
-    init?(_ value: Any?) {
-        guard let value, !(value is NSNull) else {
-            (type, code, param, message) = ("", "", "", "")
-            return
-        }
-        guard let object = value as? [String: Any] else { return nil }
-        guard let message = JSONField.string(object["message"]), let type = JSONField.string(object["type"]),
-            let param = JSONField.string(object["param"])
-        else { return nil }
-        (self.message, self.type, self.param) = (message, type, param)
-        self.code = JSONField.rawString(object["code"])
-    }
-}
-
-/// Field readers that follow Go's `encoding/json` rules for the shapes this package declares, so both
-/// implementations accept and refuse the same documents.
-enum JSONField {
-    /// A string, or "" for null or absence; nil for any other type.
-    static func string(_ v: Any?) -> String? {
-        switch v {
-        case nil, is NSNull: return ""
-        case let s as String: return s
-        default: return nil
-        }
-    }
-
-    static func isBool(_ n: NSNumber) -> Bool { CFGetTypeID(n) == CFBooleanGetTypeID() }
-
-    /// An integer number, 0 for null or absence; nil for a fraction or exponent, a bool or any other type.
-    static func int(_ v: Any?) -> Int64? {
-        switch v {
-        case nil, is NSNull: return 0
-        case let n as NSNumber where !isBool(n) && !CFNumberIsFloatType(n): return n.int64Value
-        default: return nil
-        }
-    }
-
-    /// Any number, 0 for null or absence; nil for a bool or any other type.
-    static func double(_ v: Any?) -> Double? {
-        switch v {
-        case nil, is NSNull: return 0
-        case let n as NSNumber where !isBool(n): return n.doubleValue
-        default: return nil
-        }
-    }
-
-    /// A provider `code`: a string as itself, a number as its decimal text, null or absence as "", anything else as
-    /// its JSON text.
-    static func rawString(_ v: Any?) -> String {
-        switch v {
-        case nil, is NSNull: return ""
-        case let s as String: return s
-        case let n as NSNumber where isBool(n): return n.boolValue ? "true" : "false"
-        case let n as NSNumber: return n.stringValue
-        default:
-            guard let v, let data = try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed, .sortedKeys])
-            else { return "" }
-            return String(decoding: data, as: UTF8.self)
-        }
+    init(_ body: WireJSON.Object) throws {
+        guard let e = try body.object("error") else { return }
+        message = try e.string("message") ?? ""
+        type = try e.string("type") ?? ""
+        param = try e.string("param") ?? ""
+        code = try e.code("code")
     }
 }
 
@@ -259,21 +232,48 @@ func transportError(_ error: Error, _ what: String) -> Error {
 }
 
 /// Runs `operation` and fails it as `network` when it has not finished within `seconds`; every failure is classified.
+/// At the deadline the operation is cancelled and awaited: if it then ends with a classified HTTP reply (a status
+/// whose body was cut short by the deadline), that reply wins over the timeout, as it does in Go.
 func withDeadline<T: Sendable>(
     seconds: TimeInterval, what: String, _ operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
     do {
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
+        return try await withThrowingTaskGroup(of: DeadlineOutcome<T>.self) { group in
+            group.addTask { .value(try await operation()) }
             group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw RealtimeError(.network, message: "\(what) timed out after \(seconds) s")
+                try await Task.sleep(nanoseconds: Deadline.nanoseconds(seconds) ?? 0)
+                return .expired
             }
             defer { group.cancelAll() }
             guard let first = try await group.next() else { throw CancellationError() }
-            return first
+            if case .value(let v) = first { return v }
+            group.cancelAll()
+            let timedOut = RealtimeError(.network, message: "\(what) timed out after \(seconds) s")
+            do {
+                if case .value(let v)? = try await group.next() { return v }
+            } catch let e as RealtimeError where e.status != 0 {
+                throw e
+            } catch {}
+            throw timedOut
         }
     } catch {
         throw transportError(error, what)
+    }
+}
+
+/// The first child of ``withDeadline(seconds:what:_:)`` to finish.
+private enum DeadlineOutcome<T: Sendable>: Sendable {
+    case value(T)
+    case expired
+}
+
+/// Seconds to a timer's nanoseconds, refusing what would trap the conversion.
+enum Deadline {
+    /// Nil unless `seconds` is positive, finite and fits `UInt64` nanoseconds (about 584 years).
+    static func nanoseconds(_ seconds: TimeInterval) -> UInt64? {
+        guard seconds > 0, seconds.isFinite else { return nil }
+        let ns = seconds * 1_000_000_000
+        guard ns < 0x1p64 else { return nil }  // 2⁶⁴: every smaller Double converts
+        return UInt64(ns)
     }
 }

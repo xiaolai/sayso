@@ -132,200 +132,139 @@ public enum RealtimeEvent: Sendable, Equatable {
         return RealtimeError(.rateLimited, message: "rate limit \"\(Secret.scrub(spent.name))\" exhausted")
     }
 
-    /// Decodes one server event by its type. Unknown types decode to ``unknown(type:)``. Invalid JSON, a field of the
-    /// wrong type, a missing required field, bad base64 or an unknown `response.status` is a `protocol` error that
-    /// names the event type only, never the payload. The field rules are Go's `encoding/json` rules for the shapes
-    /// both implementations declare, so the two accept and refuse the same events.
+    /// Decodes one server event by its type. The whole event must be strict JSON (spec/session.md, wire JSON); then
+    /// only the fields of its type are read, so an ignored or unknown type is never refused for the shape of a field
+    /// this package does not consume. A field of the wrong type, a missing required field, bad base64 or an unknown
+    /// `response.status` is a `protocol` error that names the event type only, never the payload.
     public static func decode(_ data: Data) throws -> RealtimeEvent {
-        guard let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
-            throw protocolError("", "not valid JSON")
+        let notJSON = protocolError("", "not valid JSON")
+        guard let root = try? WireJSON.parse(data) else { throw notJSON }
+        if root.isNull { throw protocolError("", "missing type") }
+        guard let w = try? WireJSON.Object(root), let type = try? w.string("type") else { throw notJSON }
+        guard !type.isEmpty else { throw protocolError("", "missing type") }
+        do {
+            if let event = try typed(type, w) { return event }
+        } catch is WireJSON.Invalid {
+            throw notJSON
         }
-        if parsed is NSNull { throw protocolError("", "missing type") }
-        guard let object = parsed as? [String: Any], let w = Wire(object) else {
-            throw protocolError("", "not valid JSON")
-        }
-        guard let type = w.type, !type.isEmpty else { throw protocolError("", "missing type") }
+        return ignoredTypes.contains(type) ? .ignored(type: type) : .unknown(type: type)
+    }
+
+    /// The consumed types; nil for any other. Every field of the type is read before a missing one is reported, as
+    /// in Go.
+    private static func typed(_ type: String, _ w: WireJSON.Object) throws -> RealtimeEvent? {
         func missing(_ field: String) -> RealtimeError { protocolError(type, "missing " + field) }
         switch type {
         case sessionCreatedType:
-            guard let sessionType = w.sessionType else { throw missing("session.type") }
-            return .sessionCreated(sessionType: sessionType, model: w.sessionModel)
+            guard let session = try w.object("session") else { throw missing("session.type") }
+            let sessionType = try session.string("type")
+            let model = try session.string("model") ?? ""
+            guard let sessionType else { throw missing("session.type") }
+            return .sessionCreated(sessionType: sessionType, model: model)
         case responseCreatedType:
-            guard let r = w.response, let id = r.id else { throw missing("response.id") }
-            return .responseCreated(responseID: id, metadata: r.metadata)
+            guard let r = try w.object("response") else { throw missing("response.id") }
+            let id = try r.string("id")
+            let metadata = try r.stringMap("metadata")
+            guard let id else { throw missing("response.id") }
+            return .responseCreated(responseID: id, metadata: metadata)
         case audioDeltaType:
-            guard let id = w.responseID, let delta = w.delta else { throw missing("response_id or delta") }
-            guard let pcm = Data(base64Encoded: delta) else { throw protocolError(type, "delta is not base64") }
+            let (id, delta) = (try w.string("response_id"), try w.string("delta"))
+            guard let id, let delta else { throw missing("response_id or delta") }
+            guard let pcm = StrictBase64.decode(delta) else { throw protocolError(type, "delta is not base64") }
             return .audioDelta(responseID: id, pcm: pcm)
         case transcriptDeltaType:
-            guard let id = w.responseID, let delta = w.delta else { throw missing("response_id or delta") }
+            let (id, delta) = (try w.string("response_id"), try w.string("delta"))
+            guard let id, let delta else { throw missing("response_id or delta") }
             return .transcriptDelta(responseID: id, delta: delta)
         case responseDoneType:
-            guard let r = w.response else { throw missing("response") }
-            guard let rawStatus = r.status else { throw missing("response.status") }
-            guard let id = r.id else { throw missing("response.id") }
-            // The value is payload, never named.
-            guard let status = ResponseStatus(rawValue: rawStatus) else {
-                throw protocolError(type, "unknown response.status")
-            }
-            return .responseDone(
-                ResponseDone(responseID: id, status: status, statusReason: r.statusReason, usage: r.usage, metadata: r.metadata))
+            return .responseDone(try done(type, w))
         case rateLimitsUpdatedType:
-            guard let limits = w.rateLimits else { throw missing("rate_limits") }
-            var out: [RateLimit] = []
-            for l in limits {
-                guard let remaining = l.remaining else { throw missing("rate_limits[].remaining") }
-                out.append(RateLimit(name: l.name, limit: l.limit, remaining: remaining, resetSeconds: l.resetSeconds))
+            guard let list = try w.array("rate_limits") else { throw missing("rate_limits") }
+            var limits: [RateLimit] = []
+            for item in list {
+                var remaining: Int64?
+                var l = RateLimit(name: "", limit: 0, remaining: 0, resetSeconds: 0)
+                if !item.isNull {
+                    let o = try WireJSON.Object(item)
+                    l.name = try o.string("name") ?? ""
+                    l.limit = try o.int("limit") ?? 0
+                    remaining = try o.int("remaining")
+                    l.resetSeconds = try o.double("reset_seconds") ?? 0
+                }
+                guard let remaining else { throw missing("rate_limits[].remaining") }
+                l.remaining = remaining
+                limits.append(l)
             }
-            return .rateLimitsUpdated(out)
+            return .rateLimitsUpdated(limits)
         case errorType:
-            return .error(try classified(type, w.error))
+            return .error(try classified(type, w))
         case inputCommittedType:
-            guard let item = w.itemID else { throw missing("item_id") }
+            guard let item = try w.string("item_id") else { throw missing("item_id") }
             return .inputCommitted(itemID: item)
         case transcriptionDeltaType:
-            guard let item = w.itemID, let delta = w.delta else { throw missing("item_id or delta") }
+            let (item, delta) = (try w.string("item_id"), try w.string("delta"))
+            guard let item, let delta else { throw missing("item_id or delta") }
             return .transcriptionDelta(itemID: item, delta: delta)
         case transcriptionCompletedType:
-            guard let item = w.itemID, let transcript = w.transcript else { throw missing("item_id or transcript") }
+            let (item, transcript) = (try w.string("item_id"), try w.string("transcript"))
+            guard let item, let transcript else { throw missing("item_id or transcript") }
             return .transcriptionCompleted(itemID: item, transcript: transcript)
         case transcriptionFailedType:
-            guard let item = w.itemID else { throw missing("item_id") }
-            return .transcriptionFailed(itemID: item, error: try classified(type, w.error))
+            let item = try w.string("item_id")
+            let classifiedError: Result<RealtimeError, Error>
+            do { classifiedError = .success(try classified(type, w)) } catch let invalid as WireJSON.Invalid {
+                throw invalid
+            } catch { classifiedError = .failure(error) }
+            guard let item else { throw missing("item_id") }
+            return .transcriptionFailed(itemID: item, error: try classifiedError.get())
         default:
-            return ignoredTypes.contains(type) ? .ignored(type: type) : .unknown(type: type)
+            return nil
         }
     }
 
-    private static func classified(_ type: String, _ e: Wire.ErrorBody?) throws -> RealtimeError {
-        guard let e, let errorType = e.type else { throw protocolError(type, "missing error.type") }
-        return RealtimeError.errorEvent(type: errorType, code: e.code, param: e.param, message: e.message)
+    private static func done(_ type: String, _ w: WireJSON.Object) throws -> ResponseDone {
+        guard let r = try w.object("response") else { throw protocolError(type, "missing response") }
+        let id = try r.string("id")
+        let rawStatus = try r.string("status")
+        let reason = try r.object("status_details")?.string("reason") ?? ""
+        var usage = TokenUsage()
+        if let u = try r.object("usage") {
+            usage.inputTokens = Int(try u.int("input_tokens") ?? 0)
+            usage.outputTokens = Int(try u.int("output_tokens") ?? 0)
+            if let d = try u.object("input_token_details") { usage.inputTextTokens = Int(try d.int("text_tokens") ?? 0) }
+            if let d = try u.object("output_token_details") {
+                usage.outputTextTokens = Int(try d.int("text_tokens") ?? 0)
+                usage.outputAudioTokens = Int(try d.int("audio_tokens") ?? 0)
+                usage.detailed = true
+            }
+        }
+        let metadata = try r.stringMap("metadata")
+        guard let rawStatus else { throw protocolError(type, "missing response.status") }
+        guard let id else { throw protocolError(type, "missing response.id") }
+        // The value is payload, never named.
+        guard let status = ResponseStatus(rawValue: rawStatus) else {
+            throw protocolError(type, "unknown response.status")
+        }
+        return ResponseDone(responseID: id, status: status, statusReason: reason, usage: usage, metadata: metadata)
+    }
+
+    /// The event's `error` object, classified; a missing error or `error.type` is a protocol error.
+    private static func classified(_ type: String, _ w: WireJSON.Object) throws -> RealtimeError {
+        var errorType: String?
+        var message = "", param = "", code = ""
+        if let e = try w.object("error") {
+            errorType = try e.string("type")
+            message = try e.string("message") ?? ""
+            param = try e.string("param") ?? ""
+            code = try e.code("code")
+        }
+        guard let errorType else { throw protocolError(type, "missing error.type") }
+        return RealtimeError.errorEvent(type: errorType, code: code, param: param, message: message)
     }
 
     static func protocolError(_ type: String, _ why: String) -> RealtimeError {
         if type.isEmpty { return RealtimeError(.protocol, message: "realtime event: " + why) }
         return RealtimeError(.protocol, message: "realtime event \(Secret.scrub(type)): \(why)")
-    }
-}
-
-/// The fields the decoder reads, checked with Go's rules: null is absence, and a present field of the wrong type
-/// fails the whole event, whatever its type.
-private struct Wire {
-    struct ErrorBody {
-        var type: String?
-        var code = "", message = "", param = ""
-    }
-    struct Response {
-        var id: String?, status: String?
-        var statusReason = ""
-        var usage = TokenUsage()
-        var metadata: [String: String]?
-    }
-    struct Limit {
-        var name = "", limit: Int64 = 0, remaining: Int64?, resetSeconds: Double = 0
-    }
-
-    var type: String?, responseID: String?, itemID: String?, delta: String?, transcript: String?
-    var response: Response?
-    var sessionType: String?
-    var sessionModel = ""
-    var rateLimits: [Limit]?
-    var error: ErrorBody?
-
-    init?(_ o: [String: Any]) {
-        guard let type = Self.optional(o["type"]), let responseID = Self.optional(o["response_id"]),
-            let itemID = Self.optional(o["item_id"]), let delta = Self.optional(o["delta"]),
-            let transcript = Self.optional(o["transcript"])
-        else { return nil }
-        (self.type, self.responseID, self.itemID, self.delta, self.transcript) =
-            (type, responseID, itemID, delta, transcript)
-
-        if let raw = Self.present(o["response"]) {
-            guard let r = raw as? [String: Any], let response = Self.response(r) else { return nil }
-            self.response = response
-        }
-        if let raw = Self.present(o["session"]) {
-            guard let s = raw as? [String: Any], let st = Self.optional(s["type"]), let model = JSONField.string(s["model"])
-            else { return nil }
-            (sessionType, sessionModel) = (st, model)
-        }
-        if let raw = Self.present(o["rate_limits"]) {
-            guard let list = raw as? [Any] else { return nil }
-            var limits: [Limit] = []
-            for item in list {
-                var l = Limit()
-                if let entry = Self.present(item) {
-                    guard let e = entry as? [String: Any], let name = JSONField.string(e["name"]),
-                        let limit = JSONField.int(e["limit"]), let remaining = Self.optionalInt(e["remaining"]),
-                        let reset = JSONField.double(e["reset_seconds"])
-                    else { return nil }
-                    (l.name, l.limit, l.remaining, l.resetSeconds) = (name, limit, remaining, reset)
-                }
-                limits.append(l)
-            }
-            rateLimits = limits
-        }
-        if let raw = Self.present(o["error"]) {
-            guard let e = raw as? [String: Any], let errorType = Self.optional(e["type"]),
-                let message = JSONField.string(e["message"]), let param = JSONField.string(e["param"])
-            else { return nil }
-            error = ErrorBody(type: errorType, code: JSONField.rawString(e["code"]), message: message, param: param)
-        }
-    }
-
-    private static func response(_ r: [String: Any]) -> Response? {
-        guard let id = optional(r["id"]), let status = optional(r["status"]) else { return nil }
-        var out = Response(id: id, status: status)
-        if let raw = present(r["status_details"]) {
-            guard let d = raw as? [String: Any], let reason = JSONField.string(d["reason"]) else { return nil }
-            out.statusReason = reason
-        }
-        if let raw = present(r["usage"]) {
-            guard let u = raw as? [String: Any], let input = JSONField.int(u["input_tokens"]),
-                let output = JSONField.int(u["output_tokens"])
-            else { return nil }
-            out.usage.inputTokens = Int(input)
-            out.usage.outputTokens = Int(output)
-            if let rawIn = present(u["input_token_details"]) {
-                guard let d = rawIn as? [String: Any], let text = JSONField.int(d["text_tokens"]) else { return nil }
-                out.usage.inputTextTokens = Int(text)
-            }
-            if let rawOut = present(u["output_token_details"]) {
-                guard let d = rawOut as? [String: Any], let text = JSONField.int(d["text_tokens"]),
-                    let audio = JSONField.int(d["audio_tokens"])
-                else { return nil }
-                (out.usage.outputTextTokens, out.usage.outputAudioTokens, out.usage.detailed) = (Int(text), Int(audio), true)
-            }
-        }
-        if let raw = present(r["metadata"]) {
-            guard let m = raw as? [String: Any] else { return nil }
-            var metadata: [String: String] = [:]
-            for (k, v) in m {
-                guard let s = JSONField.string(v) else { return nil }
-                metadata[k] = s
-            }
-            out.metadata = metadata
-        }
-        return out
-    }
-
-    /// The value unless it is absent or null.
-    private static func present(_ v: Any?) -> Any? {
-        guard let v, !(v is NSNull) else { return nil }
-        return v
-    }
-
-    /// `.some(nil)` for absence or null, `.some(s)` for a string, nil for any other type.
-    private static func optional(_ v: Any?) -> String?? {
-        guard let v = present(v) else { return .some(nil) }
-        guard let s = v as? String else { return nil }
-        return .some(s)
-    }
-
-    private static func optionalInt(_ v: Any?) -> Int64?? {
-        guard present(v) != nil else { return .some(nil) }
-        guard let n = JSONField.int(v) else { return nil }
-        return .some(n)
     }
 }
 

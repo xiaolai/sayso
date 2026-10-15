@@ -2,9 +2,11 @@ package realtime
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -163,54 +165,6 @@ func (TranscriptionFailed) EventType() string    { return TypeTranscriptionFaile
 func (e Ignored) EventType() string              { return e.Type }
 func (e Unknown) EventType() string              { return e.Type }
 
-// Wire shapes. Required fields are pointers so absence is detectable.
-type (
-	wireError struct {
-		Type    *string         `json:"type"`
-		Code    json.RawMessage `json:"code"`
-		Message string          `json:"message"`
-		Param   *string         `json:"param"`
-	}
-	wireResponse struct {
-		ID            *string `json:"id"`
-		Status        *string `json:"status"`
-		StatusDetails *struct {
-			Reason string `json:"reason"`
-		} `json:"status_details"`
-		Usage *struct {
-			InputTokens       int `json:"input_tokens"`
-			OutputTokens      int `json:"output_tokens"`
-			InputTokenDetails *struct {
-				TextTokens int `json:"text_tokens"`
-			} `json:"input_token_details"`
-			OutputTokenDetails *struct {
-				TextTokens  int `json:"text_tokens"`
-				AudioTokens int `json:"audio_tokens"`
-			} `json:"output_token_details"`
-		} `json:"usage"`
-		Metadata map[string]string `json:"metadata"`
-	}
-	wireEvent struct {
-		Type       *string       `json:"type"`
-		ResponseID *string       `json:"response_id"`
-		ItemID     *string       `json:"item_id"`
-		Delta      *string       `json:"delta"`
-		Transcript *string       `json:"transcript"`
-		Response   *wireResponse `json:"response"`
-		Session    *struct {
-			Type  *string `json:"type"`
-			Model string  `json:"model"`
-		} `json:"session"`
-		RateLimits *[]struct {
-			Name         string  `json:"name"`
-			Limit        int64   `json:"limit"`
-			Remaining    *int64  `json:"remaining"`
-			ResetSeconds float64 `json:"reset_seconds"`
-		} `json:"rate_limits"`
-		Error *wireError `json:"error"`
-	}
-)
-
 // protocolError is the NET-04 failure: a malformed event or a missing required
 // field. It names the event type, never the payload.
 func protocolError(typ, why string) error {
@@ -222,86 +176,40 @@ func protocolError(typ, why string) error {
 
 func missing(typ, field string) error { return protocolError(typ, "missing "+field) }
 
-// DecodeEvent decodes one server event by its type. Unknown types decode to
-// Unknown; a malformed event or a missing required field is a protocol error.
+var errNotJSON = protocolError("", "not valid JSON")
+
+// DecodeEvent decodes one server event by its type. The whole event must be strict JSON (package wire); then only
+// the fields of its type are read, so an unknown or ignored type is never refused for the shape of a field this
+// package does not consume. A field of the wrong type, a missing required field, bad base64 or an unknown
+// response.status is a protocol error that names the event type only.
 func DecodeEvent(data []byte) (Event, error) {
-	var w wireEvent
-	if err := json.Unmarshal(data, &w); err != nil {
-		return nil, protocolError("", "not valid JSON")
+	root, err := wire.Parse(data)
+	if err != nil {
+		return nil, errNotJSON
 	}
-	if w.Type == nil || *w.Type == "" {
+	if root.IsNull() {
 		return nil, protocolError("", "missing type")
 	}
-	typ := *w.Type
-	switch typ {
-	case TypeSessionCreated:
-		if w.Session == nil || w.Session.Type == nil {
-			return nil, missing(typ, "session.type")
-		}
-		return SessionCreated{SessionType: *w.Session.Type, Model: w.Session.Model}, nil
-	case TypeResponseCreated:
-		if w.Response == nil || w.Response.ID == nil {
-			return nil, missing(typ, "response.id")
-		}
-		return ResponseCreated{ResponseID: *w.Response.ID, Metadata: w.Response.Metadata}, nil
-	case TypeAudioDelta:
-		if w.ResponseID == nil || w.Delta == nil {
-			return nil, missing(typ, "response_id or delta")
-		}
-		pcm, err := base64.StdEncoding.DecodeString(*w.Delta)
-		if err != nil {
-			return nil, protocolError(typ, "delta is not base64")
-		}
-		return AudioDelta{ResponseID: *w.ResponseID, PCM: pcm}, nil
-	case TypeTranscriptDelta:
-		if w.ResponseID == nil || w.Delta == nil {
-			return nil, missing(typ, "response_id or delta")
-		}
-		return TranscriptDelta{ResponseID: *w.ResponseID, Delta: *w.Delta}, nil
-	case TypeResponseDone:
-		return decodeDone(typ, w.Response)
-	case TypeRateLimitsUpdated:
-		if w.RateLimits == nil {
-			return nil, missing(typ, "rate_limits")
-		}
-		ev := RateLimitsUpdated{Limits: make([]RateLimit, 0, len(*w.RateLimits))}
-		for _, l := range *w.RateLimits {
-			if l.Remaining == nil {
-				return nil, missing(typ, "rate_limits[].remaining")
-			}
-			ev.Limits = append(ev.Limits, RateLimit{Name: l.Name, Limit: l.Limit, Remaining: *l.Remaining, ResetSeconds: l.ResetSeconds})
-		}
+	w, err := wire.AsObject(root)
+	if err != nil {
+		return nil, errNotJSON
+	}
+	typ, ok, err := w.String("type")
+	if err != nil {
+		return nil, errNotJSON
+	}
+	if !ok || typ == "" {
+		return nil, protocolError("", "missing type")
+	}
+	ev, err := decodeTyped(typ, w)
+	if errors.Is(err, wire.ErrInvalid) {
+		return nil, errNotJSON
+	}
+	if err != nil {
+		return nil, err
+	}
+	if ev != nil {
 		return ev, nil
-	case TypeError:
-		e, err := decodeError(typ, w.Error)
-		if err != nil {
-			return nil, err
-		}
-		return ErrorEvent{Err: e}, nil
-	case TypeInputCommitted:
-		if w.ItemID == nil {
-			return nil, missing(typ, "item_id")
-		}
-		return InputCommitted{ItemID: *w.ItemID}, nil
-	case TypeTranscriptionDelta:
-		if w.ItemID == nil || w.Delta == nil {
-			return nil, missing(typ, "item_id or delta")
-		}
-		return TranscriptionDelta{ItemID: *w.ItemID, Delta: *w.Delta}, nil
-	case TypeTranscriptionCompleted:
-		if w.ItemID == nil || w.Transcript == nil {
-			return nil, missing(typ, "item_id or transcript")
-		}
-		return TranscriptionCompleted{ItemID: *w.ItemID, Transcript: *w.Transcript}, nil
-	case TypeTranscriptionFailed:
-		if w.ItemID == nil {
-			return nil, missing(typ, "item_id")
-		}
-		e, err := decodeError(typ, w.Error)
-		if err != nil {
-			return nil, err
-		}
-		return TranscriptionFailed{ItemID: *w.ItemID, Err: e}, nil
 	}
 	if ignoredTypes[typ] {
 		return Ignored{Type: typ, Raw: append([]byte(nil), data...)}, nil
@@ -309,46 +217,288 @@ func DecodeEvent(data []byte) (Event, error) {
 	return Unknown{Type: typ, Raw: append([]byte(nil), data...)}, nil
 }
 
-func decodeDone(typ string, r *wireResponse) (Event, error) {
-	if r == nil {
+// strings reads string members, all required: ok is false when any is absent or null.
+func strs(w wire.Object, names ...string) (vals []string, ok bool, err error) {
+	ok = true
+	for _, n := range names {
+		v, present, err := w.String(n)
+		if err != nil {
+			return nil, false, err
+		}
+		ok = ok && present
+		vals = append(vals, v)
+	}
+	return vals, ok, nil
+}
+
+// decodeTyped decodes the consumed types; nil, nil for any other type.
+func decodeTyped(typ string, w wire.Object) (Event, error) {
+	switch typ {
+	case TypeSessionCreated:
+		sess, ok, err := w.Object("session")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "session.type")
+		}
+		st, ok, err := sess.String("type")
+		if err != nil {
+			return nil, err
+		}
+		model, _, err := sess.String("model")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "session.type")
+		}
+		return SessionCreated{SessionType: st, Model: model}, nil
+	case TypeResponseCreated:
+		r, ok, err := w.Object("response")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "response.id")
+		}
+		id, ok, err := r.String("id")
+		if err != nil {
+			return nil, err
+		}
+		meta, _, err := r.StringMap("metadata")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "response.id")
+		}
+		return ResponseCreated{ResponseID: id, Metadata: meta}, nil
+	case TypeAudioDelta:
+		v, ok, err := strs(w, "response_id", "delta")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "response_id or delta")
+		}
+		// StdEncoding skips CR and LF; the contract allows neither (Swift's decoder refuses them).
+		if strings.ContainsAny(v[1], "\r\n") {
+			return nil, protocolError(typ, "delta is not base64")
+		}
+		pcm, err := base64.StdEncoding.DecodeString(v[1])
+		if err != nil {
+			return nil, protocolError(typ, "delta is not base64")
+		}
+		return AudioDelta{ResponseID: v[0], PCM: pcm}, nil
+	case TypeTranscriptDelta:
+		v, ok, err := strs(w, "response_id", "delta")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "response_id or delta")
+		}
+		return TranscriptDelta{ResponseID: v[0], Delta: v[1]}, nil
+	case TypeResponseDone:
+		return decodeDone(typ, w)
+	case TypeRateLimitsUpdated:
+		list, ok, err := w.Array("rate_limits")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "rate_limits")
+		}
+		ev := RateLimitsUpdated{Limits: make([]RateLimit, 0, len(list))}
+		for _, item := range list {
+			var l RateLimit
+			var remaining bool
+			if !item.IsNull() {
+				o, err := wire.AsObject(item)
+				if err != nil {
+					return nil, err
+				}
+				if l.Name, _, err = o.String("name"); err != nil {
+					return nil, err
+				}
+				if l.Limit, _, err = o.Int("limit"); err != nil {
+					return nil, err
+				}
+				if l.Remaining, remaining, err = o.Int("remaining"); err != nil {
+					return nil, err
+				}
+				if l.ResetSeconds, _, err = o.Float("reset_seconds"); err != nil {
+					return nil, err
+				}
+			}
+			if !remaining {
+				return nil, missing(typ, "rate_limits[].remaining")
+			}
+			ev.Limits = append(ev.Limits, l)
+		}
+		return ev, nil
+	case TypeError:
+		e, err := decodeError(typ, w)
+		if err != nil {
+			return nil, err
+		}
+		return ErrorEvent{Err: e}, nil
+	case TypeInputCommitted:
+		v, ok, err := strs(w, "item_id")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "item_id")
+		}
+		return InputCommitted{ItemID: v[0]}, nil
+	case TypeTranscriptionDelta:
+		v, ok, err := strs(w, "item_id", "delta")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "item_id or delta")
+		}
+		return TranscriptionDelta{ItemID: v[0], Delta: v[1]}, nil
+	case TypeTranscriptionCompleted:
+		v, ok, err := strs(w, "item_id", "transcript")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, missing(typ, "item_id or transcript")
+		}
+		return TranscriptionCompleted{ItemID: v[0], Transcript: v[1]}, nil
+	case TypeTranscriptionFailed:
+		v, ok, err := strs(w, "item_id")
+		if err != nil {
+			return nil, err
+		}
+		e, eerr := decodeError(typ, w)
+		if errors.Is(eerr, wire.ErrInvalid) {
+			return nil, eerr
+		}
+		if !ok {
+			return nil, missing(typ, "item_id")
+		}
+		if eerr != nil {
+			return nil, eerr
+		}
+		return TranscriptionFailed{ItemID: v[0], Err: e}, nil
+	}
+	return nil, nil
+}
+
+func decodeDone(typ string, w wire.Object) (Event, error) {
+	r, ok, err := w.Object("response")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, missing(typ, "response")
 	}
-	if r.Status == nil {
+	v, _, err := strs(r, "id", "status")
+	if err != nil {
+		return nil, err
+	}
+	_, hasID := r.Field("id")
+	_, hasStatus := r.Field("status")
+	ev := ResponseDone{ResponseID: v[0], Status: ResponseStatus(v[1])}
+	if details, ok, err := r.Object("status_details"); err != nil {
+		return nil, err
+	} else if ok {
+		if ev.StatusReason, _, err = details.String("reason"); err != nil {
+			return nil, err
+		}
+	}
+	if u, ok, err := r.Object("usage"); err != nil {
+		return nil, err
+	} else if ok {
+		if ev.Usage, err = decodeUsage(u); err != nil {
+			return nil, err
+		}
+	}
+	if ev.Metadata, _, err = r.StringMap("metadata"); err != nil {
+		return nil, err
+	}
+	if !hasStatus {
 		return nil, missing(typ, "response.status")
 	}
-	if r.ID == nil {
+	if !hasID {
 		return nil, missing(typ, "response.id")
 	}
-	switch ResponseStatus(*r.Status) {
+	switch ev.Status {
 	case StatusCompleted, StatusFailed, StatusIncomplete, StatusCancelled:
 	default:
 		return nil, protocolError(typ, "unknown response.status") // the value is payload, never named
 	}
-	ev := ResponseDone{ResponseID: *r.ID, Status: ResponseStatus(*r.Status), Metadata: r.Metadata}
-	if r.StatusDetails != nil {
-		ev.StatusReason = r.StatusDetails.Reason
-	}
-	if r.Usage != nil {
-		ev.Usage = TokenUsage{InputTokens: r.Usage.InputTokens, OutputTokens: r.Usage.OutputTokens}
-		if d := r.Usage.InputTokenDetails; d != nil {
-			ev.Usage.InputTextTokens = d.TextTokens
-		}
-		if d := r.Usage.OutputTokenDetails; d != nil {
-			ev.Usage.OutputTextTokens, ev.Usage.OutputAudioTokens, ev.Usage.Detailed = d.TextTokens, d.AudioTokens, true
-		}
-	}
 	return ev, nil
 }
 
-func decodeError(typ string, w *wireError) (*openaihttp.Error, error) {
-	if w == nil || w.Type == nil {
+func decodeUsage(u wire.Object) (TokenUsage, error) {
+	var t TokenUsage
+	in, _, err := u.Int("input_tokens")
+	if err != nil {
+		return t, err
+	}
+	out, _, err := u.Int("output_tokens")
+	if err != nil {
+		return t, err
+	}
+	t.InputTokens, t.OutputTokens = int(in), int(out)
+	if d, ok, err := u.Object("input_token_details"); err != nil {
+		return t, err
+	} else if ok {
+		text, _, err := d.Int("text_tokens")
+		if err != nil {
+			return t, err
+		}
+		t.InputTextTokens = int(text)
+	}
+	if d, ok, err := u.Object("output_token_details"); err != nil {
+		return t, err
+	} else if ok {
+		text, _, err := d.Int("text_tokens")
+		if err != nil {
+			return t, err
+		}
+		audio, _, err := d.Int("audio_tokens")
+		if err != nil {
+			return t, err
+		}
+		t.OutputTextTokens, t.OutputAudioTokens, t.Detailed = int(text), int(audio), true
+	}
+	return t, nil
+}
+
+// decodeError reads the event's error object; a missing error or error.type is a protocol error.
+func decodeError(typ string, w wire.Object) (*openaihttp.Error, error) {
+	e, ok, err := w.Object("error")
+	if err != nil {
+		return nil, err
+	}
+	var errType, message, param, code string
+	var hasType bool
+	if ok {
+		if errType, hasType, err = e.String("type"); err != nil {
+			return nil, err
+		}
+		if message, _, err = e.String("message"); err != nil {
+			return nil, err
+		}
+		if param, _, err = e.String("param"); err != nil {
+			return nil, err
+		}
+		if code, err = e.Code("code"); err != nil {
+			return nil, err
+		}
+	}
+	if !hasType {
 		return nil, missing(typ, "error.type")
 	}
-	param := ""
-	if w.Param != nil {
-		param = *w.Param
-	}
-	return openaihttp.ErrorEvent(*w.Type, openaihttp.RawString(w.Code), param, w.Message), nil
+	return openaihttp.ErrorEvent(errType, code, param, message), nil
 }
 
 // ResponseStatus is response.done.status: "completed" | "failed" | "incomplete" | "cancelled".

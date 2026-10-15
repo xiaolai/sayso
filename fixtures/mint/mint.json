@@ -1178,5 +1178,321 @@
    "requests": 0
   },
   "note": "Refused before a connection is made."
+ },
+ {
+  "id": "mint-wire-error-names-exact",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "body": "{\"ERROR\": {\"CODE\": \"missing_scope\"}}"
+    },
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "refreshCalls": 1,
+   "requests": 2
+  },
+  "note": "Member names match exactly, so an upper-case CODE is no code: the 401 is auth-expired and the sign-in is refreshed, not route-denied."
+ },
+ {
+  "id": "mint-wire-error-duplicate",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "body": "{\"error\": {\"code\": \"missing_scope\"}, \"error\": {\"message\": \"denied\"}}"
+    },
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "refreshCalls": 1,
+   "requests": 2
+  },
+  "note": "A body with a duplicate member name is not valid JSON and yields no fields; no implementation merges the two."
+ },
+ {
+  "id": "mint-wire-error-code-exponent",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 400,
+     "body": "{\"error\": {\"type\": \"invalid_request_error\", \"code\": 1e3}}"
+    }
+   ]
+  },
+  "expect": {
+   "class": "invalid-request",
+   "status": 400,
+   "code": "1e3"
+  },
+  "note": "A code that is not a string keeps its exact JSON text."
+ },
+ {
+  "id": "mint-wire-reply-names-exact",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "body": "{\"VALUE\": \"ek_fixture_secret\", \"EXPIRES_AT\": 1800000600}"
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol"
+  },
+  "note": "Reply member names match exactly."
+ },
+ {
+  "id": "mint-wire-reply-error-keeps-status",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "headers": {
+      "x-request-id": "req_reply"
+     },
+     "body": "<html>ok</html>"
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol",
+   "status": 200,
+   "requestId": "req_reply"
+  },
+  "note": "A reply refused after a 2xx keeps its status and request id."
+ },
+ {
+  "id": "mint-refused-twice-keeps-fields",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "headers": {
+      "x-request-id": "req_first"
+     },
+     "json": {
+      "error": {
+       "type": "invalid_request_error",
+       "code": "token_expired"
+      }
+     }
+    },
+    {
+     "status": 401,
+     "headers": {
+      "x-request-id": "req_second"
+     },
+     "json": {
+      "error": {
+       "type": "invalid_request_error",
+       "code": "token_revoked",
+       "param": "p"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "auth-expired",
+   "status": 401,
+   "code": "token_revoked",
+   "type": "invalid_request_error",
+   "param": "p",
+   "requestId": "req_second",
+   "refreshCalls": 1
+  },
+  "note": "The error for a refreshed sign-in refused too carries the second refusal's provider fields."
+ },
+ {
+  "id": "mint-secret-registered-opaque",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "opaque-minted-fixture-76",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "opaque-minted-fixture-76",
+   "scrubs": [
+    "opaque-minted-fixture-76"
+   ]
+  },
+  "note": "The minted value is registered with the scrubber: this one matches no secret pattern, so only registration can remove it."
  }
 ]

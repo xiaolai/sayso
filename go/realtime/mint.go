@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -100,7 +101,12 @@ func (m *Minter) Secret(ctx context.Context, session any) (secret.ClientSecret, 
 	}
 	sec, err = m.post(ctx, fresh, body)
 	if openaihttp.Classify(err) == openaihttp.ClassAuthExpired {
-		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassAuthExpired, Message: "the refreshed sign-in was refused too", Err: err}
+		refused := &openaihttp.Error{Class: openaihttp.ClassAuthExpired, Message: "the refreshed sign-in was refused too", Err: err}
+		var e *openaihttp.Error
+		if errors.As(err, &e) { // keep the second refusal's provider fields, as Swift does
+			refused.Status, refused.Type, refused.Code, refused.Param, refused.RequestID = e.Status, e.Type, e.Code, e.Param, e.RequestID
+		}
+		return secret.ClientSecret{}, refused
 	}
 	return sec, err
 }
@@ -132,24 +138,31 @@ func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secre
 	if err != nil {
 		return secret.ClientSecret{}, openaihttp.TransportError("realtime: mint: read reply", err)
 	}
+	// A reply refused after a 2xx keeps the status and request id, as an HTTP refusal does.
+	refuse := func(msg string) error {
+		return &openaihttp.Error{Class: openaihttp.ClassProtocol, Status: resp.StatusCode,
+			RequestID: secret.Scrub(resp.Header.Get("x-request-id")), Message: msg}
+	}
 	if len(raw) > maxMintReply {
-		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "mint reply exceeds 1 MiB"}
+		return secret.ClientSecret{}, refuse("mint reply exceeds 1 MiB")
 	}
-	var reply struct {
-		Value     *string          `json:"value"`
-		ExpiresAt *json.RawMessage `json:"expires_at"`
+	root, err := wire.Parse(raw)
+	if err != nil {
+		return secret.ClientSecret{}, refuse("mint reply is not valid JSON")
 	}
-	if json.Unmarshal(raw, &reply) != nil {
-		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "mint reply is not valid JSON"}
+	reply, err := wire.AsObject(root)
+	if err != nil {
+		return secret.ClientSecret{}, refuse("mint reply is not valid JSON")
 	}
-	var expires int64
-	if reply.ExpiresAt == nil || json.Unmarshal(*reply.ExpiresAt, &expires) != nil {
-		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "mint reply lacks an integer expires_at"}
+	expires, ok, err := reply.Int("expires_at")
+	if err != nil || !ok {
+		return secret.ClientSecret{}, refuse("mint reply lacks an integer expires_at")
 	}
-	if reply.Value == nil || *reply.Value == "" || len(*reply.Value) > maxSecretBytes {
-		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "mint reply value is missing, empty or longer than 4096 bytes"}
+	value, ok, err := reply.String("value")
+	if err != nil || !ok || value == "" || len(value) > maxSecretBytes {
+		return secret.ClientSecret{}, refuse("mint reply value is missing, empty or longer than 4096 bytes")
 	}
-	return secret.NewClientSecret(*reply.Value, time.Unix(expires, 0)), nil
+	return secret.NewClientSecret(value, time.Unix(expires, 0)), nil
 }
 
 // isClassified reports an *openaihttp.Error in the chain: the origin policy's refusal (internal by design) or a

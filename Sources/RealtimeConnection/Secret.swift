@@ -1,6 +1,6 @@
 import Foundation
 
-/// The process-wide scrubber (spec/credentials.md, hygiene). It removes every registered secret, longest first, and
+/// The process-wide scrubber (spec/credentials.md, hygiene). It removes every registered secret and
 /// anything shaped like a bearer JWT or an `ek_` client secret, whatever its source.
 public enum Secret {
     /// What every removed secret becomes.
@@ -15,77 +15,109 @@ public enum Secret {
     }
 
     /// `text` with every registered secret and every secret-shaped pattern replaced by ``redacted``. Use it on any text
-    /// that may reach a user, a log or an artifact.
+    /// that may reach a user, a log or an artifact. Matching is on the UTF-8 bytes, so a combining mark after a secret
+    /// cannot hide it, and every match is found in the original text: the union of the matched spans is replaced, so a
+    /// registered secret inside a longer secret-shaped value never leaves the rest of that value behind.
     public static func scrub(_ text: String) -> String {
-        var s = text
-        for secret in registry.ordered() where s.contains(secret) {
-            s = s.replacingOccurrences(of: secret, with: redacted)
+        let bytes = Array(text.utf8)
+        var spans: [Range<Int>] = []
+        for secret in registry.all() { spans += occurrences(of: secret, in: bytes) }
+        spans += patternSpans(bytes)
+        guard !spans.isEmpty else { return text }
+        spans.sort { $0.lowerBound < $1.lowerBound }
+        var out: [UInt8] = []
+        out.reserveCapacity(bytes.count)
+        var at = 0
+        var i = 0
+        while i < spans.count {
+            var span = spans[i]
+            i += 1
+            while i < spans.count, spans[i].lowerBound <= span.upperBound {  // overlapping or touching spans merge
+                span = span.lowerBound..<max(span.upperBound, spans[i].upperBound)
+                i += 1
+            }
+            out += bytes[at..<span.lowerBound]
+            out += redacted.utf8
+            at = span.upperBound
         }
-        return replacePatterns(s)
+        out += bytes[at...]
+        return String(decoding: out, as: UTF8.self)
     }
 
-    /// `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+`, where `\w` is ASCII `[A-Za-z0-9_]` as in Go's RE2.
-    private static func replacePatterns(_ s: String) -> String {
-        let bytes = Array(s.utf8)
+    /// Every occurrence of `needle` in `haystack`, overlapping ones included.
+    static func occurrences(of needle: [UInt8], in haystack: [UInt8]) -> [Range<Int>] {
+        guard !needle.isEmpty, needle.count <= haystack.count else { return [] }
+        var found: [Range<Int>] = []
+        let first = needle[0]
+        var i = 0
+        while i + needle.count <= haystack.count {
+            if haystack[i] == first, haystack[i..<i + needle.count].elementsEqual(needle) {
+                found.append(i..<i + needle.count)
+            }
+            i += 1
+        }
+        return found
+    }
+
+    /// The matches of `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+` (`\w` is ASCII `[A-Za-z0-9_]`, as in Go's RE2), leftmost
+    /// first and non-overlapping like Go's `FindAllStringIndex`. `[\w-]` excludes `.`, so each run is maximal and a
+    /// match is decided in constant time from the precomputed run ends: the scan is linear.
+    static func patternSpans(_ bytes: [UInt8]) -> [Range<Int>] {
         func isWord(_ b: UInt8) -> Bool {
             (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || b == 0x5F || b == 0x2D
         }
-        func run(from i: Int) -> Int {
-            var j = i
-            while j < bytes.count, isWord(bytes[j]) { j += 1 }
-            return j
+        let n = bytes.count
+        var runEnd = [Int](repeating: 0, count: n + 1)  // runEnd[i]: the end of the word run starting at i
+        runEnd[n] = n
+        for i in stride(from: n - 1, through: 0, by: -1) { runEnd[i] = isWord(bytes[i]) ? runEnd[i + 1] : i }
+        func has(_ a: UInt8, _ b: UInt8, _ c: UInt8, at i: Int) -> Bool {
+            i + 3 <= n && bytes[i] == a && bytes[i + 1] == b && bytes[i + 2] == c
         }
-        func has(_ prefix: [UInt8], at i: Int) -> Bool {
-            i + prefix.count <= bytes.count && Array(bytes[i..<i + prefix.count]) == prefix
-        }
-        let jwt = Array("eyJ".utf8), ek = Array("ek_".utf8)
-        var out: [UInt8] = []
-        out.reserveCapacity(bytes.count)
+        var spans: [Range<Int>] = []
         var i = 0
-        while i < bytes.count {
-            if has(jwt, at: i) {
-                // eyJ, then three dot-separated non-empty runs (the first continues the eyJ run).
-                let a = run(from: i + 3)
-                if a > i + 3, a < bytes.count, bytes[a] == 0x2E {
-                    let b = run(from: a + 1)
-                    if b > a + 1, b < bytes.count, bytes[b] == 0x2E {
-                        let c = run(from: b + 1)
+        while i < n {
+            if has(0x65, 0x79, 0x4A, at: i) {  // eyJ, then three dot-separated non-empty runs
+                let a = runEnd[i + 3]
+                if a > i + 3, a < n, bytes[a] == 0x2E {
+                    let b = runEnd[a + 1]
+                    if b > a + 1, b < n, bytes[b] == 0x2E {
+                        let c = runEnd[b + 1]
                         if c > b + 1 {
-                            out.append(contentsOf: redacted.utf8)
+                            spans.append(i..<c)
                             i = c
                             continue
                         }
                     }
                 }
             }
-            if has(ek, at: i) {
-                let e = run(from: i + 3)
+            if has(0x65, 0x6B, 0x5F, at: i) {  // ek_
+                let e = runEnd[i + 3]
                 if e > i + 3 {
-                    out.append(contentsOf: redacted.utf8)
+                    spans.append(i..<e)
                     i = e
                     continue
                 }
             }
-            out.append(bytes[i])
             i += 1
         }
-        return String(decoding: out, as: UTF8.self)
+        return spans
     }
 
+    /// The registered secrets as UTF-8 bytes. Bytes, not `String`s: `String` equality is canonical equivalence, so a
+    /// secret spelled with a combining mark would count as already registered when its precomposed twin was.
     private final class Registry: @unchecked Sendable {
         private let lock = NSLock()
-        private var known: Set<String> = []
-        private var list: [String] = []  // longest first, so a secret containing another is removed whole
+        private var known: Set<[UInt8]> = []
+        private var list: [[UInt8]] = []
 
         func add(_ s: String) {
+            let bytes = Array(s.utf8)
             lock.lock()
             defer { lock.unlock() }
-            guard known.insert(s).inserted else { return }
-            let at = list.firstIndex { $0.utf8.count < s.utf8.count } ?? list.endIndex
-            list.insert(s, at: at)
+            if known.insert(bytes).inserted { list.append(bytes) }
         }
 
-        func ordered() -> [String] {
+        func all() -> [[UInt8]] {
             lock.lock()
             defer { lock.unlock() }
             return list
