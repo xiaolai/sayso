@@ -7,7 +7,11 @@ Fixtures: `fixtures/mint/`.
 
 A request carrying `Authorization` is sent only to `https://api.openai.com`: scheme `https`, host `api.openai.com`,
 port empty or 443, no userinfo, no `Host` override. Anything else is refused before a connection is made, as class
-`internal` (a programming error). Redirects are never followed: a 3xx reply is `protocol`. The proxy comes from the
+`internal` (a programming error). Redirects are never followed: a 3xx reply is delivered as it came and classified
+like any other reply, `protocol` with its status, request id and provider fields, whatever its `Location` (which is
+never quoted, and may be malformed). No credential is added by the HTTP stack: stored credentials and
+authentication challenges other than server trust are refused, so only the `Authorization` the policy checked is
+sent. The proxy comes from the
 environment: in Go the `HTTPS_PROXY` family, on Apple platforms the system proxy settings `URLSession` reads.
 Tests reach a fake server only through an origin injected explicitly as a test origin (Swift: loopback only).
 

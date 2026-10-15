@@ -1,5 +1,5 @@
 {
- "count": 707,
+ "count": 710,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1112,6 +1112,18 @@
    "requires": []
   },
   {
+   "id": "event-metadata-mark-run-31",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-mark-run-30",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
    "id": "mint-ok",
    "file": "mint/mint.json",
    "component": "mint",
@@ -1311,6 +1323,12 @@
   },
   {
    "id": "mint-secret-registered-opaque",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-redirect-malformed-location",
    "file": "mint/mint.json",
    "component": "mint",
    "requires": []

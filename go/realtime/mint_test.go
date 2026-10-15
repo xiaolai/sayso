@@ -78,3 +78,25 @@ func TestMintRedirectHidesLocation(t *testing.T) {
 		t.Fatalf("paths %q", paths)
 	}
 }
+
+// An expires_at at either end of int64 keeps its side of now; time.Unix would wrap it.
+func TestMintExpiryAtInt64Bounds(t *testing.T) {
+	for _, tc := range []struct {
+		expires string
+		future  bool
+	}{{"9223372036854775807", true}, {"-9223372036854775808", false}} {
+		hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"value":"ek_bound","expires_at":` + tc.expires + `}`))
+		}))
+		c, base := fakeopenai.Client(t, hs.URL)
+		m := &realtime.Minter{Client: c, BaseURL: base, Creds: fixedCreds{"bearer-for-bounds"}, Timeout: 5 * time.Second, Lifetime: time.Minute}
+		sec, err := m.Secret(context.Background(), json.RawMessage(`{}`))
+		hs.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", tc.expires, err)
+		}
+		if sec.ExpiresAt.After(time.Now()) != tc.future {
+			t.Fatalf("%s: expiry %v on the wrong side of now", tc.expires, sec.ExpiresAt)
+		}
+	}
+}

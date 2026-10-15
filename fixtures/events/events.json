@@ -753,5 +753,29 @@
    "protocolError": "response.created"
   },
   "note": "Canonically equivalent metadata names are refused: a Swift String-keyed map cannot hold both, so both implementations refuse them (spec/session.md, wire JSON)."
+ },
+ {
+  "id": "event-metadata-mark-run-31",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"a\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\": \"x\", \"a\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u034f\\u0305\": \"y\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "A metadata name with a run of more than 30 combining marks is refused in both implementations: Go's NFC inserts U+034F into such a run (the stream-safe text format), so it would merge these two distinct names while Swift kept them apart. 30 marks is the stream-safe bound."
+ },
+ {
+  "id": "event-metadata-mark-run-30",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"a\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\\u0305\": \"x\"}}}",
+  "expect": {
+   "type": "response.created",
+   "responseId": "r",
+   "metadata": {
+    "a\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305\u0305": "x"
+   }
+  },
+  "note": "Control: 30 combining marks is within the stream-safe bound and is read."
  }
 ]

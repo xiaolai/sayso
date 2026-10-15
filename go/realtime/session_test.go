@@ -3,6 +3,7 @@ package realtime_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -442,5 +443,86 @@ func TestStalledWriteDoesNotHoldLaterSends(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the stalled Send did not end after Close")
+	}
+}
+
+// A redirected handshake is refused with its reply kept: protocol, its status and request id, and no Location in
+// the error, which may carry a secret; a malformed Location is the same refusal, not a network failure.
+func TestHandshakeRedirectIsRefusedWithItsReply(t *testing.T) {
+	for _, loc := range []string{"https://elsewhere.test/v1/realtime?k=ek_canary_in_location", "/ek_canary_malformed%zz"} {
+		hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", loc)
+			w.Header().Set("x-request-id", "req_redirect")
+			w.WriteHeader(http.StatusFound)
+		}))
+		c, base := fakeopenai.Client(t, hs.URL)
+		_, err := realtime.Dial(context.Background(), config(c, base))
+		hs.Close()
+		wantClass(t, err, openaihttp.ClassProtocol)
+		var e *openaihttp.Error
+		if errors.As(err, &e); e.Status != http.StatusFound || e.RequestID != "req_redirect" {
+			t.Fatalf("%s: status %d request id %q", loc, e.Status, e.RequestID)
+		}
+		for _, text := range []string{err.Error(), fmt.Sprintf("%+v", err), fmt.Sprintf("%#v", err)} {
+			if strings.Contains(text, "canary") {
+				t.Fatalf("%s: the error quotes the Location", loc)
+			}
+		}
+	}
+}
+
+// A call whose context is already cancelled sends nothing and leaves the session open.
+func TestCancelledSendLeavesTheSessionOpen(t *testing.T) {
+	got := make(chan string, 4)
+	s := dialHandler(t, func(c *websocket.Conn) {
+		for {
+			_, b, err := c.Read(context.Background())
+			if err != nil {
+				return
+			}
+			got <- string(b)
+		}
+	}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 50 { // a select picks at random among ready cases: try it often enough to meet the race
+		if err := s.Send(ctx, map[string]string{"type": "cancelled"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled Send returned %v", err)
+		}
+	}
+	if err := s.Send(context.Background(), map[string]string{"type": "after"}); err != nil {
+		t.Fatalf("Send after a cancelled one: %v", err)
+	}
+	select {
+	case m := <-got:
+		if !strings.Contains(m, "after") {
+			t.Fatalf("the peer received %q", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the peer received nothing")
+	}
+}
+
+// An injected transport may refuse with no body at all; that is a classified refusal, not a panic.
+func TestRefusalWithoutABody(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"X-Request-Id": {"req_nobody"}}, Request: req}, nil
+	})
+	c, err := openaihttp.NewClient(openaihttp.WithBaseTransport(rt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = realtime.Dial(context.Background(), config(c, openaihttp.APIBase))
+	wantClass(t, err, openaihttp.ClassRouteDenied)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Every trailing slash of the base is removed, as in Swift.
+func TestWebSocketURLTrimsEverySlash(t *testing.T) {
+	if got := realtime.WebSocketURL("https://api.openai.com//", "m"); got != "https://api.openai.com/v1/realtime?model=m" {
+		t.Fatalf("got %q", got)
 	}
 }
