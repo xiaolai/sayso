@@ -967,5 +967,116 @@
    ]
   },
   "note": "Invalid UTF-8 in a string is refused, as Codex's serde refuses it; Go's encoding/json replaced it and read a token."
+ },
+ {
+  "id": "auth-file-exp-year-one",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": -62135596800
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "expired"
+  },
+  "note": "exp -62135596800 is the first second of year 1: expired, not the unknown expiry Go's zero time means."
+ },
+ {
+  "id": "auth-file-exp-int64-max",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjkyMjMzNzIwMzY4NTQ3NzU4MDd9.c2ln"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjkyMjMzNzIwMzY4NTQ3NzU4MDd9.c2ln"
+  },
+  "note": "The largest int64 exp is far in the future: ready (Go's time.Unix used to wrap it into the past). Written as a literal token, because a fixture number this large does not survive a float64."
+ },
+ {
+  "id": "auth-file-jwt-payload-crlf",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJl\r\neHAiOjF9.c2ln"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJl\r\neHAiOjF9.c2ln",
+   "expiresAt": null
+  },
+  "note": "A CR or LF in the payload is outside the base64url alphabet, so the token has unknown expiry; Go's decoder used to skip them and read exp 1 (expired)."
+ },
+ {
+  "id": "auth-file-nested-64",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "raw": "{\"extra\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"tokens\":{\"access_token\":\"opaque-nested-64\"}}"
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "opaque-nested-64",
+   "expiresAt": null
+  },
+  "note": "Nesting up to 64 levels, the top-level object included, is read."
+ },
+ {
+  "id": "auth-file-nested-65",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "raw": "{\"extra\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"tokens\":{\"access_token\":\"opaque-nested-65\"}}"
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  },
+  "note": "Codex's JSON nests at most 64 levels in both implementations (spec/credentials.md); beyond is malformed."
  }
 ]

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -86,13 +87,20 @@ const (
 	maxModeLen  = 64
 )
 
-// classifyMode returns nil for chatgpt and the state's error for any other mode; "" is not signed in.
+// classifyStatus classifies a getAuthStatus reply's method: null or absent is not signed in, and any string, "" too,
+// is a mode.
+func classifyStatus(st codexapp.AuthStatus) *Error {
+	if !st.HasMethod {
+		return fail(StateNotSignedIn, "Codex is not signed in", nil)
+	}
+	return classifyMode(st.Method)
+}
+
+// classifyMode returns nil for chatgpt and the state's error for any other mode, "" included.
 func classifyMode(mode string) *Error {
 	switch mode {
 	case modeChatGPT:
 		return nil
-	case "":
-		return fail(StateNotSignedIn, "Codex is not signed in", nil)
 	case modeAPIKey:
 		e := fail(StateAPIKey, "Codex is signed in with an API key", nil)
 		e.Mode = modeAPIKey

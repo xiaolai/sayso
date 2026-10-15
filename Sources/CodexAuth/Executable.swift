@@ -7,6 +7,8 @@ public enum CodexExecutable {
     /// `PATH`: Homebrew, /usr/local, the common per-user installers, then every nvm Node version, newest first.
     public static func candidates(home: String) -> [String] {
         var dirs = ["/opt/homebrew/bin", "/usr/local/bin"]
+        // Joining would clean a NUL away ("/x\0/../y" is "/y"), so a home holding one adds nothing.
+        guard !home.utf8.contains(0) else { return dirs }
         for rel in [".local/bin", ".npm-global/bin", ".volta/bin", ".bun/bin", "Library/pnpm"] {
             dirs.append(join(home, rel))
         }
@@ -22,7 +24,8 @@ public enum CodexExecutable {
             var st = stat()
             return lstat(join(root, name), &st) == 0 && st.st_mode & S_IFMT == S_IFDIR
         }
-        func bare(_ v: String) -> String { v.hasPrefix("v") ? String(v.dropFirst()) : v }
+        // Go's strings.TrimPrefix, on bytes: a "v" before a combining mark is still the prefix.
+        func bare(_ v: String) -> String { v.utf8.first == 0x76 ? String(decoding: v.utf8.dropFirst(), as: UTF8.self) : v }
         return versions.sorted { a, b in
             if versionLess(bare(b), bare(a)) { return true }
             if versionLess(bare(a), bare(b)) { return false }
@@ -34,17 +37,19 @@ public enum CodexExecutable {
     /// otherwise `codex` in `path`, then in each of `candidates`. An explicit choice that does not resolve is nil,
     /// never a fall-through. The result is absolute, a regular file, and executable.
     public static func resolve(explicit: String?, path: String, candidates: [String]) -> String? {
-        let dirs = path.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        // Split and searched as bytes: a separator followed by a combining mark is one Character but still a separator.
+        let dirs = path.utf8.split(separator: 0x3A, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
         if let explicit, !explicit.isEmpty {
-            if explicit.contains("/") { return executable(explicit) }
+            if explicit.utf8.contains(0x2F) { return executable(explicit) }
             return look(in: dirs, for: explicit)
         }
         return look(in: dirs, for: "codex") ?? look(in: candidates, for: "codex")
     }
 
     private static func look(in dirs: [String], for name: String) -> String? {
-        // A relative PATH entry would resolve against our working folder.
-        for d in dirs where d.hasPrefix("/") {
+        guard !name.utf8.contains(0) else { return nil }
+        // A relative PATH entry would resolve against our working folder; a NUL would be cleaned away by joining.
+        for d in dirs where d.utf8.first == 0x2F && !d.utf8.contains(0) {
             if let p = executable(join(d, name)) { return p }
         }
         return nil
@@ -54,8 +59,8 @@ public enum CodexExecutable {
     /// bit for another user only would stop the search at a file that cannot start. A NUL, which the system would
     /// read as the end of the path, matches nothing.
     private static func executable(_ p: String) -> String? {
-        guard !p.contains("\0") else { return nil }
-        let abs = clean(p.hasPrefix("/") ? p : join(FileManager.default.currentDirectoryPath, p))
+        guard !p.utf8.contains(0) else { return nil }
+        let abs = clean(p.utf8.first == 0x2F ? p : join(FileManager.default.currentDirectoryPath, p))
         var st = stat()
         guard stat(abs, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_mode & 0o111 != 0, access(abs, X_OK) == 0
         else { return nil }
@@ -131,23 +136,33 @@ public enum CodexExecutable {
 
 func join(_ a: String, _ b: String) -> String { clean(a + "/" + b) }
 
+/// Go's filepath.Dir.
 func dirname(_ p: String) -> String {
-    let c = clean(p)
-    guard let slash = c.lastIndex(of: "/") else { return "." }
-    return slash == c.startIndex ? "/" : String(c[..<slash])
+    let c = Array(clean(p).utf8)
+    guard let slash = c.lastIndex(of: 0x2F) else { return "." }
+    return slash == 0 ? "/" : String(decoding: c[..<slash], as: UTF8.self)
 }
 
-/// Lexical cleaning like Go's filepath.Clean, for absolute paths.
+/// Lexical cleaning exactly like Go's filepath.Clean, on bytes (a "/" before a combining mark still separates):
+/// repeated separators become one, "." elements go, ".." removes the element before it, and a ".." that begins a
+/// rooted path goes, while one that begins a relative path stays. An empty result is ".".
 func clean(_ p: String) -> String {
-    var parts: [Substring] = []
-    for part in p.split(separator: "/") {
-        switch part {
-        case ".": continue
-        case "..": if !parts.isEmpty { parts.removeLast() }
-        default: parts.append(part)
+    let bytes = Array(p.utf8)
+    let rooted = bytes.first == 0x2F
+    var parts: [ArraySlice<UInt8>] = []
+    for part in bytes.split(separator: 0x2F) {
+        if part.elementsEqual([0x2E]) { continue }
+        if part.elementsEqual([0x2E, 0x2E]) {
+            if let last = parts.last, !last.elementsEqual([0x2E, 0x2E]) {
+                parts.removeLast()
+            } else if !rooted {
+                parts.append(part)
+            }
+            continue
         }
+        parts.append(part)
     }
-    let body = parts.joined(separator: "/")
-    return p.hasPrefix("/") ? "/" + body : (body.isEmpty ? "." : body)
+    let body = parts.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")
+    return rooted ? "/" + body : (body.isEmpty ? "." : body)
 }
 #endif

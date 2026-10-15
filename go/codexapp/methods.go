@@ -4,16 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
-// AuthStatus is the getAuthStatus result. The token is unexported and every formatting path redacts it.
+// AuthStatus is the getAuthStatus result. The token is unexported, and every formatting, encoding and logging path
+// redacts it and scrubs the method.
 type AuthStatus struct {
-	// Method is authMethod; empty when Codex reports null (not signed in).
+	// Method is authMethod; "" when Codex reports null or nothing (HasMethod false), or reports "".
 	Method string
+	// HasMethod is false when authMethod is null or absent: not signed in. An empty string is a mode, and not
+	// chatgpt.
+	HasMethod bool
 	// RequiresOpenAIAuth is requiresOpenaiAuth; false means a provider needing no OpenAI sign-in is in force.
 	RequiresOpenAIAuth bool
 	token              string
@@ -32,6 +38,16 @@ func (s AuthStatus) GoString() string { return s.String() }
 // Format redacts like String for every verb.
 func (s AuthStatus) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(s.String())) }
 
+// MarshalJSON encodes the method, scrubbed, and never the token.
+func (s AuthStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{"method": secret.Scrub(s.Method), "requiresOpenaiAuth": s.RequiresOpenAIAuth})
+}
+
+// LogValue logs like MarshalJSON.
+func (s AuthStatus) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("method", secret.Scrub(s.Method)), slog.Bool("requiresOpenaiAuth", s.RequiresOpenAIAuth))
+}
+
 // GetAuthStatus calls getAuthStatus. Any token in the reply is registered with the scrubber before it is returned,
 // whatever was asked for.
 func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken bool) (AuthStatus, error) {
@@ -46,7 +62,7 @@ func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken b
 		return AuthStatus{}, bad
 	}
 	secret.Register(token) // before anything else can fail or format it
-	method, err := field[string](raw, "authMethod")
+	method, err := optional[string](raw, "authMethod")
 	if err != nil {
 		return AuthStatus{}, bad
 	}
@@ -54,7 +70,11 @@ func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken b
 	if err != nil {
 		return AuthStatus{}, bad
 	}
-	return AuthStatus{Method: method, RequiresOpenAIAuth: requires == nil || *requires, token: token}, nil
+	st := AuthStatus{HasMethod: method != nil, RequiresOpenAIAuth: requires == nil || *requires, token: token}
+	if method != nil {
+		st.Method = *method
+	}
+	return st, nil
 }
 
 // CredentialsStore calls config/read and returns the effective cli_auth_credentials_store; "" when absent, which
@@ -121,8 +141,11 @@ func Version(userAgent string) string {
 // RateLimits is the Codex plan status from account/rateLimits/read. Only these fields are decoded; nothing that
 // identifies the account reaches a Go value.
 type RateLimits struct {
-	PlanType             string
+	PlanType string
+	// OrdinaryUsageAllowed is ordinaryUsageAllowed; false when it is null or absent, which OrdinaryUsageKnown tells
+	// apart from a denial.
 	OrdinaryUsageAllowed bool
+	OrdinaryUsageKnown   bool
 	Windows              []RateWindow // the primary window, then the secondary one, when present
 }
 
@@ -134,40 +157,73 @@ type RateWindow struct {
 	ResetsAt    time.Time // zero when not reported
 }
 
-// PlanStatus calls account/rateLimits/read and decodes the plan status.
+// PlanStatus calls account/rateLimits/read and decodes the plan status, with exact keys. A window that is present
+// must report usedPercent; a field of the wrong type is a codex-error.
 func (c *Client) PlanStatus(ctx context.Context) (RateLimits, error) {
-	type window struct {
-		UsedPercent        float64 `json:"usedPercent"`
-		WindowDurationMins int     `json:"windowDurationMins"`
-		ResetsAt           *int64  `json:"resetsAt"`
-	}
-	var raw struct {
-		OrdinaryUsageAllowed bool `json:"ordinaryUsageAllowed"`
-		RateLimits           *struct {
-			PlanType  string  `json:"planType"`
-			Primary   *window `json:"primary"`
-			Secondary *window `json:"secondary"`
-		} `json:"rateLimits"`
-	}
+	var raw json.RawMessage
 	if err := c.Call(ctx, "account/rateLimits/read", nil, &raw); err != nil {
 		return RateLimits{}, err
 	}
-	out := RateLimits{OrdinaryUsageAllowed: raw.OrdinaryUsageAllowed}
-	if rl := raw.RateLimits; rl != nil {
-		out.PlanType = secret.Scrub(rl.PlanType)
-		for _, w := range []struct {
-			name string
-			w    *window
-		}{{"primary", rl.Primary}, {"secondary", rl.Secondary}} {
-			if w.w == nil {
-				continue
-			}
-			rw := RateWindow{Name: w.name, UsedPercent: w.w.UsedPercent, WindowMins: w.w.WindowDurationMins}
-			if w.w.ResetsAt != nil {
-				rw.ResetsAt = time.Unix(*w.w.ResetsAt, 0).UTC()
-			}
-			out.Windows = append(out.Windows, rw)
+	out, err := decodeRateLimits(raw)
+	if err != nil {
+		return RateLimits{}, codexError("Codex app-server sent an unexpected account/rateLimits/read result", nil)
+	}
+	return out, nil
+}
+
+func decodeRateLimits(raw json.RawMessage) (RateLimits, error) {
+	root, err := wire.Parse(raw)
+	if err != nil {
+		return RateLimits{}, err
+	}
+	var out RateLimits
+	if root.IsNull() {
+		return out, nil // result: null reads as an empty object
+	}
+	top, err := wire.AsObject(root)
+	if err != nil {
+		return RateLimits{}, err
+	}
+	if n, ok := top.Field("ordinaryUsageAllowed"); ok {
+		if n.Kind() != 't' && n.Kind() != 'f' {
+			return RateLimits{}, wire.ErrInvalid
 		}
+		out.OrdinaryUsageAllowed, out.OrdinaryUsageKnown = n.Kind() == 't', true
+	}
+	rl, ok, err := top.Object("rateLimits")
+	if err != nil || !ok {
+		return out, err
+	}
+	plan, _, err := rl.String("planType")
+	if err != nil {
+		return RateLimits{}, err
+	}
+	out.PlanType = secret.Scrub(plan)
+	for _, name := range []string{"primary", "secondary"} {
+		w, ok, err := rl.Object(name)
+		if err != nil {
+			return RateLimits{}, err
+		}
+		if !ok {
+			continue
+		}
+		used, ok, err := w.Float("usedPercent")
+		if err != nil || !ok {
+			return RateLimits{}, wire.ErrInvalid
+		}
+		mins, _, err := w.Int("windowDurationMins")
+		if err != nil {
+			return RateLimits{}, err
+		}
+		rw := RateWindow{Name: name, UsedPercent: used, WindowMins: int(mins)}
+		resets, ok, err := w.Int("resetsAt")
+		if err != nil {
+			return RateLimits{}, err
+		}
+		if ok {
+			rw.ResetsAt = time.Unix(resets, 0).UTC()
+		}
+		out.Windows = append(out.Windows, rw)
 	}
 	return out, nil
 }

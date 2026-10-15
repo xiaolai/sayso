@@ -109,6 +109,11 @@ class Fake(unittest.TestCase):
         _, _, stdout, _ = converse({"methods": {"m": [{"rawLineBytes": 1000}]}}, [{"id": 1, "method": "m"}])
         self.assertEqual(len(stdout.split("\n")[0]), 1000)
 
+    def test_raw_then_exit(self):
+        p, _, stdout, _ = converse({"methods": {"m": [{"rawThenExit": '{"id":1,"result":{}}'}]}}, [{"id": 1, "method": "m"}, {"id": 2, "method": "m"}])
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(stdout, '{"id":1,"result":{}}')  # no newline, and nothing after it
+
     def test_no_version(self):
         _, out, _, _ = converse({"version": None}, [{"id": 1, "method": "initialize"}])
         self.assertEqual(out[0]["result"]["userAgent"], "codex_cli_rs")
