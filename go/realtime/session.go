@@ -31,7 +31,7 @@ var ErrClosed = errors.New("realtime: session closed")
 // WebSocketURL is the realtime endpoint for model under base (openaihttp.APIBase in production). The https scheme is
 // kept: the library upgrades it, and the origin policy only knows https.
 func WebSocketURL(base, model string) string {
-	return strings.TrimSuffix(base, "/") + "/v1/realtime?model=" + url.QueryEscape(model)
+	return strings.TrimRight(base, "/") + "/v1/realtime?model=" + url.QueryEscape(model)
 }
 
 // DialConfig describes one WebSocket session.
@@ -47,7 +47,9 @@ type DialConfig struct {
 	Route     string       // named on a route-denied handshake refusal; optional
 	Logger    *slog.Logger // nil discards
 	// Trace, if set, receives every message as sent or received ("client" or "server"), before decoding. It must not
-	// keep raw.
+	// keep raw. It runs on the session's reader and writers, so it must return promptly and must not call Close,
+	// Next or Send on the session: Close waits for the reader, which waits for Trace. To end the session from Trace,
+	// call Close from another goroutine.
 	Trace func(dir string, raw []byte)
 }
 
@@ -120,7 +122,9 @@ func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
 	if err != nil {
 		var e *openaihttp.Error
 		if errors.As(err, &e) {
-			return nil, err // the origin policy or a refused redirect
+			// The origin policy's refusal, without the wrappers around it, whose text could quote a URL.
+			refused := *e
+			return nil, &refused
 		}
 		if ctx.Err() != nil {
 			return nil, openaihttp.TransportError("realtime: open WebSocket", ctx.Err()) // the caller's, before any reply
@@ -225,6 +229,9 @@ func (s *Session) Next(ctx context.Context) (Event, error) {
 
 // Send writes one client event as JSON. Writes are serialised; waiting for an earlier write observes ctx and Close.
 func (s *Session) Send(ctx context.Context, event any) error {
+	if err := ctx.Err(); err != nil {
+		return err // cancelled before the call: nothing is encoded or sent, and the session is untouched
+	}
 	b, err := json.Marshal(event)
 	if err != nil {
 		// A fixed message: a custom marshaller's error text could carry anything.
@@ -247,6 +254,11 @@ func (s *Session) Send(ctx context.Context, event any) error {
 	case <-s.closing:
 		return ErrClosed // closed while this write waited
 	default:
+	}
+	if err := ctx.Err(); err != nil {
+		// A select picks at random among ready cases, so a cancelled call can win the semaphore; it must not reach
+		// the library, whose cancellation handling closes the connection.
+		return err
 	}
 	if s.trace != nil {
 		s.trace("client", b)
@@ -327,8 +339,11 @@ func (u *upgradeCapture) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := u.rt.RoundTrip(req)
 	if err == nil && resp.StatusCode != http.StatusSwitchingProtocols {
 		// A refusal is classified from its status and request id alone (spec/session.md); dropping the body here
-		// keeps the library's cleanup from reading it, which could stall the return.
-		_ = resp.Body.Close()
+		// keeps the library's cleanup from reading it, which could stall the return. An injected transport may
+		// return no body at all.
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 		resp.Body = http.NoBody
 	}
 	if err == nil && resp.StatusCode == http.StatusSwitchingProtocols {

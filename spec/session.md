@@ -80,7 +80,9 @@ implementations accept and refuse the same documents whatever their JSON librari
   signed 64-bit integer; a float field is a number within the range of a double;
 - a provider `code` is its string, or for any other value its exact JSON text;
 - in a string map (`metadata`), two names that are canonically equivalent (`\u00e9` and `e\u0301`) are invalid,
-  because Swift's `String`-keyed map cannot hold both;
+  because Swift's `String`-keyed map cannot hold both; so is a name with a run of more than 30 combining marks
+  (non-starters, counted in each character's canonical decomposition), the stream-safe bound beyond which Go's
+  normaliser inserts U+034F and the two implementations would compare names differently;
 - a field of the wrong type in a consumed event is a `protocol` error that names the event type.
 
 Go reads through `encoding/json/jsontext`; Swift has its own validator, because `JSONSerialization` folds none of

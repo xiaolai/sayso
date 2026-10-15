@@ -136,12 +136,14 @@ package enum WireJSON {
         func array(_ name: String) throws -> [Node]? { try field(name)?.elements() }
 
         /// An object whose values are strings, null being "". Two names that are canonically equivalent are
-        /// invalid: a `String`-keyed result cannot hold both, and Go refuses them too (spec/session.md, wire JSON).
+        /// invalid: a `String`-keyed result cannot hold both, and Go refuses them too (spec/session.md, wire JSON). So
+        /// is a name with a run of more than 30 combining marks, where Go's normaliser and Swift's equality disagree.
         func stringMap(_ name: String) throws -> [String: String]? {
             guard let o = try object(name) else { return nil }
             var out: [String: String] = [:]
             for (k, n) in o.members {
                 let key = String(decoding: k, as: UTF8.self)
+                guard !longMarkRun(key) else { throw Invalid() }
                 guard out[key] == nil else { throw Invalid() }
                 out[key] = n.isNull ? "" : try n.string()
             }
@@ -153,6 +155,26 @@ package enum WireJSON {
             guard let n = field(name) else { return "" }
             return n.kind == UInt8(ascii: "\"") ? try n.string() : n.raw
         }
+    }
+
+    /// The stream-safe bound: UAX #15 allows at most 30 consecutive non-starters.
+    static let maximumMarkRun = 30
+
+    /// A run of more than ``maximumMarkRun`` non-starters, counted in each scalar's canonical decomposition, as Go
+    /// counts it.
+    static func longMarkRun(_ s: String) -> Bool {
+        var run = 0
+        for scalar in s.unicodeScalars {
+            for d in String(scalar).decomposedStringWithCanonicalMapping.unicodeScalars {
+                if d.properties.canonicalCombiningClass == .notReordered {
+                    run = 0
+                } else {
+                    run += 1
+                    if run > maximumMarkRun { return true }
+                }
+            }
+        }
+        return false
     }
 
     /// Helpers that walk a document already validated.
@@ -169,16 +191,14 @@ package enum WireJSON {
         static func skipValue(_ b: [UInt8], _ i: Int) -> Int {
             switch b[i] {
             case UInt8(ascii: "\""):
-                var j = i
-                _ = unescape(b, &j)
-                return j
+                return skipString(b, i)
             case UInt8(ascii: "{"), UInt8(ascii: "["):
                 var depth = 0
                 var j = i
                 while true {
                     switch b[j] {
                     case UInt8(ascii: "\""):
-                        _ = unescape(b, &j)
+                        j = skipString(b, j)
                         continue
                     case UInt8(ascii: "{"), UInt8(ascii: "["): depth += 1
                     case UInt8(ascii: "}"), UInt8(ascii: "]"):
@@ -197,6 +217,16 @@ package enum WireJSON {
                 }
                 return j
             }
+        }
+
+        /// The end of the string starting at `i` (its opening quote), after the closing quote. It copies nothing: a
+        /// skipped value may be a credential, and a copy could not be wiped.
+        static func skipString(_ b: [UInt8], _ i: Int) -> Int {
+            var j = i + 1
+            while b[j] != UInt8(ascii: "\"") {
+                j += b[j] == UInt8(ascii: "\\") ? 2 : 1  // an escape's second byte is never a quote that ends it
+            }
+            return j + 1
         }
 
         /// The UTF-8 bytes of the string starting at `i` (its opening quote); `i` ends after the closing quote.
@@ -281,6 +311,7 @@ package enum WireJSON {
             let start = i
             var stack: [Frame] = []
             var needValue = true
+            var end = start  // where the root value ends, recorded as it ends: no rescan of the document
             while true {
                 skipSpace()
                 if needValue {
@@ -293,6 +324,7 @@ package enum WireJSON {
                         if c == UInt8(ascii: "{") {
                             if peek() == UInt8(ascii: "}") {
                                 i += 1
+                                if stack.isEmpty { end = i }
                                 needValue = false
                             } else {
                                 stack.append(.object(names: Names(try name())))
@@ -301,6 +333,7 @@ package enum WireJSON {
                             }
                         } else if peek() == UInt8(ascii: "]") {
                             i += 1
+                            if stack.isEmpty { end = i }
                             needValue = false
                         } else {
                             stack.append(.array)
@@ -312,13 +345,14 @@ package enum WireJSON {
                     case UInt8(ascii: "n"): try literal("null")
                     default: try number()
                     }
+                    if stack.isEmpty { end = i }
                     needValue = false
                     continue
                 }
                 // A value just ended.
                 guard let top = stack.last else {
                     guard i == b.count else { throw Invalid() }  // a second value, or trailing garbage
-                    return start..<Scanner.skipValue(b, start)
+                    return start..<end
                 }
                 guard let c = peek() else { throw Invalid() }
                 switch (top, c) {
@@ -333,6 +367,7 @@ package enum WireJSON {
                 case (.object, UInt8(ascii: "}")), (.array, UInt8(ascii: "]")):
                     i += 1
                     stack.removeLast()
+                    if stack.isEmpty { end = i }
                 case (.array, UInt8(ascii: ",")):
                     i += 1
                     needValue = true

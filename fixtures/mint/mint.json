@@ -1494,5 +1494,60 @@
    ]
   },
   "note": "The minted value is registered with the scrubber: this one matches no secret pattern, so only registration can remove it."
+ },
+ {
+  "id": "mint-redirect-malformed-location",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 302,
+     "headers": {
+      "location": "/opaque-canary%zz",
+      "x-request-id": "req_redirect"
+     },
+     "json": {
+      "error": {
+       "type": "invalid_request_error",
+       "code": "moved",
+       "message": "moved",
+       "param": null
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "protocol",
+   "status": 302,
+   "requestId": "req_redirect",
+   "code": "moved",
+   "type": "invalid_request_error",
+   "requests": 1,
+   "notInDescription": [
+    "opaque-canary"
+   ]
+  },
+  "note": "A redirect is refused and its reply kept: protocol with the status, request id and provider fields, in both implementations. Go's http.Client parsed the Location before its redirect check, so a malformed one failed as network, and the refusal's text quoted the Location."
  }
 ]

@@ -30,7 +30,15 @@ func (p *originPolicy) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 	}
-	return p.base.RoundTrip(req)
+	resp, err := p.base.RoundTrip(req)
+	if err == nil && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		// A redirect is refused, and its reply delivered as it came, as in Swift: http.Client returns a 3xx without a
+		// Location as the response, so CheckResponse classifies it with its status, request id and error body. With
+		// the Location, http.Client would parse it before CheckRedirect runs: a malformed one failed as network, and
+		// the refusal's *url.Error quoted the Location, which may carry a secret.
+		resp.Header.Del("Location")
+	}
+	return resp, err
 }
 
 func (p *originPolicy) check(req *http.Request) error {

@@ -181,10 +181,7 @@ func TestRedirectsAreNeverFollowed(t *testing.T) {
 					t.Fatal(err)
 				}
 				resp, err := c.Do(newReq(t, s, APIBase+s.path))
-				if err == nil {
-					_ = resp.Body.Close()
-					t.Fatalf("%s %s %d: redirect followed", s.name, name, status)
-				}
+				err = redirectRefusal(resp, err)
 				got := base.requests()
 				if len(got) != 1 {
 					t.Fatalf("%s %s %d: base saw %d requests, want 1", s.name, name, status, len(got))
@@ -223,9 +220,9 @@ func TestCrossHostRedirectNeverReachesSecondHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := c.Do(newReq(t, shapes[0], first.URL+shapes[0].path))
-	if err == nil {
-		_ = resp.Body.Close()
-		t.Fatal("redirect followed")
+	var e *Error
+	if err = redirectRefusal(resp, err); !errors.As(err, &e) || e.Class != ClassProtocol || e.Status != http.StatusTemporaryRedirect {
+		t.Fatalf("error %v, want protocol with status 307", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -344,4 +341,17 @@ func TestRealNetworkGuard(t *testing.T) {
 	if len(rec.requests()) != 1 {
 		t.Fatal("request did not reach the fake")
 	}
+}
+
+// redirectRefusal is the error a caller sees for a redirect: the client returns the 3xx reply unfollowed, and
+// CheckResponse classifies it. A followed redirect would be a 2xx here, which yields nil.
+func redirectRefusal(resp *http.Response, err error) error {
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		_ = resp.Body.Close()
+		return nil
+	}
+	return CheckResponse(resp, "")
 }

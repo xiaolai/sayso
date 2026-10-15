@@ -193,6 +193,8 @@ func (o Object) Array(name string) ([]Node, bool, error) {
 
 // StringMap returns an object member whose values are strings (null is ""). Two names that are canonically
 // equivalent ("\u00e9" and "e\u0301") are ErrInvalid: Swift's String-keyed map cannot hold both, so both refuse them.
+// A name with a run of more than 30 combining marks is ErrInvalid too: NFC inserts U+034F into such a run (the
+// stream-safe text format), which would make two distinct names compare equal here and not in Swift.
 func (o Object) StringMap(name string) (map[string]string, bool, error) {
 	m, ok, err := o.Object(name)
 	if err != nil || !ok {
@@ -201,6 +203,9 @@ func (o Object) StringMap(name string) (map[string]string, bool, error) {
 	out := make(map[string]string, len(m))
 	seen := make(map[string]bool, len(m))
 	for k := range m {
+		if longMarkRun(k) {
+			return nil, false, ErrInvalid
+		}
 		nfc := norm.NFC.String(k)
 		if seen[nfc] {
 			return nil, false, ErrInvalid
@@ -228,4 +233,25 @@ func (o Object) Code(name string) (string, error) {
 		return s, err
 	}
 	return n.Raw(), nil
+}
+
+// maxMarkRun is the stream-safe bound: UAX #15 allows at most 30 consecutive non-starters.
+const maxMarkRun = 30
+
+// longMarkRun reports a run of more than maxMarkRun non-starters in s, counted in each character's canonical
+// decomposition. Each rune is decomposed on its own, which never reaches the bound, so no U+034F is inserted.
+func longMarkRun(s string) bool {
+	run := 0
+	for _, r := range s {
+		for _, d := range norm.NFD.String(string(r)) {
+			if norm.NFD.PropertiesString(string(d)).CCC() == 0 {
+				run = 0
+				continue
+			}
+			if run++; run > maxMarkRun {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -3,9 +3,10 @@ import Foundation
 /// One realtime WebSocket (spec/session.md, `NET-03`): one reader feeds ``next()`` one message at a time, and no
 /// client pings are sent: liveness comes from the caller's own timers.
 ///
-/// Every message is delivered with its bytes, including events this package ignores or does not know, which are also
-/// counted in ``unknownCounts`` as API drift. A malformed event fails only its own ``next()`` call as `protocol`; a
-/// message over the read limit, a close frame or a broken connection ends the session, classified.
+/// Every message is delivered with its bytes, including events this package ignores or does not know. Only the unknown
+/// ones are also counted, in ``unknownCounts``, as API drift: an ignored type is documented, not drift. A malformed
+/// event fails only its own ``next()`` call as `protocol`; a message over the read limit, a close frame or a broken
+/// connection ends the session, classified.
 public final class RealtimeSession: Sendable {
     /// The realtime endpoint for one session.
     public struct Configuration: Sendable {
@@ -50,6 +51,7 @@ public final class RealtimeSession: Sendable {
     private let client: HTTPClient
     private let task: URLSessionWebSocketTask
     private let inbox: Inbox
+    private let writes = WriteGate()
     private let reader: Task<Void, Never>
 
     private init(client: HTTPClient, task: URLSessionWebSocketTask, readLimit: Int) {
@@ -128,11 +130,16 @@ public final class RealtimeSession: Sendable {
         try await inbox.take()
     }
 
-    /// Writes one client event, an encoded JSON object, as a text message. A task cancelled before the write throws
-    /// `CancellationError` and sends nothing. Cancelling a write in flight ends the session, as in Go: a message
+    /// Writes one client event, an encoded JSON object, as a text message. Writes are serialised, as in Go. A task
+    /// cancelled before its write starts, while it waits behind another write included, throws `CancellationError`,
+    /// sends nothing and leaves the session open. Cancelling a write in flight ends the session, as in Go: a message
     /// partly handed to the transport cannot be withdrawn, and a stalled write must not hold the caller.
     public func send(_ event: Data) async throws {
         if inbox.isClosing { throw Closed() }
+        try Task.checkCancellation()
+        try await writes.acquire()
+        defer { writes.release() }
+        if inbox.isClosing { throw Closed() }  // closed while this write waited
         try Task.checkCancellation()
         let task = self.task
         do {
@@ -159,30 +166,43 @@ public final class RealtimeSession: Sendable {
         try await send(data)
     }
 
-    /// How many events of each unknown type this session received: API drift.
-    public var unknownCounts: [String: Int] { inbox.unknownCounts }
+    /// How many events of each unknown type this session received, API drift: one entry per distinct type as sent,
+    /// in the order first seen. Types are told apart by their UTF-8 bytes, as in Go: two canonically equivalent
+    /// spellings are two types on the wire, so a `String`-keyed dictionary, which would merge them, is not used.
+    public var unknownCounts: [UnknownTypeCount] { inbox.unknownCounts }
 
-    /// Sends a normal close and drops the connection if the peer has not finished closing within 2 s. It waits for
-    /// the reader, so nothing outlives it. Safe to call more than once.
+    /// Sends a normal close and drops the connection if the peer has not finished closing within 2 s, then waits up
+    /// to 1 s more for the transport to complete. It waits for the reader, so nothing outlives it. It runs to the end
+    /// even when the calling task is cancelled. Safe to call more than once.
     public func close() async {
         inbox.markClosing()
         task.cancel(with: .normalClosure, reason: nil)
         let reader = self.reader
         let task = self.task
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .nanoseconds(Int64(Deadline.nanoseconds(Self.closeGrace) ?? 0)))
-        let dropped = Task {
-            try? await Task.sleep(until: deadline, clock: clock)
-            if !Task.isCancelled { task.cancel() }
-        }
-        await reader.value
-        // The reader can end before the transport does (a buffered message releases it at once), so the close
-        // handshake keeps its grace until the task completes, then is dropped.
-        while task.state != .completed, clock.now < deadline {
-            try? await Task.sleep(nanoseconds: 20_000_000)
-        }
-        if task.state != .completed { task.cancel() }
-        dropped.cancel()
+        // An unstructured task does not inherit the caller's cancellation, so its sleeps really wait: in a cancelled
+        // caller every Task.sleep would throw at once and the polling below would spin.
+        await Task {
+            let clock = ContinuousClock()
+            let grace = clock.now.advanced(by: Deadline.duration(Self.closeGrace) ?? .zero)
+            let dropped = Task {
+                try? await Task.sleep(until: grace, clock: clock)
+                if !Task.isCancelled { task.cancel() }
+            }
+            await reader.value
+            // The reader can end before the transport does (a buffered message releases it at once), so the close
+            // handshake keeps its grace until the task completes; then it is dropped and given 1 s to complete.
+            while task.state != .completed, clock.now < grace {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            dropped.cancel()
+            if task.state != .completed {
+                task.cancel()
+                let drop = clock.now.advanced(by: .seconds(1))
+                while task.state != .completed, clock.now < drop {
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+            }
+        }.value
     }
 
     /// The error for a close frame received while more events were expected; the reason is scrubbed.
@@ -243,9 +263,77 @@ public final class RealtimeSession: Sendable {
     }
 }
 
+/// How many events of one unknown type a session received; see ``RealtimeSession/unknownCounts``.
+public struct UnknownTypeCount: Sendable, Equatable {
+    /// The type as sent.
+    public var type: String
+    public var count: Int
+
+    public init(type: String, count: Int) {
+        self.type = type
+        self.count = count
+    }
+
+    /// Byte identity, as the counts are kept: canonically equivalent spellings are different types.
+    public static func == (a: UnknownTypeCount, b: UnknownTypeCount) -> Bool {
+        a.type.utf8.elementsEqual(b.type.utf8) && a.count == b.count
+    }
+}
+
+/// Serialises writes. A waiter cancelled before its turn leaves the queue and never writes; the transport is not
+/// touched, so a cancelled send queued behind a stalled one does not end the session.
+final class WriteGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var busy = false
+    private var queue: [(id: UInt64, c: CheckedContinuation<Void, Error>)] = []
+    private var nextID: UInt64 = 0
+
+    func acquire() async throws {
+        let id: UInt64 = lock.withLock {
+            defer { nextID += 1 }
+            return nextID
+        }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                lock.lock()
+                if Task.isCancelled {
+                    lock.unlock()
+                    c.resume(throwing: CancellationError())
+                } else if !busy {
+                    busy = true
+                    lock.unlock()
+                    c.resume()
+                } else {
+                    queue.append((id, c))
+                    lock.unlock()
+                }
+            }
+        } onCancel: {
+            lock.lock()
+            let at = queue.firstIndex { $0.id == id }
+            let waiter = at.map { queue.remove(at: $0).c }
+            lock.unlock()
+            waiter?.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Hands the turn to the next waiter, or frees the gate.
+    func release() {
+        lock.lock()
+        if queue.isEmpty {
+            busy = false
+            lock.unlock()
+        } else {
+            let next = queue.removeFirst().c
+            lock.unlock()
+            next.resume()
+        }
+    }
+}
+
 /// The hand-off between the reader and ``RealtimeSession/next()``: at most one message waits, so the reader applies
 /// back-pressure as an unbuffered channel would.
-private final class Inbox: @unchecked Sendable {
+final class Inbox: @unchecked Sendable {
     private let lock = NSLock()
     private var buffered: Result<RealtimeMessage, Error>?
     private var terminal: Error?
@@ -254,7 +342,8 @@ private final class Inbox: @unchecked Sendable {
     private var order: [UInt64] = []
     private var nextID: UInt64 = 0
     private var space: CheckedContinuation<Bool, Never>?
-    private var unknown: [String: Int] = [:]
+    private var unknown: [UnknownTypeCount] = []
+    private var unknownIndex: [[UInt8]: Int] = [:]
 
     var isClosing: Bool {
         lock.lock()
@@ -262,15 +351,21 @@ private final class Inbox: @unchecked Sendable {
         return closing
     }
 
-    var unknownCounts: [String: Int] {
+    var unknownCounts: [UnknownTypeCount] {
         lock.lock()
         defer { lock.unlock() }
         return unknown
     }
 
     func countUnknown(_ type: String) {
+        let key = Array(type.utf8)
         lock.lock()
-        unknown[type, default: 0] += 1
+        if let at = unknownIndex[key] {
+            unknown[at].count += 1
+        } else {
+            unknownIndex[key] = unknown.count
+            unknown.append(UnknownTypeCount(type: type, count: 1))
+        }
         lock.unlock()
     }
 
@@ -423,4 +518,9 @@ private final class Handshake: NSObject, URLSessionWebSocketDelegate, @unchecked
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) { completionHandler(nil) }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) { answerChallenge(challenge, completionHandler) }
 }

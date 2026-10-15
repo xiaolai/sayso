@@ -129,7 +129,7 @@ public enum RealtimeEvent: Sendable, Equatable {
     /// For `rate_limits.updated`: a rate-limited error when any limit has nothing left, else nil.
     public static func exhausted(_ limits: [RateLimit]) -> RealtimeError? {
         guard let spent = limits.first(where: { $0.remaining <= 0 }) else { return nil }
-        return RealtimeError(.rateLimited, message: "rate limit \"\(Secret.scrub(spent.name))\" exhausted")
+        return RealtimeError(.rateLimited, message: "rate limit \(goQuoted(Secret.scrub(spent.name))) exhausted")
     }
 
     /// Decodes one server event by its type. The whole event must be strict JSON (spec/session.md, wire JSON); then
@@ -140,8 +140,12 @@ public enum RealtimeEvent: Sendable, Equatable {
         let notJSON = protocolError("", "not valid JSON")
         guard let root = try? WireJSON.parse(data) else { throw notJSON }
         if root.isNull { throw protocolError("", "missing type") }
-        guard let w = try? WireJSON.Object(root), let type = try? w.string("type") else { throw notJSON }
-        guard !type.isEmpty else { throw protocolError("", "missing type") }
+        // As in Go: not an object, or a type that is not a string, is not valid JSON; an absent, null or empty type is
+        // a missing type.
+        guard let w = try? WireJSON.Object(root) else { throw notJSON }
+        let type: String?
+        do { type = try w.string("type") } catch { throw notJSON }
+        guard let type, !type.isEmpty else { throw protocolError("", "missing type") }
         do {
             if let event = try typed(type, w) { return event }
         } catch is WireJSON.Invalid {
@@ -290,4 +294,56 @@ public struct RealtimeMessage: Sendable, Equatable {
         self.raw = raw
         self.event = try RealtimeEvent.decode(raw)
     }
+}
+
+/// `s` quoted as Go's `%q` (strconv.Quote) does, so a name cannot forge a line in a log and both implementations write
+/// the same text: `"` and `\` escaped, `\a \b \f \n \r \t \v` by name, any other character Go does not print as
+/// `\xHH` below U+0080, `\uHHHH` below U+10000, else `\UHHHHHHHH`.
+func goQuoted(_ s: String) -> String {
+    var out = "\""
+    for scalar in s.unicodeScalars {
+        switch scalar {
+        case "\"": out += "\\\""
+        case "\\": out += "\\\\"
+        case "\u{07}": out += "\\a"
+        case "\u{08}": out += "\\b"
+        case "\u{0C}": out += "\\f"
+        case "\n": out += "\\n"
+        case "\r": out += "\\r"
+        case "\t": out += "\\t"
+        case "\u{0B}": out += "\\v"
+        default:
+            if goPrintable(scalar) {
+                out.unicodeScalars.append(scalar)
+            } else if scalar.value < 0x80 {
+                out += "\\x" + hex(scalar.value, 2)
+            } else if scalar.value < 0x10000 {
+                out += "\\u" + hex(scalar.value, 4)
+            } else {
+                out += "\\U" + hex(scalar.value, 8)
+            }
+        }
+    }
+    return out + "\""
+}
+
+/// Go's strconv.IsPrint: letters, marks, numbers, punctuation, symbols and the ASCII space.
+private func goPrintable(_ s: Unicode.Scalar) -> Bool {
+    if s == " " { return true }
+    switch s.properties.generalCategory {
+    case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
+        .nonspacingMark, .spacingMark, .enclosingMark,
+        .decimalNumber, .letterNumber, .otherNumber,
+        .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation, .initialPunctuation,
+        .finalPunctuation, .otherPunctuation,
+        .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
+        return true
+    default:
+        return false
+    }
+}
+
+private func hex(_ v: UInt32, _ width: Int) -> String {
+    let h = String(v, radix: 16)
+    return String(repeating: "0", count: max(0, width - h.count)) + h
 }
