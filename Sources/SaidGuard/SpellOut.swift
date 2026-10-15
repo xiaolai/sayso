@@ -68,7 +68,8 @@ final class SpellOut: @unchecked Sendable {
     /// The spelled tokens of a number written in digits (`body`, without its sign), or nil when the script did not
     /// write a number the locale formats that way.
     func spelled(digits body: String, sign: String) -> [String]? {
-        guard let v = value(digits: body) else { return nil }
+        // Negating zero leaves it unsigned, so "-0" would be spelled without its sign: as written only.
+        guard let v = value(digits: body), !(sign == "-" && v.isZero) else { return nil }
         lock.lock()
         let s = spell.string(from: NSDecimalNumber(decimal: sign == "-" ? -v : v))
         lock.unlock()

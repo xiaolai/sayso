@@ -32,12 +32,19 @@ the results was tried and abandoned: every rewrite rule could map two different 
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`
    written against a number is split off; a superscript digit is `^` and the digit before NFKC can fold it (`2³` is
-   not `23`); a `-` between numbers is a symbol, silent-able only when tight and outside an expression (`3-4`, `1-0`
-   may be read with no word; `5-2=3` and `3 - 4` may not); a comma list (`1,2,3`) is cut into numbers on both sides. A number keeps its
+   not `23`); a `-` between numbers, the left one possibly ending in `%` or an ordinal suffix (`5% - 2%`, `1st - 3rd`),
+   is a symbol, silent-able only when tight and outside an expression (`3-4`, `1-0` may be read with no word; `5-2=3`
+   and `3 - 4` may not). An expression is a run of numbers and symbols joined only by spaces that holds another
+   operator; punctuation ends it (`1-0. #1` holds none). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
+   both sides. A number keeps its
    sign (start, after space or punctuation, before `.5`, or an exponent `1e-3`), its `. , / :` between digits and an
    ordinal suffix; a leading `,` starts a number only after a space (`,5` is a French decimal, `Yes,3` is a word and a
    number). Only `- ‐ ‑` join words (`e-mail`); dashes `– —` separate them. A letter next to a digit is a token
    boundary; each character of an unspaced script (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) is a token.
+   A hyphen joins after a combining mark too (`हिन्दी-भाषा`). `e.g.` and `i.e.` are one word unless their second letter
+   is a capital (`E.G.` is initials). A side with a run of more than 29 non-starters (canonical combining class above
+   zero, or Hangul medial and final jamo) in its compatibility decomposition never matches: normalisers differ
+   beyond 30 (Go's inserts U+034F, Foundation's does not), so no implementation decides such a run.
 2. **The script only** is cut into units, and each unit lists its correct readings. Three invariants hold by
    construction, not by fixture:
    - **A number's every reading says its whole value**: sign, magnitude, fraction, ordinal suffix and percent are
@@ -53,12 +60,13 @@ the results was tried and abandoned: every rewrite rule could map two different 
 
    | Unit | Readings |
    |---|---|
-   | number, `en` | as written (always, even when grouped beyond a cardinal); with or without thousands commas (a grouped number is never digit by digit); cardinal words with no, one or every British "and", and "a" for a leading one before a scale word; year pairs for ungrouped four-digit 1000–2099; digit by digit for four or more ungrouped digits, a leading zero or more than 15 digits, with "point" and digits for a fraction; ordinals in digits (`21st`, only with the right suffix) or words; percent as `%` or "percent"; a sign as `-`, "minus" or "negative"; "zero" also "oh" or "o" in digit readings; a comma list (`1,2,3`) is several numbers |
-   | number, `zh` | as written; commas; every accepted Han spelling of its value (`200` → `二百`/`两百`, `2` → `两`; 两 only as a whole coefficient, so not `十两万`) |
+   | number, `en` | as written (always, even when grouped beyond a cardinal); with or without thousands commas, also beyond the cardinal range (a grouped number is never digit by digit); cardinal words with no, one or every British "and", and "a" for a leading one before a scale word; year pairs for ungrouped four-digit 1000–2099; digit by digit for four or more ungrouped integer digits (`1234.5` = `one two three four point five`), a leading zero or more than 15 digits, with "point" and digits for a fraction; ordinals in digits (`21st`, only with the right suffix) or words; percent as `%` or "percent"; a sign as `-`, "minus" or "negative"; "zero" also "oh" or "o" in digit readings; a comma list (`1,2,3`) is several numbers |
+   | number, `zh` | as written; commas; every accepted Han spelling of its value up to 9,999,999,999,999,999 (`200` → `二百`/`两百`, `2` → `两`, `1000000000000000` → `一千万亿`; 两 only as a whole coefficient, so not `十两万`) |
+   | negative zero, any language | `-0` as written, and in `en` with "minus" or "negative"; never a spell-out, which would drop the sign |
    | number, another language | as written; the locale's spell-out where the implementation has one (Swift: ICU), else none (`requires: spellout:<lang>`); `,` and `.` are not interpreted (they are locale-specific) |
    | number with `/` or `:` | as written only |
    | Han numeral run, `zh` | as written; if it round-trips (above), its value in digits, with commas, and its other spellings. A run of digits only is a digit string (`二〇二四` = `2024`) when it has one digit or three or more without 两; two digits are an approximation (`两三天`, `三五天`) and have no digit reading |
-   | English number in words | `[minus] cardinal [point digits] [percent]`, or a cardinal ending in an ordinal word (`twenty-first`), parsed strictly as the longest prefix of at most 48 words with no punctuation inside: as written, plus every reading of the number it names (`forty-two` = `42`, `minus seven` = `-7`, `three point five percent` = `3.5%`). "zero" is a cardinal only alone (`one thousand zero` is two numbers), and "and" only before a number under the scale word before it (`one hundred and thousand` is not a number) |
+   | English number in words | `[minus] cardinal [point digits] [percent]`, or a cardinal ending in an ordinal word (`twenty-first`, also `zeroth`), parsed strictly as the longest prefix of at most 48 words with no punctuation inside: as written, plus every reading of the number it names (`forty-two` = `42`, `minus seven` = `-7`, `three point five percent` = `3.5%`). "zero" is a cardinal only alone (`one thousand zero` is two numbers), and "and" only before a number under the scale word before it (`one hundred and thousand` is not a number) |
    | `oh` / `O`, `en` | `oh`, `o`, `zero`, `0`, only in a run of digits and number words with no punctuation inside (`oh oh seven`, `X O 4`; not `Oh, one more`) |
    | run of single letters | spaced; joined (`I B M` = `IBM`) when it has three letters or more, or none of `a`, `I` (`a T` ≠ `at`) |
    | all-capital code | letter by letter if 2–3 letters, or up to 6 with no vowel (`HTML`), or up to 6 against a number (`JIRA-10442`); never a common short word in capitals (`ON`, `NO`, `GO`: a closed list, `svCapsWords`), and never beside a capital word (`STOP NOW` is shouting; `API URL` are two codes) |
@@ -67,13 +75,14 @@ the results was tried and abandoned: every rewrite rule could map two different 
    | `St`, `Dr` after a capitalised word in the same sentence, `en` | "street", "drive" (`Main St.`, `Take Oak Dr.`; not `Alice. Dr Smith`); `St` before a capitalised word and not after one is "saint" |
    | `Doctor Mister Missus Saint` before a capitalised word | also the abbreviation (`Doctor Smith` = `Dr. Smith`) |
    | `vs`, `etc`, `e.g.`, `i.e.`, `en` | expanded only in lower case after the first letter (`VS Code`, `E.G. White` are not); `for example`, `et cetera`, `that is` also abbreviated |
-   | spoken symbol, `en` | as written, or its names (`svSymbolNames`: `percent`, `plus`, `equals`, `minus`/`to`, `times`, `divided by`, `less than`, `not equal to`, `number`, `star`, `prime`, `to the power of`, `squared`/`cubed` for `^2`/`^3`, …); unnamed symbols (currency) and other languages as written |
+   | spoken symbol, `en` | as written, or its names (`svSymbolNames`: `percent`, `plus`, `equals`, `minus`/`to`, `times`, `divided by`, `less than`, `not equal to`, `number`, `star`, `prime`, `to the power of`, `squared`/`cubed` for `^2`/`^3`, which may also be read `to the power of` with the exponent in words or digits, …); unnamed symbols (currency) and other languages as written |
    | hyphenated word | split, or joined (`e-mail` = `email`) |
-   | lowercase `a.b.c` | as written, or with "dot" between every part (`www dot example dot com`); a capital (`Dr.Smith`, `end.Next`) is not a domain |
+   | lowercase `a.b.c` | as written, or with "dot" between every part (`www dot example dot com`); a capital (`Dr.Smith`, `end.Next`) is not a domain. Recognised before number words (`one.com`); a label may be one letter (`x.com`), and a hyphenated label is cut as the transcript cuts it (`e-mail.com`). A run of single letters (`a.b.c`) is a spelled code instead |
    | any other word or character | as written |
 
 3. **Match** iff the script has at least one unit and the transcript's tokens are one reading per unit, in order. A
-   script token also matches a hyphen chain in the transcript that joins to it (`email` = `e-mail`, up to 8 parts).
+   script token also matches a hyphen chain in the transcript that joins to it (`email` = `e-mail`, up to 8 parts),
+   compared after normalising the joined text again (joined jamo `ᄀ-ᅡ` compose to `가`).
    The matcher is a bitset simulation: bit *j* of the frontier means the units so far can end at token *j*, and each
    step ANDs it with the sparse start positions of an accepted token and shifts. Work follows the frontier's span, not
    a memo of every (unit, position) pair. Inputs above 64 KiB per side never match.

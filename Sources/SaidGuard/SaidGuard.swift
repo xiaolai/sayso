@@ -30,17 +30,65 @@ public let saidGuardSpellOutLanguages: Set<String> = ["ar", "de", "es", "fr", "h
 /// Whether the model's own transcript (`said`) is a reading of the script (`spoken`) in `language`, a BCP 47 tag
 /// ("en", "zh-Hans"). An empty script never matches.
 public func saidMatches(_ said: String, _ spoken: String, language: String) -> Bool {
-    if said.utf8.count > saidGuardMaxBytes || spoken.utf8.count > saidGuardMaxBytes { return false }
+    if said.utf8.count > saidGuardMaxBytes || spoken.utf8.count > saidGuardMaxBytes || svOverlongMarks(said)
+        || svOverlongMarks(spoken)
+    {
+        return false
+    }
     let units = svScriptUnits(spoken, language)
     if units.isEmpty { return false }
     return svMatch(units, svTranscriptTokens(said, language))
 }
 
-/// Reads `s` as a Chinese numeral written in characters (一百一十, 两万五, 一〇八); nil for a run that is not a
-/// well-formed numeral (一五一十, 亿万, 零十), or overflows. It is the strict parser the said guard uses.
-public func parseHanNumeral(_ s: String) -> UInt64? { svParseHan(Array(s.unicodeScalars)) }
+/// Reads `s` as a Chinese numeral written in characters (一百一十, 两万五, 零), or as a digit string of one digit or
+/// three or more (一〇八, 二〇二四); nil for a run that is not a well-formed numeral (一五一十, 亿万, 零十), a two-digit
+/// string (三五 is "three or five", an approximation), a digit string with 两, or a value that overflows. Units are
+/// read by the strict parser the said guard uses.
+public func parseHanNumeral(_ s: String) -> UInt64? {
+    let rs = Array(s.unicodeScalars)
+    guard !rs.isEmpty, rs.allSatisfy({ svHanDigit[$0] != nil }) else { return svParseHan(rs) }
+    if rs.count == 2 || (rs.count > 2 && rs.contains("两")) { return nil }
+    var n: UInt64 = 0
+    for r in rs {
+        let (m, o1) = n.multipliedReportingOverflow(by: 10)
+        let (v, o2) = m.addingReportingOverflow(svHanDigit[r]!)
+        if o1 || o2 { return nil }
+        n = v
+    }
+    return n
+}
 
 // --- normalisation shared by both sides ---
+
+/// Bounds a run of combining marks. Normalisers differ beyond 30 (Go's inserts U+034F to keep the text stream-safe,
+/// Foundation's does not), so a side with a longer run never matches; a lowercase mapping can add one mark, hence 29.
+let svMaxMarkRun = 29
+
+/// A run of more than svMaxMarkRun non-starters (canonical combining class above zero, or a Hangul medial or final
+/// jamo) in the compatibility decomposition of `s`, or of `s` after the deletions of preNormalize, which can join two
+/// runs.
+func svOverlongMarks(_ s: String) -> Bool {
+    svMarkRun(s) || svMarkRun(preNormalize(nfkc(svSuperscripts(s))))
+}
+
+private func svMarkRun(_ s: String) -> Bool {
+    if isASCII(s) { return false }
+    var run = 0
+    for r in s.unicodeScalars {
+        let d = r.value < 0x80 ? [r] : Array(String(r).decomposedStringWithCompatibilityMapping.unicodeScalars)
+        for x in d {
+            if x.properties.canonicalCombiningClass.rawValue != 0 || (0x1160...0x11FF).contains(x.value)
+                || (0xD7B0...0xD7FF).contains(x.value)
+            {
+                run += 1
+                if run > svMaxMarkRun { return true }
+            } else {
+                run = 0
+            }
+        }
+    }
+    return false
+}
 
 func svString(_ rs: some Sequence<Unicode.Scalar>) -> String {
     var v = String.UnicodeScalarView()

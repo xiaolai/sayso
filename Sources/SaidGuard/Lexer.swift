@@ -28,13 +28,29 @@ func svSpokenSymbol(_ r: Unicode.Scalar) -> Bool {
     return true
 }
 
-/// A '-' with a number on each side, spaced or not ("5 - 2", "3-4"), is spoken (minus, to).
+/// A '-' with a number on each side, spaced or not ("5 - 2", "3-4", "5% - 2%", "1st - 3rd"), is spoken (minus, to).
+/// A number on the left may end in a percent sign or an ordinal suffix, as the lexer reads it.
 func svBetweenNumbers(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     var p = i - 1
     var n = i + 1
     while p >= 0 && isSpace(rs[p]) { p -= 1 }
     while n < rs.count && isSpace(rs[n]) { n += 1 }
-    return p >= 0 && svDigit(rs[p]) && n < rs.count && svDigit(rs[n])
+    if p >= 1 && rs[p] == "%" {
+        p -= 1
+    } else if p >= 2 && svOrdinalSuffixAt(rs, p - 1) {
+        p -= 2
+    }
+    return p >= 0 && svDigit(rs[p]) && n < rs.count
+        && (svDigit(rs[n]) || rs[n] == "." && n + 1 < rs.count && svDigit(rs[n + 1]))
+}
+
+/// `rs[i..<i+2]` is "st", "nd", "rd" or "th" in any case.
+func svOrdinalSuffixAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
+    guard i >= 0, i + 2 <= rs.count else { return false }
+    switch String(String.UnicodeScalarView(rs[i..<i + 2])).lowercased() {
+    case "st", "nd", "rd", "th": return true
+    default: return false
+    }
 }
 
 /// A '-' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an exponent
@@ -99,9 +115,10 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
             emit(.unspacedChar, i, j)
             i = j
         } else if svLetter(r) || (isApostrophe(r) && i + 1 < rs.count && svLetter(rs[i + 1])) {
-            // "e.g." and "i.e." are one word.
+            // "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
+            // initials ("E.G. White"), lexed letter by letter like any other.
             let m = goLower(svString(rs[i..<min(i + 4, rs.count)]))
-            if (m.hasPrefix("e.g") || m.hasPrefix("i.e")) && (i == 0 || !svLetter(rs[i - 1]))
+            if (m.hasPrefix("e.g") || m.hasPrefix("i.e")) && !isUpper(rs[i + 2]) && (i == 0 || !svLetter(rs[i - 1]))
                 && (i + 3 >= rs.count || !svLetter(rs[i + 3]))
             {
                 emit(.word, i, i + 3)
@@ -116,7 +133,9 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
                     j += 1
                 } else if isApostrophe(c) && (j > i || (j + 1 < rs.count && svLetter(rs[j + 1]))) {
                     j += 1
-                } else if svJoiner(c) && j > i && j + 1 < rs.count && svLetter(rs[j + 1]) && svLetter(rs[j - 1]) {
+                } else if svJoiner(c) && j > i && j + 1 < rs.count && svLetter(rs[j + 1])
+                    && (svLetter(rs[j - 1]) || isMark(rs[j - 1]))
+                {
                     j += 1
                 } else {
                     break
@@ -147,12 +166,16 @@ func svTranscriptTokens(_ s: String, _ language: String) -> [SvTok] {
         if t.kind == .word {
             let parts = fieldsFunc(text, svJoiner)
             for (i, part) in parts.enumerated() { out.append(SvTok(text: part, link: i < parts.count - 1)) }
-        } else if t.kind == .number && text.hasSuffix("%") {
-            out.append(SvTok(text: String(text.dropLast())))
-            out.append(SvTok(text: "%"))
-        } else if t.kind == .number && svCommaList(text, language) {
-            // "1,2,3" is three numbers, cut as the script side cuts it; commas are not spoken
-            for p in split(text, ",") { out.append(SvTok(text: p)) }
+        } else if t.kind == .number {
+            let percent = text.hasSuffix("%")
+            let body = percent ? String(text.dropLast()) : text
+            if svCommaList(body, language) {
+                // "1,2,3" is three numbers, cut as the script side cuts it; commas are not spoken
+                for p in split(body, ",") { out.append(SvTok(text: p)) }
+            } else {
+                out.append(SvTok(text: body))
+            }
+            if percent { out.append(SvTok(text: "%")) }
         } else {
             out.append(SvTok(text: text))
         }

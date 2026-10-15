@@ -35,7 +35,11 @@ final class PCM16Tests: XCTestCase {
             let want = (c["expectSamples"] as? [Int] ?? []).map { Float($0) / 32768 }
             return got == want ? nil : "decoded \(got), want \(want)"
         case "wav":
-            let got = hex(PCM.wav(try bytes(c["pcmHex"]), rate: c["rate"] as? Int ?? 0))
+            let pcm = try bytes(c["pcmHex"]), rate = c["rate"] as? Int ?? 0
+            if c["expectError"] as? Bool == true {
+                return (try? PCM.wav(pcm, rate: rate)) == nil ? nil : "wav succeeded, want an error"
+            }
+            let got = hex(try PCM.wav(pcm, rate: rate))
             return got == c["expectHex"] as? String ? nil : "wav \(got)"
         case "validWAV":
             guard let want = c["expect"] as? Bool else { return "bad case" }

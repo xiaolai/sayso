@@ -17,6 +17,7 @@ type pcmCase struct {
 	Input         []any   `json:"input"`
 	ExpectSamples []int   `json:"expectSamples"`
 	ExpectHex     *string `json:"expectHex"`
+	ExpectError   bool    `json:"expectError"`
 	Hex           string  `json:"hex"`
 	SliceFrom     int     `json:"sliceFrom"`
 	Rate          int     `json:"rate"`
@@ -80,7 +81,17 @@ func checkPCM(pc pcmCase) []string {
 		if err != nil {
 			return []string{err.Error()}
 		}
-		if got := hex.EncodeToString(pcm16.WAV(raw, pc.Rate)); pc.ExpectHex == nil || got != *pc.ExpectHex {
+		wav, err := pcm16.WAV(raw, pc.Rate)
+		if pc.ExpectError {
+			if err == nil {
+				return []string{"wav succeeded, want an error"}
+			}
+			return nil
+		}
+		if err != nil {
+			return []string{err.Error()}
+		}
+		if got := hex.EncodeToString(wav); pc.ExpectHex == nil || got != *pc.ExpectHex {
 			return []string{fmt.Sprintf("wav %s", got)}
 		}
 		return nil

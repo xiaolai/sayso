@@ -8,7 +8,8 @@ import (
 
 // Inputs that once crashed the generator or took seconds under the size cap. Each must return false, without
 // panicking, well inside a second. The bound is loose on purpose: an earlier memo-table matcher took
-// 3.2 and 5.7 seconds here, so it separates the algorithms without timing the machine.
+// 3.2 and 5.7 seconds here, so it separates the algorithms without timing the machine. The time is CPU time
+// (cpuTime), so a loaded machine does not fail it: at load 140 english-rescan took 10.2 s of wall time.
 func TestBounds(t *testing.T) {
 	cases := []struct{ name, script, transcript string }{
 		{"malformed-group", "0.1,000", "wrong"},
@@ -20,17 +21,18 @@ func TestBounds(t *testing.T) {
 		{"domain-middle", strings.Repeat("dot.dot ", 5000), strings.Repeat("dot ", 12500) + "x"},
 		{"han-repeat", strings.Repeat("一亿", 10000), "wrong"},
 		{"hyphen-chain", strings.Repeat("ab", 8000), strings.Repeat("a-b-", 8000) + "x"},
+		{"dash-chain", strings.Repeat("1-", 32767) + "1", "wrong"},
 	}
 	for _, c := range cases {
 		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {
 			t.Fatalf("%s: input exceeds the cap and would not exercise the matcher", c.name)
 		}
-		start := time.Now()
+		start := cpuTime()
 		got := Matches(c.transcript, c.script, "en")
 		if c.name == "han-repeat" {
 			got = got || Matches(c.transcript, c.script, "zh")
 		}
-		elapsed := time.Since(start)
+		elapsed := cpuTime() - start
 		if got {
 			t.Errorf("%s: matched, want false", c.name)
 		}
@@ -53,6 +55,21 @@ func TestHanStrict(t *testing.T) {
 	for s, want := range good {
 		if n, ok := svParseHan([]rune(s)); !ok || n != want {
 			t.Errorf("%s: got %d %v, want %d", s, n, ok, want)
+		}
+	}
+}
+
+// ParseHanNumeral also reads digit strings, except the two-digit approximations and strings with 两.
+func TestParseHanNumeralDigitStrings(t *testing.T) {
+	good := map[string]uint64{"一〇八": 108, "二〇二四": 2024, "零": 0, "〇": 0, "两": 2, "七": 7, "一百一": 110}
+	for s, want := range good {
+		if n, ok := ParseHanNumeral(s); !ok || n != want {
+			t.Errorf("%s: got %d %v, want %d", s, n, ok, want)
+		}
+	}
+	for _, s := range []string{"三五", "两三", "一两三", "九九九九九九九九九九九九九九九九九九九九九", ""} {
+		if n, ok := ParseHanNumeral(s); ok {
+			t.Errorf("%s parsed as %d", s, n)
 		}
 	}
 }
