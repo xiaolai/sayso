@@ -1,0 +1,147 @@
+#if os(macOS)
+import Darwin
+import Foundation
+import RealtimeConnection
+
+/// The file source (spec/credentials.md): `auth.json`, read without following a link, checked on the open
+/// descriptor, bounded, never written.
+enum AuthFile {
+    /// The size from which auth.json is refused.
+    static let maxBytes = 64 << 10
+    /// How long the one re-read after a parse failure waits for a writer to finish.
+    static let tornRetryDelay: TimeInterval = 0.1
+
+    /// `$CODEX_HOME/auth.json` when `codexHome` resolves, after following links, to a folder the user owns, inside
+    /// `confine` when that is set; `~/.codex/auth.json` when `codexHome` is unset. A set CODEX_HOME that fails is
+    /// codex-error.
+    static func path(codexHome: String?, home: String, confine: String?) throws -> String {
+        guard let codexHome, !codexHome.isEmpty else { return join(home, ".codex/auth.json") }
+        guard codexHome.hasPrefix("/") else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not an absolute path") }
+        guard let real = realPath(codexHome) else {
+            throw CodexAuthError(.codexError, message: "CODEX_HOME does not resolve")
+        }
+        if let confine, !confine.isEmpty {
+            guard let root = realPath(confine) else {
+                throw CodexAuthError(.codexError, message: "the folder CODEX_HOME is confined to does not resolve")
+            }
+            guard real == root || real.hasPrefix(root == "/" ? "/" : root + "/") else {
+                throw CodexAuthError(.codexError, message: "CODEX_HOME is outside the folder it is confined to")
+            }
+        }
+        var st = stat()
+        guard stat(real, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else {
+            throw CodexAuthError(.codexError, message: "CODEX_HOME is not a folder")
+        }
+        guard st.st_uid == getuid() else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not owned by the user") }
+        return join(real, "auth.json")
+    }
+
+    private static func realPath(_ p: String) -> String? {
+        guard let r = realpath(p, nil) else { return nil }
+        defer { free(r) }
+        return String(cString: r)
+    }
+
+    /// The ChatGPT token `path` holds. A missing file is no-sign-in-file; a parse failure is retried once after
+    /// `onRetry` and a short delay.
+    static func read(_ path: String, onRetry: (@Sendable () -> Void)?) throws -> Token {
+        if let parsed = try readOnce(path) { return parsed }
+        onRetry?()
+        Thread.sleep(forTimeInterval: tornRetryDelay)
+        if let parsed = try readOnce(path) { return parsed }
+        throw CodexAuthError(.codexError, message: "auth.json is not a valid sign-in file")
+    }
+
+    /// Opens `path` without following a link and without blocking on a FIFO, checks the open descriptor, and decodes
+    /// the bytes read from it. nil only when the content did not decode.
+    private static func readOnce(_ path: String) throws -> Token? {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0 {
+            if errno == ENOENT { throw CodexAuthError(.noSignInFile, message: "auth.json does not exist") }
+            throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: String(cString: strerror(errno)))
+        }
+        defer { Darwin.close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0 else { throw CodexAuthError(.codexError, message: "auth.json cannot be inspected") }
+        guard st.st_mode & S_IFMT == S_IFREG else {
+            throw CodexAuthError(.codexError, message: "auth.json is not a regular file")
+        }
+        guard st.st_uid == getuid() else { throw CodexAuthError(.codexError, message: "auth.json is not owned by the user") }
+        guard st.st_size < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
+
+        var buf = [UInt8](repeating: 0, count: maxBytes)
+        defer { buf.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } }  // every field, any API key
+        var used = 0
+        while used < maxBytes {
+            let n = buf.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress! + used, maxBytes - used) }
+            if n < 0 {
+                if errno == EINTR { continue }
+                throw CodexAuthError(.codexError, message: "auth.json cannot be read")
+            }
+            if n == 0 { break }
+            used += n
+        }
+        guard used < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
+        var data = Data(buf[0..<used])
+        defer { data.resetBytes(in: 0..<data.count) }
+        guard let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? [String: Any]
+        else { return nil }
+        return try decode(doc)
+    }
+
+    /// The auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey.
+    private static let fileModes: Set<String> = [
+        "chatgptAuthTokens", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
+    ]
+
+    /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token. An
+    /// unknown auth_mode makes the file unreadable to Codex itself, so it is codex-error.
+    static func decode(_ doc: [String: Any]) throws -> Token {
+        func present(_ key: String) -> Bool { doc[key].map { !($0 is NSNull) } ?? false }
+        var mode = modeChatGPT
+        if present("auth_mode") {
+            guard let m = doc["auth_mode"] as? String, m == modeChatGPT || m == modeAPIKey || fileModes.contains(m) else {
+                throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode")
+            }
+            mode = m
+        } else if present("personal_access_token") {
+            mode = "personalAccessToken"
+        } else if present("bedrock_api_key") {
+            mode = "bedrockApiKey"
+        } else if present("bedrock_access_keys") {
+            mode = "bedrockAccessKeys"
+        } else if present("OPENAI_API_KEY") {
+            mode = modeAPIKey
+        }
+        if let e = classifyMode(mode) { throw e }
+        guard let tokens = doc["tokens"] as? [String: Any], let access = tokens["access_token"] as? String,
+            !access.isEmpty
+        else { throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token") }
+        return makeToken(access, source: "file")
+    }
+}
+
+/// Registers `bearer` with the scrubber and wraps it with its expiry: the JWT `exp` claim, read without checking the
+/// signature. A token that is not a JWT, or has no integer `exp`, has unknown expiry.
+func makeToken(_ bearer: String, source: String) -> Token {
+    Token(bearer: bearer, expires: jwtExpiry(bearer), source: source)
+}
+
+func jwtExpiry(_ token: String) -> Date? {
+    let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 3 else { return nil }
+    var payload = String(parts[1])
+    while payload.hasSuffix("=") { payload.removeLast() }
+    guard payload.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
+        return nil
+    }
+    var b64 = payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    guard b64.count % 4 != 1 else { return nil }
+    b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+    guard let data = Data(base64Encoded: b64),
+        let claims = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        let exp = claims["exp"] as? NSNumber, CFGetTypeID(exp) != CFBooleanGetTypeID(), !CFNumberIsFloatType(exp)
+    else { return nil }
+    return Date(timeIntervalSince1970: TimeInterval(exp.int64Value))
+}
+#endif
