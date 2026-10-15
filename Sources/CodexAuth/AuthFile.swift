@@ -31,10 +31,10 @@ enum AuthFile {
     /// fails is codex-error.
     static func location(codexHome: String?, home: String, confine: String?) throws -> AuthLocation {
         guard let codexHome, !codexHome.isEmpty else { return AuthLocation(dir: -1, path: join(home, ".codex/auth.json")) }
-        guard !codexHome.contains("\0"), !(confine ?? "").contains("\0") else {
+        guard !codexHome.utf8.contains(0), !(confine ?? "").utf8.contains(0) else {
             throw CodexAuthError(.codexError, message: "CODEX_HOME is not a valid path")
         }
-        guard codexHome.hasPrefix("/") else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not an absolute path") }
+        guard codexHome.utf8.first == 0x2F else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not an absolute path") }
         guard let real = realPath(codexHome) else {
             throw CodexAuthError(.codexError, message: "CODEX_HOME does not resolve")
         }
@@ -43,12 +43,12 @@ enum AuthFile {
             guard let root = realPath(confine) else {
                 throw CodexAuthError(.codexError, message: "the folder CODEX_HOME is confined to does not resolve")
             }
-            guard real == root || real.hasPrefix(root == "/" ? "/" : root + "/") else {
+            guard real == root || real.utf8.starts(with: (root == "/" ? "/" : root + "/").utf8) else {
                 throw CodexAuthError(.codexError, message: "CODEX_HOME is outside the folder it is confined to")
             }
             // Opened from the confining folder one component at a time, never following a link, so a path changed
             // since it was resolved cannot leave the folder.
-            guard let d = openBeneath(root, String(real.dropFirst(root.count))) else {
+            guard let d = openBeneath(root, String(decoding: real.utf8.dropFirst(root.utf8.count), as: UTF8.self)) else {
                 throw CodexAuthError(
                     .codexError, message: "CODEX_HOME is not a folder inside the folder it is confined to")
             }
@@ -74,8 +74,8 @@ enum AuthFile {
     private static func openBeneath(_ root: String, _ rel: String) -> Int32? {
         var fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { return nil }
-        for part in rel.split(separator: "/") {
-            let next = openat(fd, String(part), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        for part in rel.utf8.split(separator: 0x2F).map({ String(decoding: $0, as: UTF8.self) }) {
+            let next = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             Darwin.close(fd)
             guard next >= 0 else { return nil }
             fd = next
@@ -102,7 +102,7 @@ enum AuthFile {
     /// Opens the file without following a link and without blocking on a FIFO, checks the open descriptor, and
     /// decodes the bytes read from it. nil only when the content did not decode.
     private static func readOnce(_ loc: AuthLocation) throws -> Token? {
-        guard !loc.path.contains("\0") else {
+        guard !loc.path.utf8.contains(0) else {
             throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: "the path holds a NUL")
         }
         let flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC

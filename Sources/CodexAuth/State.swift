@@ -39,8 +39,8 @@ public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertibl
         cause: String = ""
     ) {
         self.state = state
-        self.mode = mode
-        self.codexVersion = codexVersion
+        self.mode = cleanMode(mode)  // printable, scrubbed and bounded, whoever builds the error
+        self.codexVersion = Secret.scrub(codexVersion)
         switch state {
         case .expired: errorClass = .authExpired
         case .codexError, .noCodex, .codexTooOld, .appServerAuthUnavailable: errorClass = .codexError
@@ -60,10 +60,16 @@ public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertibl
         return Secret.scrub(s)
     }
 
-    /// The state an error carries: ready for nil, codex-error for an error from elsewhere.
+    /// The state an error carries: ready for nil, codex-error for an error from elsewhere. A CodexAuthError wrapped
+    /// as an NSError's underlying error counts, as Go's StateOf follows wrapping.
     public static func state(of error: Error?) -> CodexAuthState {
-        guard let error else { return .ready }
-        return (error as? CodexAuthError)?.state ?? .codexError
+        var next = error
+        for _ in 0..<32 {  // a bound, as an underlying chain may loop
+            guard let e = next else { break }
+            if let a = e as? CodexAuthError { return a.state }
+            next = (e as NSError).userInfo[NSUnderlyingErrorKey] as? Error
+        }
+        return error == nil ? .ready : .codexError
     }
 }
 
@@ -71,11 +77,12 @@ let modeChatGPT = "chatgpt"
 let modeAPIKey = "apikey"
 private let maxModeLength = 64
 
-/// nil for chatgpt and the state's error for any other mode; "" is not signed in.
-func classifyMode(_ mode: String) -> CodexAuthError? {
+/// nil for chatgpt and the state's error for any other mode, "" included; a nil method (null or absent) is not signed
+/// in.
+func classifyMode(_ mode: String?) -> CodexAuthError? {
+    guard let mode else { return CodexAuthError(.notSignedIn, message: "Codex is not signed in") }
     switch mode {
     case modeChatGPT: return nil
-    case "": return CodexAuthError(.notSignedIn, message: "Codex is not signed in")
     case modeAPIKey: return CodexAuthError(.apiKey, mode: modeAPIKey, message: "Codex is signed in with an API key")
     default:
         return CodexAuthError(

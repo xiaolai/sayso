@@ -222,9 +222,15 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     }
 
     private func refreshAfterLocked(_ stale: Token, seen: Int, _ op: Operation) throws -> Token {
-        if let current, refreshes.value != seen, fresh(current) { return current }  // a refresh ran meanwhile
-        if let current, current.bearer != stale.bearer, usable(current) { return current }
-        refused = stale.bearer
+        // A refresh ran while this caller waited, and its token has not been refused since.
+        if let current, refreshes.value != seen, usable(current) { return current }
+        if let current, current.bearer != stale.bearer {
+            if usable(current) { return current }
+            // stale is an older token. The current one is refused or within the margin already; recording stale
+            // would forget that the current one was refused.
+        } else {
+            refused = stale.bearer
+        }
         if current == nil || !refreshable {
             try fetchLocked(op)
             if usable(current!) { return current! }
@@ -262,6 +268,12 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             }
             backoff = backoff == 0 ? Self.backoffStart : min(2 * backoff, Self.backoffMax)
             retryAt = cfg.now().addingTimeInterval(backoff)  // from the failure, so a slow attempt keeps the wait
+            // The refresh reply named another sign-in: classified as in step 3 (spec/credentials.md), not expired.
+            if let e = error as? CodexAuthError,
+                [.notSignedIn, .apiKey, .unsupportedAuth, .providerWithoutOpenAIAuth].contains(e.state)
+            {
+                throw e
+            }
             throw CodexAuthError(
                 .expired, message: "the refresh did not renew the sign-in", cause: String(describing: error))
         }
@@ -322,10 +334,12 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
         if op.isCancelled { throw CodexAuthError(.codexError, message: "the call was cancelled") }
         let client: AppServerClient
         do {
+            // Attached as soon as it is spawned, so a cancellation ends the initialize handshake too.
             client = try AppServerClient.start(
                 .init(
                     bin: bin, codexHome: codexHome, environment: env, timeout: cfg.timeout, clientName: cfg.clientName,
-                    guardStart: cfg.guardAccess, log: cfg.log))
+                    guardStart: cfg.guardAccess, log: cfg.log),
+                onSpawn: { op.attach($0) })
         } catch {
             throw CodexAuthError(
                 .codexError, message: "Codex app-server did not start", cause: String(describing: error))
@@ -336,7 +350,6 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             client.close()
             throw CodexAuthError(.codexTooOld, codexVersion: version, message: "Codex is older than \(minimumCodexVersion)")
         }
-        op.attach(client)
         return client
     }
 

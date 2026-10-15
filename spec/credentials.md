@@ -52,11 +52,15 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   `SIGKILL` to the group unless the child was reaped and no other member of its group remains; close returns within
   grace + 1 s even when a descendant outside the group still holds the pipes (our ends are closed and the readers
   abandoned). A client released without a close ends its child the same way.
-- **Messages.** Newline-delimited JSON-RPC, UTF-8 without a byte-order mark. A line longer than 4 MiB, or a line
-  that is not JSON, is `codex-error`; so is a reply with neither `result` nor `error`, while `result: null` reads as
-  an empty object. Keys are matched exactly (`AUTHTOKEN` is not `authToken`), and a present field of the wrong type
-  is `codex-error`. Notifications are ignored. A server request (a message with both `id` and `method`, such as an approval) is
-  answered with a JSON-RPC error and never acted on. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+- **Messages.** Newline-delimited JSON-RPC, UTF-8 without a byte-order mark; a last line ended by end of file rather
+  than a newline is still a line. Only JSON's own whitespace (space, tab, line feed, carriage return) is trimmed
+  around a line. A line longer than 4 MiB, or a line that is not strict JSON (one value, valid UTF-8, no duplicate
+  key, nested at most 64 levels), is `codex-error`; so is a reply with neither `result` nor `error`, while
+  `result: null` reads as an empty object. Keys are matched exactly (`AUTHTOKEN` is not `authToken`), and a present
+  field of the wrong type is `codex-error` (an error `code` is a signed 64-bit integer). A message is classified
+  before its reply fields are read: one without `id` is a notification and is ignored whatever else it holds; one
+  with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
+  JSON-RPC error and never acted on; any other is a reply, matched to a call by its integer `id`. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.
@@ -65,8 +69,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
      `0.162.0` is `codex-too-old`. No parsable version proceeds.
   2. `initialized` (a notification).
   3. `getAuthStatus {includeToken: false, refreshToken: false}`. `requiresOpenaiAuth: false` is
-     `provider-without-openai-auth`. `authMethod: null` is `not-signed-in`; `apikey` is `api-key`; anything but
-     `chatgpt` is `unsupported-auth`.
+     `provider-without-openai-auth`. `authMethod: null` (or absent) is `not-signed-in`; `apikey` is `api-key`; any
+     other string but `chatgpt`, `""` included, is `unsupported-auth`.
   4. Only for `chatgpt`: `getAuthStatus {includeToken: true, refreshToken: false}`. `requiresOpenaiAuth` and the
      method are checked again on this reply, and on every refresh reply; a change is classified as in step 3. A
      missing or empty `authToken` is `codex-error`.
@@ -95,6 +99,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   `no-sign-in-file`. When the file source was only the fallback for a missing executable, a missing or unusable
   file (and a failing `CODEX_HOME`) is `no-codex` instead: with no usable file either, the fix is to install Codex. The raw
   bytes are wiped after decoding. The file is never written.
+- **Parse.** The file is strict JSON as replies are (one value, valid UTF-8, no duplicate key, nested at most 64
+  levels, the top-level object included); anything else is a parse failure.
 - **Torn write.** A parse failure is retried once after a short delay (Codex may be rewriting the file); a second
   failure is `codex-error`.
 - **Mode**, in Codex's own order (`AuthDotJson::resolved_mode`): `auth_mode` when present (an unknown value makes the
@@ -105,9 +111,11 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
 
 ## Expiry and refresh (`AUTH-04`)
 
-- **Expiry** is the JWT `exp` claim (exactly `exp`), read without checking the signature. A token that is not a JWT,
-  or whose `exp` is absent or not a signed 64-bit integer (a fraction, an overflow), has unknown expiry: it is
-  `ready`, and the provider decides (a refusal leads to a refresh, below).
+- **Expiry** is the JWT `exp` claim (exactly `exp`), read without checking the signature. A token that is not a JWT
+  (its payload outside the base64url alphabet, a CR or LF included, or not strict JSON), or whose `exp` is absent or
+  not a signed 64-bit integer (a fraction, an overflow), has unknown expiry: it is `ready`, and the provider decides
+  (a refusal leads to a refresh, below). Every signed 64-bit `exp` is an instant: the first second of year 1 is
+  expired, and the largest is far in the future.
 - **Margin.** A token whose `exp - now` is below the caller's margin (recite: 10 min) is refreshed before use.
 - **Refresh** goes through `getAuthStatus {includeToken: true, refreshToken: true}` only, never through the file.
   It is single-flight. A refresh **succeeds when the token it returns is fresh** beyond the margin, changed or not;
@@ -116,7 +124,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   caller already replaced it with a token that is still fresh, or a refresh completed while this caller waited (even
   one that returned the same bearer), that token is returned without a second refresh. Until a refresh succeeds, or
   the file holds another token, the refused token is not handed out again, though its expiry looks fresh.
-- **Failure** fails the current call as `expired` and spends no permanent budget: the next refresh is allowed after a
+- **Failure** fails the current call as `expired`, unless the refresh reply named another sign-in, which is that
+  sign-in's state (`not-signed-in`, `api-key`, `unsupported-auth`, `provider-without-openai-auth`, as in sequence
+  step 4). Either way it spends no permanent budget: the next refresh is allowed after a
   backoff of 60 s, doubling to at most 15 min, reset by a success, counted from when the failure completed. Within
   the backoff a call fails as `expired` without starting Codex. A refresh the caller cancelled is not a failure and
   spends no backoff.

@@ -24,7 +24,8 @@ Scenario keys (all optional):
                        counted across starts that share SAYSO_FAKE_RECORD, because a client starts one child per
                        fetch or refresh. A step is
                        {"result": ...} | {"error": {"code", "message"}} | {"raw": "line"} | {"exit": code} |
-                       {"rawLineBytes": n} (one line of n bytes, then a newline),
+                       {"rawLineBytes": n} (one line of n bytes, then a newline) |
+                       {"rawThenExit": "text"} (the text with no newline, then exit 0: a last line ended by EOF),
                        optionally with "delayMs". A method with no steps answers -32601.
   byParams             {method: [{"when": {param: value}, "steps": [...]}]}: the first entry whose `when` matches the
                        call's params, by equality of each named key, is used instead of `methods`; each entry
@@ -156,6 +157,10 @@ def main() -> int:
             pending_server_request = None
         if "exit" in step:
             return int(step["exit"])
+        if "rawThenExit" in step:
+            sys.stdout.write(step["rawThenExit"])
+            sys.stdout.flush()
+            return 0
         if "rawLineBytes" in step:
             sys.stdout.write("x" * int(step["rawLineBytes"]) + "\n")
             sys.stdout.flush()

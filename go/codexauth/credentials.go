@@ -69,23 +69,30 @@ type Info struct {
 // returns is fresh, and a failure backs off from 60 s, doubling to 15 min, without a permanent budget. It is safe for
 // concurrent use and lives as long as the caller wants; Codex runs only during a fetch or a refresh.
 type Credentials struct {
-	cfg  Config
+	cfg  Config // never changed after New
 	path string // PATH of the inherited environment
 
-	lock        chan struct{} // held across a fetch or refresh
+	lock chan struct{} // held across a fetch or refresh
+	// The mutable state sits behind a pointer, so formatting a copy of the value (the redacting methods take the
+	// value) reads none of it and cannot race with a fetch.
+	*state
+	// refreshes counts successful refreshes. A caller that refused a token while a refresh was running takes that
+	// refresh's result instead of starting another, even when Codex returned the same bearer.
+	refreshes *atomic.Int64
+	// refresh asks for a refreshed token; refreshCodex, replaced only by this package's tests.
+	refresh func(context.Context) (secret.Token, error)
+}
+
+// state is what a fetch or refresh changes; read and written only with the lock held.
+type state struct {
 	cur         *secret.Token
 	refreshable bool // cur came from Codex
 	// refused is the bearer a provider last refused and no refresh has renewed since: it is not handed out again
 	// until a refresh succeeds or the file holds another token.
 	refused string
-	// refreshes counts successful refreshes. A caller that refused a token while a refresh was running takes that
-	// refresh's result instead of starting another, even when Codex returned the same bearer.
-	refreshes *atomic.Int64 // a pointer, so a copy made by formatting the value shares no lock state
-	backoff   time.Duration
-	retryAt   time.Time
-	info      Info
-	// refresh asks for a refreshed token; refreshCodex, replaced only by this package's tests.
-	refresh func(context.Context) (secret.Token, error)
+	backoff time.Duration
+	retryAt time.Time
+	info    Info
 }
 
 // New validates cfg and returns credentials that fetch on first use.
@@ -127,7 +134,7 @@ func New(cfg Config) (*Credentials, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	c := &Credentials{cfg: cfg, path: path, lock: make(chan struct{}, 1), refreshes: new(atomic.Int64)}
+	c := &Credentials{cfg: cfg, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
 	c.refresh = c.refreshCodex
 	return c, nil
 }
@@ -189,13 +196,18 @@ func (c *Credentials) RefreshAfter(ctx context.Context, stale secret.Token) (sec
 		return secret.Token{}, err
 	}
 	defer c.release()
-	if c.cur != nil && c.refreshes.Load() != seen && c.fresh(*c.cur) {
-		return *c.cur, nil // a refresh ran while this caller waited
+	if c.cur != nil && c.refreshes.Load() != seen && c.usable(*c.cur) {
+		return *c.cur, nil // a refresh ran while this caller waited, and its token has not been refused since
 	}
-	if c.cur != nil && c.cur.Bearer() != stale.Bearer() && c.usable(*c.cur) {
-		return *c.cur, nil
+	if c.cur != nil && c.cur.Bearer() != stale.Bearer() {
+		if c.usable(*c.cur) {
+			return *c.cur, nil
+		}
+		// stale is an older token. The current one is refused or within the margin already; recording stale would
+		// forget that the current one was refused.
+	} else {
+		c.refused = stale.Bearer()
 	}
-	c.refused = stale.Bearer()
 	if c.cur == nil || !c.refreshable {
 		if err := c.fetchLocked(ctx); err != nil {
 			return secret.Token{}, err
@@ -233,12 +245,26 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 			c.backoff = min(2*c.backoff, backoffMax)
 		}
 		c.retryAt = c.cfg.Now().Add(c.backoff) // from the failure, so a slow attempt does not use up the wait
+		var e *Error
+		if errors.As(err, &e) && signInChanged(e.State) {
+			return secret.Token{}, e // the refresh reply named another sign-in: classified as in step 3
+		}
 		return secret.Token{}, fail(StateExpired, "the refresh did not renew the sign-in", err)
 	}
 	c.backoff, c.retryAt, c.refused = 0, time.Time{}, ""
 	c.cur = &tok
 	c.refreshes.Add(1)
 	return tok, nil
+}
+
+// signInChanged reports a state a refresh reply is classified as when the sign-in itself changed (spec/credentials.md,
+// sequence step 4): the caller must see it, not expired.
+func signInChanged(s State) bool {
+	switch s {
+	case StateNotSignedIn, StateAPIKey, StateUnsupported, StateProviderWithoutOpenAIAuth:
+		return true
+	}
+	return false
 }
 
 // fetchLocked obtains a token from the source and installs it. The caller holds the lock.
@@ -340,7 +366,7 @@ func (c *Credentials) codexToken(ctx context.Context, bin string) (secret.Token,
 	if !meta.RequiresOpenAIAuth {
 		return secret.Token{}, false, fail(StateProviderWithoutOpenAIAuth, "the provider in force needs no OpenAI sign-in", nil)
 	}
-	if e := classifyMode(meta.Method); e != nil {
+	if e := classifyStatus(meta); e != nil {
 		return secret.Token{}, false, e
 	}
 	tok, e := tokenFrom(cl.GetAuthStatus(ctx, true, false))
@@ -399,7 +425,7 @@ func tokenFrom(full codexapp.AuthStatus, err error) (secret.Token, *Error) {
 	if !full.RequiresOpenAIAuth {
 		return secret.Token{}, fail(StateProviderWithoutOpenAIAuth, "the provider in force needs no OpenAI sign-in", nil)
 	}
-	if e := classifyMode(full.Method); e != nil {
+	if e := classifyStatus(full); e != nil {
 		return secret.Token{}, e
 	}
 	if full.Token() == "" {
@@ -409,7 +435,7 @@ func tokenFrom(full codexapp.AuthStatus, err error) (secret.Token, *Error) {
 }
 
 // String names the source only, never the cached token or the environment. The formatting methods are on the value
-// so a copy (fmt.Sprintf("%+v", *c)) redacts too; the value is never used otherwise.
+// so a copy (fmt.Sprintf("%+v", *c)) redacts too; they read only cfg, which never changes.
 func (c Credentials) String() string { return "codexauth.Credentials{" + string(c.cfg.Source) + "}" }
 
 // GoString redacts like String.

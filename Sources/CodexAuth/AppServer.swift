@@ -6,14 +6,15 @@ import RealtimeConnection
 /// A failure of the app-server child: it did not start, crashed, timed out, misbehaved, or answered a call with a
 /// JSON-RPC error. `message` never quotes the child's output; `rpcMessage` is scrubbed and kept out of
 /// `description`, because a misbehaving child may put a credential there.
-public struct AppServerError: Error, Sendable, Equatable, CustomStringConvertible {
+public struct AppServerError: Error, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     /// The JSON-RPC code of an error reply; nil for any other failure.
     public let rpcCode: Int?
     public let rpcMessage: String
     public let message: String
 
+    /// Both strings are scrubbed.
     public init(_ message: String, rpcCode: Int? = nil, rpcMessage: String = "") {
-        self.message = message
+        self.message = Secret.scrub(message)
         self.rpcCode = rpcCode
         self.rpcMessage = Secret.scrub(rpcMessage)
     }
@@ -21,8 +22,14 @@ public struct AppServerError: Error, Sendable, Equatable, CustomStringConvertibl
     /// The JSON-RPC code for an unknown method.
     public static let methodNotFound = -32601
 
+    /// Scrubbed whole when formatted, so a secret registered since is removed too.
     public var description: String {
-        rpcCode.map { "\(message): JSON-RPC error \($0)" } ?? message
+        Secret.scrub(rpcCode.map { "\(message): JSON-RPC error \($0)" } ?? message)
+    }
+
+    /// Reflection shows what `description` shows; `rpcMessage` stays out, as there.
+    public var customMirror: Mirror {
+        Mirror(self, children: ["rpcCode": rpcCode as Any, "message": Secret.scrub(message)], displayStyle: .struct)
     }
 }
 
@@ -31,27 +38,28 @@ public struct AppServerError: Error, Sendable, Equatable, CustomStringConvertibl
 public struct AuthStatus: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible,
     CustomReflectable
 {
-    /// `authMethod`; "" when Codex reports null (not signed in).
-    public let method: String
+    /// `authMethod`; nil when Codex reports null or nothing (not signed in). An empty string is a mode, and not
+    /// chatgpt.
+    public let method: String?
     /// `requiresOpenaiAuth`; false means a provider needing no OpenAI sign-in is in force.
     public let requiresOpenAIAuth: Bool
     /// The credential Codex sent, or "".
     public let token: String
 
-    public init(method: String, requiresOpenAIAuth: Bool, token: String) {
+    public init(method: String?, requiresOpenAIAuth: Bool, token: String) {
         Secret.register(token)
         self.method = method
         self.requiresOpenAIAuth = requiresOpenAIAuth
         self.token = token
     }
 
-    public var description: String { "AuthStatus{method: \(Secret.scrub(method))}" }
+    public var description: String { "AuthStatus{method: \(Secret.scrub(method ?? ""))}" }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
         Mirror(
             self,
             children: [
-                "method": Secret.scrub(method), "requiresOpenAIAuth": requiresOpenAIAuth, "token": Secret.redacted,
+                "method": Secret.scrub(method ?? ""), "requiresOpenAIAuth": requiresOpenAIAuth, "token": Secret.redacted,
             ], displayStyle: .struct)
     }
 }
@@ -105,6 +113,8 @@ public final class AppServerClient: @unchecked Sendable {
     static let reapGrace: TimeInterval = 1
     static let stderrCap = 64 << 10
     static let maxLine = 4 << 20
+    /// How long close waits, once the child is gone, for its last stderr bytes.
+    static let stderrDrain: TimeInterval = 0.1
 
     /// The child's process ID.
     public var pid: pid_t { core.pid }
@@ -118,8 +128,11 @@ public final class AppServerClient: @unchecked Sendable {
     private init(core: AppServerCore) { self.core = core }
 
     /// Spawns the child in its own process group and completes the initialize handshake.
-    public static func start(_ cfg: Configuration) throws -> AppServerClient {
-        guard cfg.bin.hasPrefix("/"), !cfg.bin.contains("\0") else {
+    public static func start(_ cfg: Configuration) throws -> AppServerClient { try start(cfg, onSpawn: nil) }
+
+    /// As ``start(_:)``; `onSpawn` sees the client before the handshake, so a caller can cancel the handshake.
+    static func start(_ cfg: Configuration, onSpawn: ((AppServerClient) -> Void)?) throws -> AppServerClient {
+        guard cfg.bin.utf8.first == 0x2F, !cfg.bin.utf8.contains(0) else {
             throw AppServerError("the Codex executable path is not absolute")
         }
         guard cfg.timeout > 0, cfg.timeout.isFinite else { throw AppServerError("a per-call timeout is required") }
@@ -130,6 +143,7 @@ public final class AppServerClient: @unchecked Sendable {
         }
         let env = CodexExecutable.childEnvironment(cfg.environment, bin: cfg.bin, codexHome: cfg.codexHome)
         let c = AppServerClient(core: try AppServerCore(bin: cfg.bin, env: env, timeout: cfg.timeout, log: cfg.log))
+        onSpawn?(c)
         do {
             let hello = try c.core.call(
                 "initialize",
@@ -173,7 +187,7 @@ public final class AppServerClient: @unchecked Sendable {
             guard let b = bool(r) else { throw bad }
             requires = b
         }
-        return AuthStatus(method: method ?? "", requiresOpenAIAuth: requires, token: token ?? "")
+        return AuthStatus(method: method, requiresOpenAIAuth: requires, token: token ?? "")
     }
 
     /// config/read's effective `cli_auth_credentials_store`; "" when absent, which Codex treats as "file".
@@ -223,13 +237,16 @@ final class AppServerCore: @unchecked Sendable {
     private let log: (@Sendable (String) -> Void)?
     private let stdinFD: Int32
     private let lock = NSLock()
-    private let writeLock = NSLock()
+    /// Admits one writer at a time; a semaphore, so a waiting writer observes its deadline and a failure.
+    private let writeGate = DispatchSemaphore(value: 1)
+    /// Signalled when the stderr reader ends.
+    private let stderrDone = DispatchSemaphore(value: 0)
     private var nextID = 0
     private var pending: [Int: Pending] = [:]
     private var failure: AppServerError?
     private var stopReaders = false
     private var closed = false
-    private var stdinOpen = true  // guarded by writeLock
+    private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
     private let exited = DispatchSemaphore(value: 0)
 
@@ -296,7 +313,10 @@ final class AppServerCore: @unchecked Sendable {
 
         let out = outPipe[0], err = errPipe[0]
         Self.thread { [self] in readLoop(out) }
-        Self.thread { [self] in stderrLoop(err) }
+        Self.thread { [self] in
+            stderrLoop(err)
+            stderrDone.signal()
+        }
         Self.thread { [self] in
             var status: Int32 = 0
             while waitpid(childPID, &status, 0) == -1 && errno == EINTR {}
@@ -344,20 +364,24 @@ final class AppServerCore: @unchecked Sendable {
             return !closed
         }
         guard first else { return }
-        // A writer waiting on a full pipe sees `closed` within one poll interval and lets go of the lock.
-        writeLock.withLock {
-            if stdinOpen {
-                Darwin.close(stdinFD)
-                stdinOpen = false
-            }
+        // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
+        writeGate.wait()
+        if stdinOpen {
+            Darwin.close(stdinFD)
+            stdinOpen = false
         }
-        _ = kill(-pid, SIGTERM)
+        writeGate.signal()
+        // Once the child is reaped and its group is empty, the group ID may already name another process's group, so
+        // nothing is signalled.
+        if !gone() { _ = kill(-pid, SIGTERM) }
         if !waitGroup(until: .now() + AppServerClient.killGrace) {
-            _ = kill(-pid, SIGKILL)
+            _ = kill(-pid, SIGKILL)  // the group was alive a moment ago, so its ID is still ours
             if !reaped(by: .now() + AppServerClient.reapGrace) {
                 log?("codex app-server was not reaped within the grace; abandoning it (pid \(pid))")
             }
         }
+        // The last stderr bytes the child wrote are kept, unless a descendant still holds the pipe.
+        if stderrDone.wait(timeout: .now() + AppServerClient.stderrDrain) == .success { stderrDone.signal() }
         let n = lock.withLock { () -> Int in
             stopReaders = true
             return stderrBytes.count
@@ -379,12 +403,19 @@ final class AppServerCore: @unchecked Sendable {
     /// outlives its leader while a member lives, so the group ID still names our group while kill(-pid, 0) succeeds.
     private func waitGroup(until deadline: DispatchTime) -> Bool {
         while true {
-            if reaped(by: .now()) && !groupAlive() { return true }
+            if gone() { return true }
             let now = DispatchTime.now()
             if now >= deadline { return false }
-            _ = reaped(by: min(deadline, now + .milliseconds(20)))
+            let next = min(deadline, now + .milliseconds(20))
+            // Reaped, but a member may still hold the group: the probes that follow are paced, not spun.
+            if reaped(by: next), DispatchTime.now() < next {
+                usleep(useconds_t((next.uptimeNanoseconds - DispatchTime.now().uptimeNanoseconds) / 1000))
+            }
         }
     }
+
+    /// Whether the child was reaped and no member of its process group remains.
+    private func gone() -> Bool { reaped(by: .now()) && !groupAlive() }
 
     private func groupAlive() -> Bool { kill(-pid, 0) == 0 || errno == EPERM }
 
@@ -392,17 +423,30 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Writes one message, giving up at `deadline`, so a child that stops reading cannot hold a call, or the
     /// reader refusing a server request, past its timeout; ``close()`` ends the wait too.
+    /// Waiting for another writer counts against the deadline. A write cut off after part of the message was sent
+    /// leaves the stream unusable, so the client is failed. A message JSONSerialization cannot encode (a Date, NaN)
+    /// is refused before it reaches the encoder, which would raise an Objective-C exception no `try` can catch.
     private func write(_ message: [String: Any], deadline: DispatchTime) throws {
-        guard var data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else {
-            throw AppServerError("a request could not be encoded")
-        }
+        guard Self.encodable(message),
+            var data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])
+        else { throw AppServerError("a request could not be encoded") }
         data.append(0x0A)
         let refused = AppServerError("Codex app-server is not accepting requests")
-        try writeLock.withLock {
+        let timedOut = AppServerError("Codex app-server did not accept a request within \(timeout) s")
+        func stopped() -> AppServerError? { lock.withLock { closed ? refused : failure } }
+        while writeGate.wait(timeout: min(deadline, .now() + .milliseconds(50))) == .timedOut {
+            if let e = stopped() { throw e }
+            if DispatchTime.now() >= deadline { throw timedOut }
+        }
+        defer { writeGate.signal() }
+        var off = 0
+        do {
             try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                var off = 0
                 while off < raw.count {
-                    guard stdinOpen, !lock.withLock({ closed }) else { throw refused }
+                    if let e = stopped() { throw e }
+                    guard stdinOpen else { throw refused }
+                    let now = DispatchTime.now()
+                    guard now < deadline else { throw timedOut }
                     let n = Darwin.write(stdinFD, raw.baseAddress! + off, raw.count - off)
                     if n >= 0 {
                         off += n
@@ -410,15 +454,25 @@ final class AppServerCore: @unchecked Sendable {
                     }
                     if errno == EINTR { continue }
                     guard errno == EAGAIN else { throw refused }
-                    let now = DispatchTime.now()
-                    guard now < deadline else {
-                        throw AppServerError("Codex app-server did not accept a request within \(timeout) s")
-                    }
                     let left = (deadline.uptimeNanoseconds - now.uptimeNanoseconds) / 1_000_000 + 1
                     var p = pollfd(fd: stdinFD, events: Int16(POLLOUT), revents: 0)
                     _ = poll(&p, 1, Int32(min(left, 50)))
                 }
             }
+        } catch {
+            if off > 0 { fail(AppServerError("Codex app-server stream was cut off inside a request")) }
+            throw error
+        }
+    }
+
+    /// Whether JSONSerialization can encode `value` without raising: only the JSON types, finite numbers, string keys.
+    private static func encodable(_ value: Any) -> Bool {
+        switch value {
+        case is String, is NSNull, is Bool: return true
+        case let n as NSNumber: return CFNumberIsFloatType(n) ? n.doubleValue.isFinite : true
+        case let a as [Any]: return a.allSatisfy(encodable)
+        case let d as [String: Any]: return d.values.allSatisfy(encodable)
+        default: return false
         }
     }
 
@@ -458,6 +512,10 @@ final class AppServerCore: @unchecked Sendable {
                 buffer = []
             }
         }
+        // A last line without a newline is still a line, as Go's bufio.Scanner reads it.
+        if !failed, !buffer.isEmpty, !lock.withLock({ stopReaders }), !handle(buffer[...]) {
+            fail(AppServerError("Codex app-server sent malformed JSON"))
+        }
         fail(AppServerError("Codex app-server exited unexpectedly"))
     }
 
@@ -488,7 +546,9 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
-    /// Handles one line; false when it is not JSON-RPC.
+    /// Handles one line (spec/credentials.md, messages); false when it is not JSON-RPC. A message is classified
+    /// before its reply fields are read: a notification (no id) is ignored whatever else it holds, and a message
+    /// with a method, even "", is a server request. Keys are exact.
     private func handle(_ line: ArraySlice<UInt8>) -> Bool {
         let trimmed = line.drop { Self.isSpace($0) }.reversed().drop { Self.isSpace($0) }.reversed()
         if trimmed.isEmpty { return true }
@@ -497,13 +557,13 @@ final class AppServerCore: @unchecked Sendable {
         else { return false }
         if value is NSNull { return true }
         guard let m = value as? [String: Any] else { return false }
-        var method = ""
+        var hasMethod = false
         if let raw = m["method"], !(raw is NSNull) {
-            guard let s = raw as? String else { return false }
-            method = s
+            guard raw is String else { return false }
+            hasMethod = true
         }
         guard let id = m["id"], !(id is NSNull) else { return true }  // a notification
-        if !method.isEmpty {
+        if hasMethod {
             try? write(
                 [
                     "id": id,
@@ -513,13 +573,13 @@ final class AppServerCore: @unchecked Sendable {
         }
         let result: Result<Any, AppServerError>
         if let e = m["error"], !(e is NSNull) {
-            // As in Go: a code that is not an integer, or a message that is not a string, makes the line malformed.
+            // As in Go: a code that is not a signed 64-bit integer, or a message that is not a string, makes the line
+            // malformed.
             guard let e = e as? [String: Any] else { return false }
             var code = 0
             if let raw = e["code"], !(raw is NSNull) {
-                guard let n = raw as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n)
-                else { return false }
-                code = n.intValue
+                guard let n = Self.int64(raw) else { return false }
+                code = Int(n)
             }
             var message = ""
             if let raw = e["message"], !(raw is NSNull) {
@@ -532,15 +592,22 @@ final class AppServerCore: @unchecked Sendable {
         } else {
             result = .failure(AppServerError(Self.missingResult))
         }
-        guard let n = id as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n) else {
-            return true  // not one of ours
-        }
+        guard let n = Self.int64(id) else { return true }  // not one of ours
         lock.withLock {
-            guard let p = pending.removeValue(forKey: n.intValue) else { return }
+            guard let p = pending.removeValue(forKey: Int(n)) else { return }
             p.result = result
             p.done.signal()
         }
         return true
+    }
+
+    /// A JSON number written as an integer within the signed 64-bit range; nil for a fraction, an exponent, an
+    /// unsigned value beyond it, a Boolean or any other type.
+    private static func int64(_ v: Any) -> Int64? {
+        guard let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n),
+            NSNumber(value: n.int64Value) == n
+        else { return nil }
+        return n.int64Value
     }
 
     /// Marks the client unusable and releases every pending call.
@@ -556,9 +623,8 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
-    private static func isSpace(_ b: UInt8) -> Bool {
-        b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D || b == 0x0B || b == 0x0C
-    }
+    /// JSON's own whitespace, and nothing else: any other space is not JSON and makes the line malformed.
+    private static func isSpace(_ b: UInt8) -> Bool { b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D }
 
     private static func closeAll(_ fds: [Int32]) {
         for fd in fds where fd >= 0 { Darwin.close(fd) }
@@ -585,8 +651,39 @@ final class AppServerCore: @unchecked Sendable {
 /// neither, and no JSON text holds a raw NUL.
 func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
     // The strict grammar also refuses duplicate keys and invalid UTF-8, which JSONSerialization and Go's
-    // encoding/json each settle their own way; Codex's serde refuses both.
-    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF]) && WireJSON.isValid(Data(bytes))
+    // encoding/json each settle their own way; Codex's serde refuses both. The depth bound comes first and copies
+    // nothing.
+    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF]) && depthWithin(bytes, maxCodexJSONDepth)
+        && WireJSON.isValid(Data(bytes))
+}
+
+/// How deeply Codex's JSON (a reply, auth.json, a JWT payload) may nest, as in Go (`codexapp.MaxJSONDepth`). Codex's
+/// own documents nest a few levels; the bound is one both implementations' decoders accept (Foundation's stops at
+/// 512), so a deeper document is malformed in both rather than in one.
+let maxCodexJSONDepth = 64
+
+/// Whether no array or object in `bytes` nests deeper than `max`, counting outside strings only.
+func depthWithin<C: Collection>(_ bytes: C, _ max: Int) -> Bool where C.Element == UInt8 {
+    var depth = 0, inString = false, escaped = false
+    for c in bytes {
+        if inString {
+            if escaped {
+                escaped = false
+            } else if c == 0x5C {
+                escaped = true
+            } else if c == 0x22 {
+                inString = false
+            }
+        } else if c == 0x22 {
+            inString = true
+        } else if c == 0x5B || c == 0x7B {
+            depth += 1
+            if depth > max { return false }
+        } else if c == 0x5D || c == 0x7D {
+            depth -= 1
+        }
+    }
+    return true
 }
 
 /// A JSON object, with null read as an empty one.

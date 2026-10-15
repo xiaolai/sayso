@@ -1,5 +1,5 @@
 {
- "count": 668,
+ "count": 681,
  "fixtures": [
   {
    "id": "app-ready",
@@ -356,6 +356,54 @@
    "requires": []
   },
   {
+   "id": "app-auth-method-empty",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-reply-api-key",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-reply-vertical-tab",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-reply-no-break-space",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-error-code-uint-overflow",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-server-request-empty-method",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-notification-with-error-field",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-final-line-without-newline",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
    "id": "auth-file-missing",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
@@ -591,6 +639,36 @@
   },
   {
    "id": "auth-file-invalid-utf8",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-exp-year-one",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-exp-int64-max",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-jwt-payload-crlf",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-nested-64",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-nested-65",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []

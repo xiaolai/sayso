@@ -3,6 +3,7 @@ package codexauth
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -318,4 +319,96 @@ func TestFileReadsThroughThePinnedFolder(t *testing.T) {
 	if e == nil && tok.Bearer() == "outside-token" {
 		t.Fatal("the read followed the swapped folder outside the confinement")
 	}
+}
+
+// A late refusal of an older token does not unmark the current one (spec/credentials.md, after a refusal).
+func TestLateRefusalKeepsTheCurrentRefusal(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: []string{}, Home: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := secret.NewToken("opaque-late-a", time.Time{}, "", "test")
+	b := secret.NewToken("opaque-late-b", time.Time{}, "", "test")
+	c.cur, c.refreshable = &a, true
+	calls := 0
+	c.refresh = func(context.Context) (secret.Token, error) {
+		calls++
+		if calls == 1 {
+			return b, nil
+		}
+		return secret.Token{}, errors.New("offline")
+	}
+	if got, err := c.RefreshAfter(t.Context(), a); err != nil || got.Bearer() != b.Bearer() {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if _, err := c.RefreshAfter(t.Context(), b); err == nil {
+		t.Fatal("B's refresh succeeded")
+	}
+	if _, err := c.RefreshAfter(t.Context(), a); err == nil {
+		t.Fatal("a late refusal of A returned a token")
+	}
+	if tok, err := c.Token(t.Context()); err == nil {
+		t.Fatalf("Token handed out %v after B was refused", tok.Bearer() == b.Bearer())
+	}
+	if calls != 2 {
+		t.Errorf("refresh calls %d, want 2", calls)
+	}
+}
+
+// A caller paused before taking the lock does not take a token refused after a refresh it waited for.
+func TestPausedRefusalDoesNotTakeARefusedToken(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: []string{}, Home: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := secret.NewToken("opaque-paused-a", time.Time{}, "", "test")
+	b := secret.NewToken("opaque-paused-b", time.Time{}, "", "test")
+	c.cur, c.refreshable = &a, true
+	c.refresh = func(context.Context) (secret.Token, error) { return secret.Token{}, errors.New("offline") }
+	if err := c.acquire(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.RefreshAfter(t.Context(), a) // reads the refresh count, then waits for the lock
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	// Meanwhile: a refresh returned B, then B was refused and its refresh failed.
+	c.cur = &b
+	c.refreshes.Add(1)
+	c.refused = b.Bearer()
+	c.backoff, c.retryAt = backoffStart, now.Add(backoffStart)
+	c.release()
+	if err := <-done; err == nil {
+		t.Fatal("the paused caller took the refused B")
+	}
+}
+
+// Formatting the value while a fetch runs reads no mutable state (run under -race).
+func TestFormattingDoesNotRaceAFetch(t *testing.T) {
+	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: []string{}, Home: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := secret.NewToken("opaque-race", time.Time{}, "", "test")
+	c.cur, c.refreshable = &tok, true
+	c.refresh = func(context.Context) (secret.Token, error) { return tok, nil }
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = fmt.Sprintf("%v %+v", *c, *c)
+			}
+		}
+	}()
+	for range 200 {
+		_, _ = c.RefreshAfter(t.Context(), tok)
+	}
+	close(stop)
 }
