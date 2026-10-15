@@ -5,8 +5,15 @@ import XCTest
 final class SaidGuardLimitsTests: XCTestCase {
     /// Inputs that once crashed the generator or took seconds under the size cap (Go's limits_test.go). Each must
     /// return false, without crashing, within the bound. The bound is loose on purpose: an earlier memo-table matcher
-    /// took seconds here, so it separates the algorithms without timing the machine; a debug build gets more room.
+    /// took seconds here, so it separates the algorithms without timing the machine; a debug build gets more room. The
+    /// time is this thread's CPU time, so a loaded machine does not fail it (wall time measured 5–12 s at load 140
+    /// where the CPU time was 0.9 s).
     func testBounds() {
+        func cpu() -> Double {
+            var t = timespec()
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)
+            return Double(t.tv_sec) + Double(t.tv_nsec) / 1e9
+        }
         #if DEBUG
             let bound = 30.0
         #else
@@ -31,10 +38,10 @@ final class SaidGuardLimitsTests: XCTestCase {
         for c in cases {
             XCTAssertLessThanOrEqual(c.script.utf8.count, saidGuardMaxBytes, "\(c.name) would not exercise the matcher")
             XCTAssertLessThanOrEqual(c.transcript.utf8.count, saidGuardMaxBytes, "\(c.name) would not exercise the matcher")
-            let start = Date()
+            let start = cpu()
             var got = saidMatches(c.transcript, c.script, language: c.name == "spellout-compounds" ? "de" : c.name.hasPrefix("spellout") ? "fr" : "en")
             if c.name == "han-repeat" { got = got || saidMatches(c.transcript, c.script, language: "zh") }
-            let elapsed = Date().timeIntervalSince(start)
+            let elapsed = cpu() - start
             XCTAssertFalse(got, "\(c.name): matched, want false")
             XCTAssertLessThan(elapsed, bound, "\(c.name): took \(elapsed) s")
             print("\(c.name): \(String(format: "%.3f", elapsed)) s")

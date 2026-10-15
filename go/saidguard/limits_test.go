@@ -8,7 +8,8 @@ import (
 
 // Inputs that once crashed the generator or took seconds under the size cap. Each must return false, without
 // panicking, well inside a second. The bound is loose on purpose: an earlier memo-table matcher took
-// 3.2 and 5.7 seconds here, so it separates the algorithms without timing the machine.
+// 3.2 and 5.7 seconds here, so it separates the algorithms without timing the machine. The time is CPU time
+// (cpuTime), so a loaded machine does not fail it: at load 140 english-rescan took 10.2 s of wall time.
 func TestBounds(t *testing.T) {
 	cases := []struct{ name, script, transcript string }{
 		{"malformed-group", "0.1,000", "wrong"},
@@ -26,12 +27,12 @@ func TestBounds(t *testing.T) {
 		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {
 			t.Fatalf("%s: input exceeds the cap and would not exercise the matcher", c.name)
 		}
-		start := time.Now()
+		start := cpuTime()
 		got := Matches(c.transcript, c.script, "en")
 		if c.name == "han-repeat" {
 			got = got || Matches(c.transcript, c.script, "zh")
 		}
-		elapsed := time.Since(start)
+		elapsed := cpuTime() - start
 		if got {
 			t.Errorf("%s: matched, want false", c.name)
 		}
