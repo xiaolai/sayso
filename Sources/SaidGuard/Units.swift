@@ -33,7 +33,7 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
     func lower(_ k: Int) -> String { lowers[k] }
     // A capitalised word inside a sentence ("Main" in "on Main St."), not the first word of one.
     func innerCapital(_ k: Int) -> Bool {
-        word(k) && k > 0 && svIsCapitalised(raws[k].text) && !containsAny(raws[k].gap, ".!?:")
+        word(k) && k > 0 && svIsCapitalised(raws[k].text) && !containsAny(raws[k].gap, svSentenceEnds + ":")
     }
     func nextCapital(_ k: Int) -> Bool { word(k + 1) && svIsCapitalised(raws[k + 1].text) }
     let inExpression = svExpressions(raws)
@@ -93,7 +93,7 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                 let power = next == "2" ? "squared" : "cubed"
                 let w = NumWords.cardinal(UInt64(next)!)[0]
                 units.append([
-                    lit("^", next), lit(power), lit("to", "the", "power", "of", w), lit("to", "the", "power", "of", next),
+                    lit("^", next), lit("^", w), lit(power), lit("to", "the", "power", "of", w), lit("to", "the", "power", "of", next),
                 ])
                 k += 1
                 continue
@@ -133,13 +133,13 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         // A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
         // sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
         // domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
-        if word(k + 1) && raws[k + 1].gap == "." && low == r.text {
-            var j = k + 1
-            var labels = [k]
-            while j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
-                labels.append(j)
-                j += 1
-            }
+        var j = k + 1
+        var labels = [k]
+        while low == r.text && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+            labels.append(j)
+            j += 1
+        }
+        if labels.count >= 2 {  // "one.Next" has no second lowercase label: a number word and a word
             var parts: [String] = []
             var dotted: [String] = []
             for (i, l) in labels.enumerated() {
@@ -208,7 +208,7 @@ func svWordUnit(
     // A title only with its capital and before a name: "ms" is milliseconds, "5 Ms." is no one. "Dr" and "St" after a
     // capitalised word inside a sentence are a road ("Take Oak Dr.", "Main St. Next").
     let road =
-        !containsAny(r.gap, ".!?")
+        !containsAny(r.gap, svSentenceEnds)
         && (innerCapital(k - 1) || (word(raws, k - 1) && svIsCapitalised(raws[k - 1].text) && !nextCapital(k)))
     if let exp = svTitles[bare], nextCapital(k), !(road && bare == "Dr") { unit.append(lit(exp)) }
     if let exp = svSuffixTitles[bare], word(raws, k - 1), svIsCapitalised(raws[k - 1].text) {
@@ -295,16 +295,21 @@ func svExpressions(_ raws: [SvRaw]) -> [Bool] {
     return inside
 }
 
+/// The characters that end a sentence. NFKC folds the full-width ！ and ？ but not the ideographic full stop.
+let svSentenceEnds = ".!?。"
+
 /// The English names of spoken symbols. A symbol without a name matches only itself.
 private let svSymbolNames: [String: [String]] = [
     "%": ["percent"], "+": ["plus"], "=": ["equals", "equal", "is"], "&": ["and"], "@": ["at"],
-    "°": ["degrees", "degree"], "-": ["minus", "to"], "×": ["times", "multiplied by"], "÷": ["divided by"],
+    "°": ["degrees", "degree"], "-": ["minus", "to"], "−": ["minus"], "×": ["times", "multiplied by"], "÷": ["divided by"],
     "<": ["less than"], ">": ["greater than"], "≠": ["not equal to", "does not equal"], "#": ["number", "hash", "sharp"],
     "*": ["star", "asterisk", "times"], "′": ["prime"], "^": ["to the power of"],
 ]
 
 func svSymbolUnit(_ sym: String, _ english: Bool) -> SvUnit {
     var unit: SvUnit = [lit(sym)]
+    if sym == "-" { unit.append(lit("−")) }  // the two minuses are written either way
+    if sym == "−" { unit.append(lit("-")) }
     if english {
         for n in svSymbolNames[sym] ?? [] { unit.append(lit(n.split(separator: " ").map(String.init))) }
     }

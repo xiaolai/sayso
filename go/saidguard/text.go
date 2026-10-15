@@ -6,7 +6,8 @@ import (
 )
 
 // preNormalize: format characters, enclosing marks and variation selectors go; a zero width space is a word break;
-// every Unicode decimal digit becomes ASCII at scalar level; − and ⁄ become - and /.
+// every Unicode decimal digit becomes ASCII at scalar level; ⁄ becomes /. The minus sign − stays: it is always
+// spoken (a sign or an operator), where "-" may also join words, so folding it into "-" let "x−y" read as "xy".
 func preNormalize(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -14,8 +15,6 @@ func preNormalize(s string) string {
 		case r == '\u200B': // zero width space marks a word break (UAX #14 ZW); deleting it glued "now"+"here"
 			b.WriteByte(' ')
 		case unicode.Is(unicode.Cf, r), unicode.Is(unicode.Me, r), unicode.Is(unicode.Variation_Selector, r):
-		case r == '−':
-			b.WriteByte('-')
 		case r == '⁄':
 			b.WriteByte('/')
 		case unicode.Is(unicode.Nd, r) && (r < '0' || r > '9'):

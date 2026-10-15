@@ -87,7 +87,16 @@ func svSuperscripts(s string) string {
 	}
 	var b strings.Builder
 	prev := false
-	for _, r := range s {
+	rs := []rune(s)
+	for k, r := range rs {
+		// A superscript sign before superscript digits belongs to the exponent ("2⁻³" is 2^-3); left in place it
+		// would fold to a minus before the caret and could be dropped.
+		if (r == '⁻' || r == '⁺') && !prev && k+1 < len(rs) && strings.ContainsRune(sup, rs[k+1]) {
+			b.WriteString(" ^")
+			b.WriteRune(map[rune]rune{'⁻': '−', '⁺': '+'}[r])
+			prev = true
+			continue
+		}
 		if i := strings.IndexRune(sup, r); i >= 0 {
 			if !prev {
 				b.WriteString(" ^")
@@ -163,11 +172,20 @@ func svBetweenNumbers(rs []rune, i int) bool {
 	}
 	if p >= 1 && rs[p] == '%' {
 		p--
+		for p >= 0 && unicode.IsSpace(rs[p]) { // "5 % - 2 %"
+			p--
+		}
 	} else if p >= 2 && svOrdinalSuffixAt(rs, p-1) {
 		p -= 2
 	}
+	if n < len(rs) && svMinus(rs[n]) && svSignAt(rs, n) {
+		n++ // a signed operand ("5 - -2")
+	}
 	return p >= 0 && svDigit(rs[p]) && n < len(rs) && (svDigit(rs[n]) || rs[n] == '.' && n+1 < len(rs) && svDigit(rs[n+1]))
 }
+
+// svMinus: the hyphen-minus or the minus sign.
+func svMinus(r rune) bool { return r == '-' || r == '−' }
 
 // svOrdinalSuffixAt: rs[i:i+2] is "st", "nd", "rd" or "th" in any case.
 func svOrdinalSuffixAt(rs []rune, i int) bool {
@@ -188,10 +206,10 @@ func svLetter(r rune) bool { return unicode.IsLetter(r) && !isUnspaced(r) }
 // svJoiner: the hyphens that join a word ("e-mail"). Dashes (– —) separate words and are not joiners.
 func svJoiner(r rune) bool { return r == '-' || r == '‐' || r == '‑' }
 
-// svSignAt: a '-' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an
+// svSignAt: a '-' or '−' before a digit or a decimal point is a sign at the start, after a space or punctuation, or as an
 // exponent sign ("1e-3"); after a letter it is a joiner ("JIRA-10442") and after a digit a range ("3-4").
 func svSignAt(rs []rune, i int) bool {
-	if rs[i] != '-' || i+1 >= len(rs) {
+	if !svMinus(rs[i]) || i+1 >= len(rs) {
 		return false
 	}
 	if !svDigit(rs[i+1]) && !(rs[i+1] == '.' && i+2 < len(rs) && svDigit(rs[i+2])) {
@@ -212,7 +230,11 @@ func svLex(s string, hanNumbers bool) []svRaw {
 	var out []svRaw
 	prevEnd := 0
 	emit := func(kind svKind, i, j int) {
-		out = append(out, svRaw{string(rs[i:j]), kind, i, j, string(rs[prevEnd:i])})
+		text := string(rs[i:j])
+		if kind == svNumber && rs[i] == '−' {
+			text = "-" + string(rs[i+1:j]) // one sign, however written: "−5" reads as "-5"
+		}
+		out = append(out, svRaw{text, kind, i, j, string(rs[prevEnd:i])})
 		prevEnd = j
 	}
 	for i := 0; i < len(rs); {
@@ -245,9 +267,10 @@ func svLex(s string, hanNumbers bool) []svRaw {
 		case svSpokenSymbol(r) || r == '-' && svBetweenNumbers(rs, i):
 			emit(svSymbol, i, i+1)
 			i++
-		case hanNumbers && isHanNumeral(r):
+		case hanNumbers && isHanNumeral(r) && !(i+1 < len(rs) && unicode.IsMark(rs[i+1])):
+			// A numeral carrying a mark is a character like any other ("一́"), as the transcript side reads it.
 			j := i
-			for j < len(rs) && isHanNumeral(rs[j]) {
+			for j < len(rs) && isHanNumeral(rs[j]) && !(j+1 < len(rs) && unicode.IsMark(rs[j+1])) {
 				j++
 			}
 			emit(svHanRun, i, j)
@@ -262,7 +285,8 @@ func svLex(s string, hanNumbers bool) []svRaw {
 		case svLetter(r) || isApostrophe(r) && i+1 < len(rs) && svLetter(rs[i+1]):
 			// "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
 			// initials ("E.G. White"), lexed letter by letter like any other.
-			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && !unicode.IsUpper(rs[i+2]) && (i == 0 || !svLetter(rs[i-1])) && (i+3 >= len(rs) || !svLetter(rs[i+3])) {
+			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && !unicode.IsUpper(rs[i+2]) && (i == 0 || !svLetter(rs[i-1]) && rs[i-1] != '.') && (i+3 >= len(rs) || !svLetter(rs[i+3])) && !(i+4 < len(rs) && rs[i+3] == '.' && svLetter(rs[i+4])) {
+				// Not inside a domain ("www.e.g.com"), where its letters are labels.
 				emit(svWord, i, i+3)
 				i += 3
 				if i < len(rs) && rs[i] == '.' {
@@ -733,7 +757,9 @@ func svHanValue(run []rune) (uint64, bool) {
 			default:
 				return 0, false
 			}
-			pending, lastUnit, any = -1, u, true
+			// A zero before this unit skipped a higher place (一万零一百五); only a zero after the last unit makes the
+			// final digit a units digit (一百零五).
+			pending, lastUnit, any, zeroInSection = -1, u, true, false
 			continue
 		}
 		group := section
@@ -918,7 +944,11 @@ func svHanUnit(run string) svUnit {
 		for _, r := range rs {
 			ds.WriteByte(byte('0' + svHanDigit[r]))
 		}
-		return append(unit, lit(ds.String()))
+		unit = append(unit, lit(ds.String()))
+		if len(rs) == 1 { // a lone digit is a number: its other spellings (二 and 两, 零 and 〇)
+			unit = append(unit, svHanSeqs(uint64(svHanDigit[rs[0]]))...)
+		}
+		return unit
 	}
 	n, ok := svParseHan(rs)
 	if !ok {
@@ -1088,6 +1118,9 @@ var svTitleAbbrev = map[string]string{"mister": "mr", "missus": "mrs", "doctor":
 var svCaseFree = map[string][]string{"vs": {"versus"}, "etc": {"et", "cetera"}, "e.g": {"for", "example"}, "i.e": {"that", "is"}}
 
 // svSpelledGap: letters of a spelled code are separated by spaces or initials' dots ("U.S.A."), nothing else.
+// svSentenceEnds end a sentence. NFKC folds the full-width ！ and ？ but not the ideographic full stop.
+const svSentenceEnds = ".!?。"
+
 func svSpelledGap(gap string) bool { return strings.TrimSpace(strings.ReplaceAll(gap, ".", "")) == "" }
 
 func word(raws []svRaw, k int) bool { return k >= 0 && k < len(raws) && raws[k].kind == svWord }
@@ -1104,7 +1137,7 @@ func svScriptUnits(s, language string) []svUnit {
 	lower := func(k int) string { return svNormApostrophes(svLower(raws[k].text, language)) }
 	// A capitalised word inside a sentence ("Main" in "on Main St."), not the first word of one.
 	innerCapital := func(k int) bool {
-		return word(k) && k > 0 && svIsCapitalised(raws[k].text) && !strings.ContainsAny(raws[k].gap, ".!?:")
+		return word(k) && k > 0 && svIsCapitalised(raws[k].text) && !strings.ContainsAny(raws[k].gap, svSentenceEnds+":")
 	}
 	nextCapital := func(k int) bool { return word(k+1) && svIsCapitalised(raws[k+1].text) }
 	inExpression := svExpressions(raws)
@@ -1163,7 +1196,7 @@ func svScriptUnits(s, language string) []svUnit {
 			if english && r.text == "^" && k+1 < len(raws) && raws[k+1].gap == "" && (raws[k+1].text == "2" || raws[k+1].text == "3") {
 				power := map[string]string{"2": "squared", "3": "cubed"}[raws[k+1].text]
 				w := numwords.Cardinal(uint64(raws[k+1].text[0] - '0'))[0]
-				units = append(units, svUnit{lit("^", raws[k+1].text), lit(power), lit("to", "the", "power", "of", w), lit("to", "the", "power", "of", raws[k+1].text)})
+				units = append(units, svUnit{lit("^", raws[k+1].text), lit("^", w), lit(power), lit("to", "the", "power", "of", w), lit("to", "the", "power", "of", raws[k+1].text)})
 				k++
 				continue
 			}
@@ -1200,12 +1233,12 @@ func svScriptUnits(s, language string) []svUnit {
 		// A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
 		// sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
 		// domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
-		if j := k + 1; word(j) && raws[j].gap == "." && low == r.text {
-			labels := []string{low}
-			for j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
-				labels = append(labels, lower(j))
-				j++
-			}
+		labels, j := []string{low}, k+1
+		for low == r.text && j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+			labels = append(labels, lower(j))
+			j++
+		}
+		if len(labels) >= 2 { // "one.Next" has no second lowercase label: a number word and a word
 			var parts, dotted []string
 			for i, l := range labels {
 				if i > 0 {
@@ -1275,7 +1308,7 @@ func svWordUnit(raws []svRaw, k int, low string, english bool, innerCapital, nex
 	bare := strings.TrimSuffix(r.text, ".")
 	// A title only with its capital and before a name: "ms" is milliseconds, "5 Ms." is no one. "Dr" and "St" after
 	// a capitalised word inside a sentence are a road ("Take Oak Dr.", "Main St. Next").
-	road := !strings.ContainsAny(r.gap, ".!?") && (innerCapital(k-1) || word(raws, k-1) && svIsCapitalised(raws[k-1].text) && !nextCapital(k))
+	road := !strings.ContainsAny(r.gap, svSentenceEnds) && (innerCapital(k-1) || word(raws, k-1) && svIsCapitalised(raws[k-1].text) && !nextCapital(k))
 	if exp, ok := svTitles[bare]; ok && nextCapital(k) && !(road && bare == "Dr") {
 		unit = append(unit, lit(exp))
 	}
@@ -1366,12 +1399,18 @@ func svExpressions(raws []svRaw) []bool {
 
 // svSymbolNames: the English names of spoken symbols. A symbol without a name matches only itself.
 var svSymbolNames = map[string][]string{"%": {"percent"}, "+": {"plus"}, "=": {"equals", "equal", "is"}, "&": {"and"},
-	"@": {"at"}, "°": {"degrees", "degree"}, "-": {"minus", "to"}, "×": {"times", "multiplied by"}, "÷": {"divided by"},
+	"@": {"at"}, "°": {"degrees", "degree"}, "-": {"minus", "to"}, "−": {"minus"}, "×": {"times", "multiplied by"}, "÷": {"divided by"},
 	"<": {"less than"}, ">": {"greater than"}, "≠": {"not equal to", "does not equal"}, "#": {"number", "hash", "sharp"},
 	"*": {"star", "asterisk", "times"}, "′": {"prime"}, "^": {"to the power of"}}
 
 func svSymbolUnit(sym string, english bool) svUnit {
 	unit := svUnit{lit(sym)}
+	switch sym { // the two minuses are written either way
+	case "-":
+		unit = append(unit, lit("−"))
+	case "−":
+		unit = append(unit, lit("-"))
+	}
 	if english {
 		for _, n := range svSymbolNames[sym] {
 			unit = append(unit, lit(strings.Fields(n)...))

@@ -57,14 +57,15 @@ public enum PCM {
     /// 1…``maxRate`` or PCM longer than ``maxPCMBytes`` bytes.
     public static func wav(_ pcm: Data, rate: Int) throws -> Data {
         guard (1...maxRate).contains(rate), pcm.count <= maxPCMBytes else { throw RangeError() }
-        var out = header(pcm.count, rate: rate)
+        var out = Data(capacity: headerSize + pcm.count)
+        out.append(header(pcm.count, rate: rate))
         out.append(pcm)
         return out
     }
 
     /// The canonical header for `n` bytes of PCM at `rate`, both already in range.
     private static func header(_ n: Int, rate: Int) -> Data {
-        var out = Data(capacity: headerSize + n)
+        var out = Data(capacity: headerSize)
         out.append(contentsOf: Array("RIFF".utf8))
         append32(&out, UInt32(36 + n))
         out.append(contentsOf: Array("WAVEfmt ".utf8))
@@ -94,14 +95,16 @@ public enum PCM {
         let letters = script.unicodeScalars.filter(isLetter).count
         // bytes / (2 × sampleRate) ≥ letters / 25, in integers.
         if pcm.count * 25 < letters * 2 * sampleRate { return false }
-        let bytes = [UInt8](pcm)
-        var i = 0
-        while i + 1 < bytes.count {
-            let s = Int(sample(bytes, at: i))
-            if s >= minPeak || s <= -minPeak { return true }
-            i += 2
+        // Read in place: a copy of a long recording would cost its whole size before the first sample.
+        return pcm.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
+            var i = 0
+            while i + 1 < raw.count {
+                let s = Int(Int16(bitPattern: UInt16(raw[i]) | UInt16(raw[i + 1]) << 8))
+                if s >= minPeak || s <= -minPeak { return true }
+                i += 2
+            }
+            return false
         }
-        return false
     }
 
     /// Go's unicode.IsLetter: general category L.

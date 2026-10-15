@@ -108,38 +108,41 @@ final class SpellOut: @unchecked Sendable {
     }
 
     /// A number the locale groups with spaces ("1 000" in French), which the lexer sees as several numbers: one unit
-    /// read as written or spelled, and how many raws it spans. nil when the raws at k are not one such number.
+    /// read as written or spelled, and how many raws it spans. nil when the raws at k are not one such number. The
+    /// whole run of groups is one number: a prefix is never spelled, or "1 000 000 000 000 000", beyond the bound,
+    /// would read "un billion 000".
     func groupedNumberUnit(_ raws: [SvRaw], _ k: Int, _ language: String) -> (SvUnit, Int)? {
         guard groupSeparator == " " else { return nil }
+        var lead = Array(raws[k].text.unicodeScalars)
+        if lead.first == "-" { lead.removeFirst() }
+        guard (1...3).contains(lead.count), lead.allSatisfy(svDigit) else { return nil }  // a leading group
         var j = k + 1
-        // A value of at most maxIntegerDigits digits has at most six groups, which bounds the scan.
-        while j < raws.count && j - k < 6 && raws[j].kind == .number && raws[j].gap == " " {
+        while j < raws.count && raws[j].kind == .number && raws[j].gap == " " {
             let d = Array(raws[j].text.unicodeScalars)
             guard d.count >= 3, d[0..<3].allSatisfy(svDigit), d.count == 3 || !svDigit(d[3]) else { break }
             j += 1
         }
         guard j - k >= 2 else { return nil }
-        for end in stride(from: j, through: k + 2, by: -1) {
-            let written = (k..<end).map { svLower(raws[$0].text, language) }.joined(separator: " ")
-            var body = written
-            var sign = ""
-            if body.hasPrefix("-") {
-                body = String(body.dropFirst())
-                sign = "-"
-            }
-            let percent = body.hasSuffix("%")
-            if percent { body = String(body.dropLast()) }
-            if let spelled = spelled(digits: body, sign: sign) {
-                let reading = percent ? cat(lit(spelled), [["%"]]) : lit(spelled)
-                return ([lit(tokens(written)), reading], end - k)
-            }
+        let written = (k..<j).map { svLower(raws[$0].text, language) }.joined(separator: " ")
+        var body = written
+        var sign = ""
+        if body.hasPrefix("-") {
+            body = String(body.dropFirst())
+            sign = "-"
         }
-        return nil
+        let percent = body.hasSuffix("%")
+        if percent { body = String(body.dropLast()) }
+        // A value of at most maxIntegerDigits digits has at most six groups; a longer run is as written only.
+        if j - k <= 6, let spelled = spelled(digits: body, sign: sign) {
+            let reading = percent ? cat(lit(spelled), [["%"]]) : lit(spelled)
+            return ([lit(tokens(written)), reading], j - k)
+        }
+        return ([lit(tokens(written))], j - k)
     }
 
-    /// A number written in the locale's words, at most `maxPhraseWords` words with no punctuation inside, longest
-    /// first: one unit read as written or in digits, and how many raws it spans. nil when the words at k are not
-    /// exactly the locale's spelling of a number in the table.
+    /// A number written in the locale's words, at most `maxPhraseWords` words with no punctuation inside: one unit
+    /// read as written or in digits, and how many raws it spans. A run of the table's words that is not exactly the
+    /// locale's spelling of a number in the table is one unit read as written only; nil when there is no such run.
     func wordNumberUnit(_ raws: [SvRaw], _ partsOf: [[String]], _ k: Int) -> (SvUnit, Int)? {
         let (values, vocabulary) = numberTables()
         var parts: [String] = []
@@ -153,22 +156,22 @@ final class SpellOut: @unchecked Sendable {
             ends.append(parts.count)
             j += 1
         }
-        for l in stride(from: ends.count, through: 1, by: -1) {
-            let phrase = Array(parts[..<ends[l - 1]])
-            guard let v = values[phrase.joined(separator: " ")] else { continue }
-            let n = NSDecimalNumber(decimal: v)
-            lock.lock()
-            let forms = [plain.string(from: n), grouped.string(from: n)]
-            lock.unlock()
-            var unit: SvUnit = [lit(phrase)]
-            for f in forms {
-                guard let f else { continue }
-                let reading = lit(tokens(f))
-                if !reading.isEmpty && !unit.contains(reading) { unit.append(reading) }
-            }
-            return (unit, l)
+        // The whole run of number words is one number or none: a prefix of it is never read alone, or
+        // "douze mille un", beyond the table, would read "12000 1". A run not in the table is as written only.
+        guard let total = ends.last else { return nil }
+        let phrase = Array(parts[..<total])
+        guard let v = values[phrase.joined(separator: " ")] else { return ([lit(phrase)], ends.count) }
+        let n = NSDecimalNumber(decimal: v)
+        lock.lock()
+        let forms = [plain.string(from: n), grouped.string(from: n)]
+        lock.unlock()
+        var unit: SvUnit = [lit(phrase)]
+        for f in forms {
+            guard let f else { continue }
+            let reading = lit(tokens(f))
+            if !reading.isEmpty && !unit.contains(reading) { unit.append(reading) }
         }
-        return nil
+        return (unit, ends.count)
     }
 
     /// The locale's spellings of every number to 10,000, the thousands to 100,000, and the powers up to a trillion,
