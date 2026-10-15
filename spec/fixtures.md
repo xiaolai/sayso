@@ -104,5 +104,5 @@ text) → `expect` with `type` and fields, or `protocolError` (the type the erro
 
 `op`: `encode` (`input`, with `"NaN"`, `"Infinity"`, `"-Infinity"` as strings) → `expectSamples`, `expectHex`;
 `decode` (`hex`, `sliceFrom`) → `expectSamples` (each float is the sample / 32768); `wav` (`rate`, `pcmHex`) →
-`expectHex`; `validWAV` (`hex`, `capBytes`) → `expect`; `plausible` (`pcm`: `samples` copies of `value`, `script`)
+`expectHex`, or `expectError: true`; `validWAV` (`hex`, `capBytes`) → `expect`; `plausible` (`pcm`: `samples` copies of `value`, `script`)
 → `expect`.

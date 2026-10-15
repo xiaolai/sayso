@@ -8,6 +8,17 @@ public enum PCM {
     /// The size of the canonical WAV header.
     public static let headerSize = 44
 
+    /// The highest rate a header can carry: its byte rate, rate × 2, must fit 32 bits.
+    public static let maxRate = Int(UInt32.max / 2)
+
+    /// The most PCM a header can describe: its RIFF size, 36 + data, must fit 32 bits.
+    public static let maxPCMBytes = Int(UInt32.max - 36)
+
+    /// A rate outside 1…``maxRate``, or PCM longer than ``maxPCMBytes`` bytes: the header would carry wrapped sizes.
+    public struct RangeError: Error, Equatable {
+        public init() {}
+    }
+
     /// The plausibility threshold, about -40 dBFS.
     static let minPeak = 328
 
@@ -42,22 +53,30 @@ public enum PCM {
         }
     }
 
-    /// `pcm` behind a canonical 44-byte mono 16-bit header for `rate`.
-    public static func wav(_ pcm: Data, rate: Int) -> Data {
-        var out = Data(capacity: headerSize + pcm.count)
+    /// `pcm` behind a canonical 44-byte mono 16-bit header for `rate`. Throws ``RangeError`` for a rate outside
+    /// 1…``maxRate`` or PCM longer than ``maxPCMBytes`` bytes.
+    public static func wav(_ pcm: Data, rate: Int) throws -> Data {
+        guard (1...maxRate).contains(rate), pcm.count <= maxPCMBytes else { throw RangeError() }
+        var out = header(pcm.count, rate: rate)
+        out.append(pcm)
+        return out
+    }
+
+    /// The canonical header for `n` bytes of PCM at `rate`, both already in range.
+    private static func header(_ n: Int, rate: Int) -> Data {
+        var out = Data(capacity: headerSize + n)
         out.append(contentsOf: Array("RIFF".utf8))
-        append32(&out, UInt32(truncatingIfNeeded: 36 + pcm.count))
+        append32(&out, UInt32(36 + n))
         out.append(contentsOf: Array("WAVEfmt ".utf8))
         append32(&out, 16)
         append16(&out, 1)  // PCM
         append16(&out, 1)  // mono
-        append32(&out, UInt32(truncatingIfNeeded: rate))
-        append32(&out, UInt32(truncatingIfNeeded: rate * 2))
+        append32(&out, UInt32(rate))
+        append32(&out, UInt32(rate * 2))
         append16(&out, 2)
         append16(&out, 16)
         out.append(contentsOf: Array("data".utf8))
-        append32(&out, UInt32(truncatingIfNeeded: pcm.count))
-        out.append(pcm)
+        append32(&out, UInt32(n))
         return out
     }
 
@@ -65,12 +84,8 @@ public enum PCM {
     /// even-length data chunk of at most `maxData` bytes.
     public static func isValidWAV(_ wav: Data, maxData: Int) -> Bool {
         let n = wav.count - headerSize
-        guard n > 0, n % 2 == 0, n <= maxData else { return false }
-        let bytes = [UInt8](wav)
-        var want = [UInt8](self.wav(Data(), rate: sampleRate))
-        put32(&want, at: 4, UInt32(36 + n))
-        put32(&want, at: 40, UInt32(n))
-        return Array(bytes[0..<headerSize]) == want
+        guard n > 0, n % 2 == 0, n <= maxData, n <= maxPCMBytes else { return false }
+        return wav.prefix(headerSize).elementsEqual(header(n, rate: sampleRate))
     }
 
     /// Whether `pcm` can be a reading of `script`: at least one second per 25 letters of the script, and some sample
@@ -109,10 +124,4 @@ public enum PCM {
         d.append(contentsOf: [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 24)])
     }
 
-    private static func put32(_ b: inout [UInt8], at i: Int, _ v: UInt32) {
-        b[i] = UInt8(v & 0xFF)
-        b[i + 1] = UInt8(v >> 8 & 0xFF)
-        b[i + 2] = UInt8(v >> 16 & 0xFF)
-        b[i + 3] = UInt8(v >> 24)
-    }
 }

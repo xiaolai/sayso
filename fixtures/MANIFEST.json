@@ -1,5 +1,5 @@
 {
- "count": 592,
+ "count": 595,
  "fixtures": [
   {
    "id": "app-ready",
@@ -975,6 +975,24 @@
   },
   {
    "id": "pcm-wav-16k",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-wav-rate-max",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-wav-rate-over",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-wav-rate-zero",
    "file": "pcm16.json",
    "component": "pcm16",
    "requires": []

@@ -95,6 +95,33 @@
   "expectHex": "524946462600000057415645666d74201000000001000100803e0000007d00000200100064617461020000000100"
  },
  {
+  "id": "pcm-wav-rate-max",
+  "component": "pcm16",
+  "op": "wav",
+  "rate": 2147483647,
+  "pcmHex": "0100",
+  "expectHex": "524946462600000057415645666d74201000000001000100ffffff7ffeffffff0200100064617461020000000100",
+  "note": "The highest rate whose byte rate, rate × 2, fits 32 bits."
+ },
+ {
+  "id": "pcm-wav-rate-over",
+  "component": "pcm16",
+  "op": "wav",
+  "rate": 2147483648,
+  "pcmHex": "0100",
+  "expectError": true,
+  "note": "Its byte rate would wrap to zero in the header; an error, never a wrapped header."
+ },
+ {
+  "id": "pcm-wav-rate-zero",
+  "component": "pcm16",
+  "op": "wav",
+  "rate": 0,
+  "pcmHex": "0100",
+  "expectError": true,
+  "note": "A rate below 1 is no sample rate."
+ },
+ {
   "id": "pcm-valid-wav",
   "component": "pcm16",
   "op": "validWAV",

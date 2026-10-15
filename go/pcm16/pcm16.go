@@ -3,6 +3,7 @@ package pcm16
 
 import (
 	"encoding/binary"
+	"errors"
 	"math"
 	"unicode"
 )
@@ -12,6 +13,15 @@ const SampleRate = 24000
 
 // HeaderSize is the size of the canonical WAV header.
 const HeaderSize = 44
+
+// MaxRate is the highest rate a header can carry: its byte rate, rate × 2, must fit 32 bits.
+const MaxRate = math.MaxUint32 / 2
+
+// MaxData is the most PCM a header can describe: its RIFF size, 36 + data, must fit 32 bits.
+const MaxData int64 = math.MaxUint32 - 36
+
+// ErrWAVRange is returned for a rate outside 1…MaxRate or PCM longer than MaxData bytes.
+var ErrWAVRange = errors.New("pcm16: rate or data size does not fit a WAV header")
 
 // minPeak is the plausibility threshold, about -40 dBFS.
 const minPeak = 328
@@ -45,11 +55,21 @@ func Decode(pcm []byte) []float32 {
 	return out
 }
 
-// WAV returns pcm behind a canonical 44-byte mono 16-bit header for rate.
-func WAV(pcm []byte, rate int) []byte {
-	out := make([]byte, HeaderSize, HeaderSize+len(pcm))
+// WAV returns pcm behind a canonical 44-byte mono 16-bit header for rate. A rate outside 1…MaxRate, or PCM longer
+// than MaxData bytes, is ErrWAVRange: the header would carry wrapped sizes.
+func WAV(pcm []byte, rate int) ([]byte, error) {
+	if rate < 1 || rate > MaxRate || int64(len(pcm)) > MaxData {
+		return nil, ErrWAVRange
+	}
+	out := header(len(pcm), rate)
+	return append(out, pcm...), nil
+}
+
+// header is the canonical header for n bytes of PCM at rate, both already in range.
+func header(n, rate int) []byte {
+	out := make([]byte, HeaderSize, HeaderSize+n)
 	copy(out[0:], "RIFF")
-	binary.LittleEndian.PutUint32(out[4:], uint32(36+len(pcm)))
+	binary.LittleEndian.PutUint32(out[4:], uint32(36+n))
 	copy(out[8:], "WAVEfmt ")
 	binary.LittleEndian.PutUint32(out[16:], 16)
 	binary.LittleEndian.PutUint16(out[20:], 1) // PCM
@@ -59,21 +79,18 @@ func WAV(pcm []byte, rate int) []byte {
 	binary.LittleEndian.PutUint16(out[32:], 2)
 	binary.LittleEndian.PutUint16(out[34:], 16)
 	copy(out[36:], "data")
-	binary.LittleEndian.PutUint32(out[40:], uint32(len(pcm)))
-	return append(out, pcm...)
+	binary.LittleEndian.PutUint32(out[40:], uint32(n))
+	return out
 }
 
 // ValidWAV reports whether wav is exactly the canonical header at 24 kHz with consistent sizes, followed by a
 // non-empty, even-length data chunk of at most maxData bytes.
 func ValidWAV(wav []byte, maxData int) bool {
 	n := len(wav) - HeaderSize
-	if n <= 0 || n%2 != 0 || n > maxData {
+	if n <= 0 || n%2 != 0 || n > maxData || int64(n) > MaxData {
 		return false
 	}
-	want := WAV(nil, SampleRate)
-	binary.LittleEndian.PutUint32(want[4:], uint32(36+n))
-	binary.LittleEndian.PutUint32(want[40:], uint32(n))
-	return string(wav[:HeaderSize]) == string(want)
+	return string(wav[:HeaderSize]) == string(header(n, SampleRate))
 }
 
 // Plausible reports whether pcm can be a reading of script: at least one second per 25 letters of the script, and
