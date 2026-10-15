@@ -3,6 +3,7 @@ package codexapp
 import (
 	"errors"
 	"fmt"
+	"github.com/xiaolai/sayso/go/secret"
 	"math"
 	"os"
 	"path/filepath"
@@ -66,12 +67,13 @@ func Resolve(explicit, path string, candidates []string) (string, error) {
 			if p, ok := executable(explicit); ok {
 				return p, nil
 			}
-			return "", fmt.Errorf("%w: %q is not an executable file", ErrNotFound, explicit)
+			// The caller's text is quoted, so it is scrubbed (spec/credentials.md, hygiene).
+			return "", fmt.Errorf("%w: %q is not an executable file", ErrNotFound, secret.Scrub(explicit))
 		}
 		if p, ok := lookIn(filepath.SplitList(path), explicit); ok {
 			return p, nil
 		}
-		return "", fmt.Errorf("%w: %q is not on PATH", ErrNotFound, explicit)
+		return "", fmt.Errorf("%w: %q is not on PATH", ErrNotFound, secret.Scrub(explicit))
 	}
 	if p, ok := lookIn(filepath.SplitList(path), "codex"); ok {
 		return p, nil

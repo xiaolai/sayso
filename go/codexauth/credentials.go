@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -69,8 +70,10 @@ type Info struct {
 // returns is fresh, and a failure backs off from 60 s, doubling to 15 min, without a permanent budget. It is safe for
 // concurrent use and lives as long as the caller wants; Codex runs only during a fetch or a refresh.
 type Credentials struct {
-	cfg  Config // never changed after New
-	path string // PATH of the inherited environment
+	// cfg sits behind a pointer, so formatting a struct that holds Credentials in an unexported field (which fmt
+	// prints by reflection, without the redacting methods) shows an address, never the environment it holds.
+	cfg  *Config // never changed after New
+	path string  // PATH of the inherited environment
 
 	lock chan struct{} // held across a fetch or refresh
 	// The mutable state sits behind a pointer, so formatting a copy of the value (the redacting methods take the
@@ -107,6 +110,9 @@ func New(cfg Config) (*Credentials, error) {
 	default:
 		return nil, fmt.Errorf("codexauth: unknown source %q", cfg.Source)
 	}
+	// Copies: a caller changing its slices later must not change the child's environment or the executable lookup,
+	// nor race with a fetch. nil stays nil, so its default still applies.
+	cfg.Env, cfg.Candidates = slices.Clone(cfg.Env), slices.Clone(cfg.Candidates)
 	if cfg.Env == nil {
 		cfg.Env = os.Environ()
 	}
@@ -134,14 +140,23 @@ func New(cfg Config) (*Credentials, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	c := &Credentials{cfg: cfg, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
+	c := &Credentials{cfg: &cfg, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
 	c.refresh = c.refreshCodex
 	return c, nil
 }
 
+// acquire takes the lock unless ctx has ended. select picks at random between ready cases, so a cancelled caller is
+// checked before and after: it never runs, as in Swift.
 func (c *Credentials) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case c.lock <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-c.lock
+			return err
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -355,8 +370,7 @@ func (c *Credentials) codexToken(ctx context.Context, bin string) (secret.Token,
 	}
 	defer func() { _ = cl.Close() }()
 	meta, err := cl.GetAuthStatus(ctx, false, false)
-	var rpc *codexapp.RPCError
-	if errors.As(err, &rpc) && rpc.Code == codexapp.CodeMethodNotFound {
+	if methodMissing(err) {
 		_ = cl.Close()
 		return c.storeFallback(ctx, bin)
 	}
@@ -369,8 +383,19 @@ func (c *Credentials) codexToken(ctx context.Context, bin string) (secret.Token,
 	if e := classifyStatus(meta); e != nil {
 		return secret.Token{}, false, e
 	}
-	tok, e := tokenFrom(cl.GetAuthStatus(ctx, true, false))
+	full, err := cl.GetAuthStatus(ctx, true, false)
+	if methodMissing(err) {
+		_ = cl.Close()
+		return c.storeFallback(ctx, bin)
+	}
+	tok, e := tokenFrom(full, err)
 	return tok, e == nil, e
+}
+
+// methodMissing reports Codex answering getAuthStatus with -32601: the method was removed (spec/credentials.md).
+func methodMissing(err error) bool {
+	var rpc *codexapp.RPCError
+	return errors.As(err, &rpc) && rpc.Code == codexapp.CodeMethodNotFound
 }
 
 // storeFallback runs when Codex lacks getAuthStatus: a fresh child's config/read decides whether auth.json is
@@ -409,7 +434,19 @@ func (c *Credentials) refreshCodex(ctx context.Context) (secret.Token, error) {
 		return secret.Token{}, e
 	}
 	defer func() { _ = cl.Close() }()
-	tok, e := tokenFrom(cl.GetAuthStatus(ctx, true, true))
+	full, err := cl.GetAuthStatus(ctx, true, true)
+	if methodMissing(err) {
+		// Codex was updated to one without getAuthStatus since the token was fetched: the same config/read rule
+		// decides, and a file token cannot be refreshed again. The caller holds the lock.
+		_ = cl.Close()
+		tok, _, e := c.storeFallback(ctx, bin)
+		if e != nil {
+			return secret.Token{}, e
+		}
+		c.refreshable = false
+		return tok, nil
+	}
+	tok, e := tokenFrom(full, err)
 	if e != nil {
 		return secret.Token{}, e
 	}

@@ -135,27 +135,30 @@ enum AuthFile {
         guard used < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
         var data = Data(buf[0..<used])
         defer { data.resetBytes(in: 0..<data.count) }
+        // NSDictionary, not [String: Any]: NSString keys compare literally, while a Swift String key compares
+        // canonically equivalent spellings equal ("OPENAI_API_\u{212A}EY", with a Kelvin sign, is OPENAI_API_KEY to
+        // Swift) and bridging merges them. Go and Codex read keys as bytes.
         guard isPlainJSON(data),
-            let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? [String: Any]
+            let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? NSDictionary
         else { return nil }
         return try decode(doc)
     }
 
-    /// The auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey.
-    private static let fileModes: Set<String> = [
+    /// The auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey. Compared as bytes.
+    private static let fileModes = [
         "chatgptAuthTokens", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
     ]
 
     /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token. An
     /// unknown auth_mode makes the file unreadable to Codex itself, so it is codex-error.
-    static func decode(_ doc: [String: Any]) throws -> Token {
-        func present(_ key: String) -> Bool { doc[key].map { !($0 is NSNull) } ?? false }
+    static func decode(_ doc: NSDictionary) throws -> Token {
+        func present(_ key: String) -> Bool { doc.object(forKey: key).map { !($0 is NSNull) } ?? false }
         var mode = modeChatGPT
         if present("auth_mode") {
-            guard let m = doc["auth_mode"] as? String, m == modeChatGPT || m == modeAPIKey || fileModes.contains(m) else {
-                throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode")
-            }
-            mode = m
+            guard let m = doc.object(forKey: "auth_mode") as? String,
+                let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { $0.utf8.elementsEqual(m.utf8) })
+            else { throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode") }
+            mode = known
         } else if present("personal_access_token") {
             mode = "personalAccessToken"
         } else if present("bedrock_api_key") {
@@ -166,8 +169,8 @@ enum AuthFile {
             mode = modeAPIKey
         }
         if let e = classifyMode(mode) { throw e }
-        guard let tokens = doc["tokens"] as? [String: Any], let access = tokens["access_token"] as? String,
-            !access.isEmpty
+        guard let tokens = doc.object(forKey: "tokens") as? NSDictionary,
+            let access = tokens.object(forKey: "access_token") as? String, !access.isEmpty
         else { throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token") }
         return makeToken(access, source: "file")
     }
@@ -182,8 +185,8 @@ func makeToken(_ bearer: String, source: String) -> Token {
 func jwtExpiry(_ token: String) -> Date? {
     let parts = token.split(separator: ".", omittingEmptySubsequences: false)
     guard parts.count == 3 else { return nil }
-    var payload = String(parts[1])
-    while payload.hasSuffix("=") { payload.removeLast() }
+    // The base64url alphabet only, unpadded (RFC 7515, and Codex's own decoder): "eyJleHAiOjF9====" is no JWT.
+    let payload = String(parts[1])
     guard payload.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
         return nil
     }

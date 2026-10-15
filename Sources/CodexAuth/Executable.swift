@@ -7,8 +7,10 @@ public enum CodexExecutable {
     /// `PATH`: Homebrew, /usr/local, the common per-user installers, then every nvm Node version, newest first.
     public static func candidates(home: String) -> [String] {
         var dirs = ["/opt/homebrew/bin", "/usr/local/bin"]
-        // Joining would clean a NUL away ("/x\0/../y" is "/y"), so a home holding one adds nothing.
-        guard !home.utf8.contains(0) else { return dirs }
+        // Joining would clean a NUL away ("/x\0/../y" is "/y"), so a home holding one adds nothing. An empty home adds
+        // nothing either: Go joins it into relative folders, which the lookup skips, where joining here would make
+        // them folders under "/".
+        guard !home.isEmpty, !home.utf8.contains(0) else { return dirs }
         for rel in [".local/bin", ".npm-global/bin", ".volta/bin", ".bun/bin", "Library/pnpm"] {
             dirs.append(join(home, rel))
         }
@@ -69,9 +71,10 @@ public enum CodexExecutable {
 
     /// Whether dotted numeric version `a` is below `b`. Missing or non-numeric components count as zero; a component
     /// too large for an integer saturates, as Go's strconv.Atoi does.
+    /// Split on the "." byte, as Go splits: a "." followed by a combining mark is one Character but still a dot.
     public static func versionLess(_ a: String, _ b: String) -> Bool {
-        let x = a.split(separator: ".", omittingEmptySubsequences: false)
-        let y = b.split(separator: ".", omittingEmptySubsequences: false)
+        let x = a.utf8.split(separator: 0x2E, omittingEmptySubsequences: false).map { Substring(String(decoding: $0, as: UTF8.self)) }
+        let y = b.utf8.split(separator: 0x2E, omittingEmptySubsequences: false).map { Substring(String(decoding: $0, as: UTF8.self)) }
         for i in 0..<max(x.count, y.count) {
             let p = i < x.count ? atoi(x[i]) : 0
             let q = i < y.count ? atoi(y[i]) : 0
@@ -88,7 +91,7 @@ public enum CodexExecutable {
             negative = f == "-"
             digits = digits.dropFirst()
         }
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return 0 }
+        guard !digits.isEmpty, digits.utf8.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }) else { return 0 }
         var n = 0
         for c in digits.utf8 {
             let d = Int(c - 0x30)

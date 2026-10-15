@@ -53,6 +53,18 @@ public struct AuthStatus: Sendable, Equatable, CustomStringConvertible, CustomDe
         self.token = token
     }
 
+    /// By bytes, as Go compares them: Swift's `==` treats canonically equivalent strings as equal, and two different
+    /// credentials can be (`tok-\u{E9}`, `tok-e\u{301}`).
+    public static func == (a: AuthStatus, b: AuthStatus) -> Bool {
+        let sameMethod: Bool
+        switch (a.method, b.method) {
+        case (nil, nil): sameMethod = true
+        case let (x?, y?): sameMethod = x.utf8.elementsEqual(y.utf8)
+        default: sameMethod = false
+        }
+        return sameMethod && a.requiresOpenAIAuth == b.requiresOpenAIAuth && a.token.utf8.elementsEqual(b.token.utf8)
+    }
+
     public var description: String { "AuthStatus{method: \(Secret.scrub(method ?? ""))}" }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
@@ -136,6 +148,14 @@ public final class AppServerClient: @unchecked Sendable {
             throw AppServerError("the Codex executable path is not absolute")
         }
         guard cfg.timeout > 0, cfg.timeout.isFinite else { throw AppServerError("a per-call timeout is required") }
+        // A name holding "=" would become another variable in the child ("OPENAI_API_KEY=x" with value "y" is
+        // OPENAI_API_KEY=x=y) and slip past the removal list; a NUL would cut the string short. Go cannot be given
+        // either: its entries are "name=value" strings, and exec refuses a NUL.
+        let passable = cfg.environment.allSatisfy { name, value in
+            !name.utf8.contains(0x3D) && !name.utf8.contains(0) && !value.utf8.contains(0)
+        }
+        guard passable, !(cfg.codexHome?.utf8.contains(0) ?? false)
+        else { throw AppServerError("the environment holds a name with \"=\" or a NUL, which cannot be passed on") }
         if let guardStart = cfg.guardStart {
             do { try guardStart(cfg.bin) } catch {
                 throw AppServerError("starting Codex was refused: \(Secret.scrub(String(describing: error)))")
@@ -249,6 +269,8 @@ final class AppServerCore: @unchecked Sendable {
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
     private let exited = DispatchSemaphore(value: 0)
+    /// Signalled when the first close has finished.
+    private let closeDone = DispatchSemaphore(value: 0)
 
     private final class Pending {
         let done = DispatchSemaphore(value: 0)
@@ -317,9 +339,11 @@ final class AppServerCore: @unchecked Sendable {
             stderrLoop(err)
             stderrDone.signal()
         }
+        // Waits for the exit without reaping: a zombie keeps its process ID, and so its group ID, ours, so close can
+        // signal the group without reaching one that reused the ID. close reaps it last.
         Self.thread { [self] in
-            var status: Int32 = 0
-            while waitpid(childPID, &status, 0) == -1 && errno == EINTR {}
+            var info = siginfo_t()
+            while waitid(P_PID, id_t(childPID), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
             exited.signal()
         }
     }
@@ -358,12 +382,18 @@ final class AppServerCore: @unchecked Sendable {
         try write(message, deadline: .now() + timeout)
     }
 
+    /// Concurrent and later calls wait until the first has finished, as Go's sync.Once makes them.
     func close() {
         let first = lock.withLock { () -> Bool in
             defer { closed = true }
             return !closed
         }
-        guard first else { return }
+        guard first else {
+            closeDone.wait()
+            closeDone.signal()
+            return
+        }
+        defer { closeDone.signal() }
         // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
         writeGate.wait()
         if stdinOpen {
@@ -371,8 +401,8 @@ final class AppServerCore: @unchecked Sendable {
             stdinOpen = false
         }
         writeGate.signal()
-        // Once the child is reaped and its group is empty, the group ID may already name another process's group, so
-        // nothing is signalled.
+        // Once the child has exited and its group is empty nothing is signalled. The child is not reaped until the end
+        // of close, so its group ID cannot name another group meanwhile.
         if !gone() { _ = kill(-pid, SIGTERM) }
         if !waitGroup(until: .now() + AppServerClient.killGrace) {
             _ = kill(-pid, SIGKILL)  // the group was alive a moment ago, so its ID is still ours
@@ -387,12 +417,26 @@ final class AppServerCore: @unchecked Sendable {
             return stderrBytes.count
         }
         fail(AppServerError("Codex app-server was closed"))
+        // The group is no longer signalled: reap the child now, or once it exits if it was abandoned.
+        let child = pid
+        if reaped(by: .now()) {
+            var status: Int32 = 0
+            while waitpid(child, &status, 0) == -1 && errno == EINTR {}
+        } else {
+            let exited = exited
+            Self.thread {
+                exited.wait()
+                var status: Int32 = 0
+                while waitpid(child, &status, 0) == -1 && errno == EINTR {}
+            }
+        }
         if n > 0 { log?("codex app-server wrote to stderr (\(n) bytes)") }
     }
 
     var hasExited: Bool { reaped(by: .now()) }
 
-    /// Whether the child was reaped by `deadline`; the semaphore keeps its signal for the next look.
+    /// Whether the child has exited by `deadline` (it stays unreaped until close); the semaphore keeps its signal for
+    /// the next look.
     private func reaped(by deadline: DispatchTime) -> Bool {
         guard exited.wait(timeout: deadline) == .success else { return false }
         exited.signal()
@@ -407,17 +451,21 @@ final class AppServerCore: @unchecked Sendable {
             let now = DispatchTime.now()
             if now >= deadline { return false }
             let next = min(deadline, now + .milliseconds(20))
-            // Reaped, but a member may still hold the group: the probes that follow are paced, not spun.
-            if reaped(by: next), DispatchTime.now() < next {
-                usleep(useconds_t((next.uptimeNanoseconds - DispatchTime.now().uptimeNanoseconds) / 1000))
+            // Exited, but a member may still hold the group: the probes that follow are paced, not spun. The clock is
+            // read once, so the subtraction cannot underflow.
+            if reaped(by: next) {
+                let t = DispatchTime.now().uptimeNanoseconds
+                if t < next.uptimeNanoseconds { usleep(useconds_t((next.uptimeNanoseconds - t) / 1000)) }
             }
         }
     }
 
-    /// Whether the child was reaped and no member of its process group remains.
+    /// Whether the child has exited and no live member of its process group remains.
     private func gone() -> Bool { reaped(by: .now()) && !groupAlive() }
 
-    private func groupAlive() -> Bool { kill(-pid, 0) == 0 || errno == EPERM }
+    /// While the leader is an unreaped zombie, kill(-pgid, 0) fails with EPERM once no live member remains (measured
+    /// on macOS), and succeeds while one does.
+    private func groupAlive() -> Bool { kill(-pid, 0) == 0 }
 
     // MARK: - Wire
 
@@ -465,13 +513,15 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
-    /// Whether JSONSerialization can encode `value` without raising: only the JSON types, finite numbers, string keys.
-    private static func encodable(_ value: Any) -> Bool {
+    /// Whether JSONSerialization can encode `value` without raising: only the JSON types, finite numbers, string keys,
+    /// nested at most as deep as Codex's JSON may be, so neither this check nor the encoder can exhaust the stack.
+    private static func encodable(_ value: Any, depth: Int = 0) -> Bool {
         switch value {
         case is String, is NSNull, is Bool: return true
         case let n as NSNumber: return CFNumberIsFloatType(n) ? n.doubleValue.isFinite : true
-        case let a as [Any]: return a.allSatisfy(encodable)
-        case let d as [String: Any]: return d.values.allSatisfy(encodable)
+        case let a as [Any]: return depth < maxCodexJSONDepth && a.allSatisfy { encodable($0, depth: depth + 1) }
+        case let d as [String: Any]:
+            return depth < maxCodexJSONDepth && d.values.allSatisfy { encodable($0, depth: depth + 1) }
         default: return false
         }
     }
@@ -557,12 +607,12 @@ final class AppServerCore: @unchecked Sendable {
         else { return false }
         if value is NSNull { return true }
         guard let m = value as? [String: Any] else { return false }
+        guard let id = m["id"], !(id is NSNull) else { return true }  // a notification, whatever else it holds
         var hasMethod = false
         if let raw = m["method"], !(raw is NSNull) {
             guard raw is String else { return false }
             hasMethod = true
         }
-        guard let id = m["id"], !(id is NSNull) else { return true }  // a notification
         if hasMethod {
             try? write(
                 [
@@ -653,7 +703,7 @@ func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
     // The strict grammar also refuses duplicate keys and invalid UTF-8, which JSONSerialization and Go's
     // encoding/json each settle their own way; Codex's serde refuses both. The depth bound comes first and copies
     // nothing.
-    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF]) && depthWithin(bytes, maxCodexJSONDepth)
+    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF]) && withinBounds(bytes, maxCodexJSONDepth)
         && WireJSON.isValid(Data(bytes))
 }
 
@@ -662,10 +712,25 @@ func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
 /// 512), so a deeper document is malformed in both rather than in one.
 let maxCodexJSONDepth = 64
 
-/// Whether no array or object in `bytes` nests deeper than `max`, counting outside strings only.
-func depthWithin<C: Collection>(_ bytes: C, _ max: Int) -> Bool where C.Element == UInt8 {
+/// Whether no array or object in `bytes` nests deeper than `max` and every number outside strings fits a Double, as
+/// in Go (`codexapp.ValidJSON`). Foundation refuses 1e999 wherever it is (and reads -1e400 as -inf), and Codex's
+/// serde refuses both, so such a number makes the document malformed in both implementations.
+func withinBounds<C: Collection>(_ bytes: C, _ max: Int) -> Bool where C.Element == UInt8 {
     var depth = 0, inString = false, escaped = false
+    var number: [UInt8] = []
+    func numberFits() -> Bool {
+        defer { number.removeAll(keepingCapacity: true) }
+        guard !number.isEmpty, let d = Double(String(decoding: number, as: UTF8.self)) else { return true }
+        return d.isFinite  // a malformed number is the strict check's to refuse
+    }
     for c in bytes {
+        if !inString, c == 0x2D || c == 0x2B || c == 0x2E || c == 0x65 || c == 0x45 || (c >= 0x30 && c <= 0x39) {
+            if !number.isEmpty || c == 0x2D || (c >= 0x30 && c <= 0x39) {
+                number.append(c)
+                continue
+            }
+        }
+        if !number.isEmpty, !numberFits() { return false }
         if inString {
             if escaped {
                 escaped = false
@@ -683,7 +748,7 @@ func depthWithin<C: Collection>(_ bytes: C, _ max: Int) -> Bool where C.Element 
             depth -= 1
         }
     }
-    return true
+    return numberFits()
 }
 
 /// A JSON object, with null read as an empty one.

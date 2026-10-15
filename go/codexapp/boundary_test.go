@@ -47,7 +47,7 @@ func TestNULIsRefusedBeforeJoining(t *testing.T) {
 
 func TestAuthStatusEncodingRedacts(t *testing.T) {
 	secret.Register("opaque-canary-status-1")
-	st := AuthStatus{Method: "opaque-canary-status-1", HasMethod: true, token: "opaque-canary-status-1"}
+	st := AuthStatus{Method: "opaque-canary-status-1", HasMethod: true, token: &sealedToken{"opaque-canary-status-1"}}
 	b, err := json.Marshal(st)
 	if err != nil || strings.Contains(string(b), "canary") {
 		t.Fatalf("json: %s %v", b, err)
@@ -81,6 +81,8 @@ func TestDecodeRateLimits(t *testing.T) {
 		`{"rateLimits":{"primary":{"usedPercent":"10"}}}`, // the wrong type
 		`{"ordinaryUsageAllowed":"yes"}`,                  // the wrong type
 		`{"rateLimits":{"primary":{"usedPercent":1,"resetsAt":1.5}}}`,
+		`{"rateLimits":{"primary":{"usedPercent":12.5}}}`,       // Codex's schema: an int32
+		`{"rateLimits":{"primary":{"usedPercent":2147483648}}}`, // beyond int32
 	} {
 		if _, err := decodeRateLimits(json.RawMessage(bad)); err == nil {
 			t.Errorf("accepted %s", bad)

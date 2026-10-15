@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -22,11 +23,20 @@ type AuthStatus struct {
 	HasMethod bool
 	// RequiresOpenAIAuth is requiresOpenaiAuth; false means a provider needing no OpenAI sign-in is in force.
 	RequiresOpenAIAuth bool
-	token              string
+	// token sits behind a pointer, as secret.Token's bearer does: fmt prints a struct holding an AuthStatus in an
+	// unexported field by reflection, without the redacting methods, and shows a pointer as its address.
+	token *sealedToken
 }
 
+type sealedToken struct{ s string }
+
 // Token returns the credential Codex sent, or "". It is already registered with the scrubber.
-func (s AuthStatus) Token() string { return s.token }
+func (s AuthStatus) Token() string {
+	if s.token == nil {
+		return ""
+	}
+	return s.token.s
+}
 
 func (s AuthStatus) String() string {
 	return fmt.Sprintf("AuthStatus{Method:%q}", secret.Scrub(s.Method))
@@ -70,7 +80,10 @@ func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken b
 	if err != nil {
 		return AuthStatus{}, bad
 	}
-	st := AuthStatus{HasMethod: method != nil, RequiresOpenAIAuth: requires == nil || *requires, token: token}
+	st := AuthStatus{HasMethod: method != nil, RequiresOpenAIAuth: requires == nil || *requires}
+	if token != "" {
+		st.token = &sealedToken{token}
+	}
 	if method != nil {
 		st.Method = *method
 	}
@@ -207,15 +220,16 @@ func decodeRateLimits(raw json.RawMessage) (RateLimits, error) {
 		if !ok {
 			continue
 		}
-		used, ok, err := w.Float("usedPercent")
-		if err != nil || !ok {
+		// Codex's schema (RateLimitWindow, codex app-server generate-json-schema) makes usedPercent a required int32.
+		used, ok, err := w.Int("usedPercent")
+		if err != nil || !ok || used < math.MinInt32 || used > math.MaxInt32 {
 			return RateLimits{}, wire.ErrInvalid
 		}
 		mins, _, err := w.Int("windowDurationMins")
 		if err != nil {
 			return RateLimits{}, err
 		}
-		rw := RateWindow{Name: name, UsedPercent: used, WindowMins: int(mins)}
+		rw := RateWindow{Name: name, UsedPercent: float64(used), WindowMins: int(mins)}
 		resets, ok, err := w.Int("resetsAt")
 		if err != nil {
 			return RateLimits{}, err
