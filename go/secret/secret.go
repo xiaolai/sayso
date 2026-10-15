@@ -22,7 +22,7 @@ var patterns = regexp.MustCompile(`eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+`)
 var registry struct {
 	mu      sync.RWMutex
 	secrets map[string]struct{}
-	ordered []string // longest first, so a secret containing another is removed whole
+	ordered []string
 }
 
 // Register adds s to the process-wide scrub list. Empty strings are ignored.
@@ -40,22 +40,46 @@ func Register(s string) {
 	}
 	registry.secrets[s] = struct{}{}
 	registry.ordered = append(registry.ordered, s)
-	sort.SliceStable(registry.ordered, func(i, j int) bool {
-		return len(registry.ordered[i]) > len(registry.ordered[j])
-	})
 }
 
 // Scrub removes every registered secret and every secret-shaped pattern from s. Use it on any text that may reach a
-// user, a log or an artifact, such as error messages.
+// user, a log or an artifact, such as error messages. Every match is found in the original text and the union of
+// the matched spans is replaced, overlapping or touching spans as one, so a registered secret inside a longer
+// secret-shaped value never leaves the rest of that value behind.
 func Scrub(s string) string {
+	var spans [][2]int
 	registry.mu.RLock()
 	for _, sec := range registry.ordered {
-		if strings.Contains(s, sec) {
-			s = strings.ReplaceAll(s, sec, Redacted)
+		for i := 0; i+len(sec) <= len(s); {
+			j := strings.Index(s[i:], sec)
+			if j < 0 {
+				break
+			}
+			spans = append(spans, [2]int{i + j, i + j + len(sec)})
+			i += j + 1 // overlapping occurrences too
 		}
 	}
 	registry.mu.RUnlock()
-	return patterns.ReplaceAllString(s, Redacted)
+	for _, m := range patterns.FindAllStringIndex(s, -1) {
+		spans = append(spans, [2]int{m[0], m[1]})
+	}
+	if len(spans) == 0 {
+		return s
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	var b strings.Builder
+	at := 0
+	for i := 0; i < len(spans); {
+		span := spans[i]
+		for i++; i < len(spans) && spans[i][0] <= span[1]; i++ {
+			span[1] = max(span[1], spans[i][1])
+		}
+		b.WriteString(s[at:span[0]])
+		b.WriteString(Redacted)
+		at = span[1]
+	}
+	b.WriteString(s[at:])
+	return b.String()
 }
 
 // Token is a sign-in bearer with its metadata. The bearer is unexported and reachable only through Bearer, so no

@@ -52,3 +52,39 @@ func TestPatterns(t *testing.T) {
 		t.Fatalf("Scrub = %q", got)
 	}
 }
+
+// A registered secret inside a longer secret-shaped value removes the whole value, not just the registered part.
+func TestRegisteredInsidePattern(t *testing.T) {
+	Register("ek_demo")
+	if got := Scrub("x ek_demo_sensitive y"); got != "x <redacted> y" {
+		t.Fatalf("Scrub = %q", got)
+	}
+}
+
+// Matching is on bytes: a combining mark after a secret does not hide it.
+func TestCombiningMarkAfterSecret(t *testing.T) {
+	Register("opaque-value-combining")
+	if got := Scrub("a opaque-value-combining\u0301 b"); strings.Contains(got, "opaque-value") {
+		t.Fatalf("Scrub = %q", got)
+	}
+}
+
+// Overlapping occurrences are all removed.
+func TestOverlappingOccurrences(t *testing.T) {
+	Register("ovlap-ovlap")
+	if got := Scrub("ovlap-ovlap-ovlap"); got != "<redacted>" {
+		t.Fatalf("Scrub = %q", got)
+	}
+}
+
+// A long run of pattern prefixes without dots scrubs in linear time.
+func TestRepeatedPrefixIsLinear(t *testing.T) {
+	s := strings.Repeat("eyJ", 60_000)
+	start := time.Now()
+	if got := Scrub(s); got != s {
+		t.Fatal("a dotless run must not match")
+	}
+	if d := time.Since(start); d > 30*time.Second { // generous for -race on a loaded machine; a quadratic scan takes minutes
+		t.Fatalf("Scrub took %v", d)
+	}
+}

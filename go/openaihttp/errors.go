@@ -38,7 +38,8 @@ const (
 )
 
 // Error is a classified failure. Type, Code, Param and Message come from the provider's error body or event and are
-// scrubbed; no header or bearer is ever stored. Message is for diagnostics, never for display.
+// scrubbed where they are read; Error scrubs its whole text again, so a field set without scrubbing cannot leak a
+// secret. No header or bearer is ever stored. Message is for diagnostics, never for display.
 type Error struct {
 	Class     Class
 	Status    int    // HTTP status, 0 if none
@@ -76,12 +77,12 @@ func (e *Error) Error() string {
 	}
 	if e.Err != nil {
 		b.WriteString(": ")
-		b.WriteString(secret.Scrub(e.Err.Error()))
+		b.WriteString(e.Err.Error())
 	}
 	if e.RequestID != "" {
 		fmt.Fprintf(&b, " (request id %s)", e.RequestID)
 	}
-	return b.String()
+	return secret.Scrub(b.String()) // again, so a field set without scrubbing cannot leak a secret
 }
 
 func (e *Error) Unwrap() error { return e.Err }

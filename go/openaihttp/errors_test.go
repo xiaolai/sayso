@@ -165,3 +165,12 @@ func TestClassifyRealDialFailure(t *testing.T) {
 		t.Errorf("class %q, want network (%v)", got, err)
 	}
 }
+
+// Error scrubs its whole text, so a field set without scrubbing cannot leak a secret.
+func TestErrorStringScrubsEveryField(t *testing.T) {
+	e := &Error{Class: ClassServer, Message: "ek_canary_message", Code: "ek_canary_code", Param: "ek_canary_param",
+		Route: "ek_canary_route", RequestID: "ek_canary_request"}
+	if got := e.Error(); strings.Contains(got, "canary") {
+		t.Fatalf("Error() = %q", got)
+	}
+}
