@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/xiaolai/sayso/go/codexapp"
@@ -74,9 +75,15 @@ type Credentials struct {
 	lock        chan struct{} // held across a fetch or refresh
 	cur         *secret.Token
 	refreshable bool // cur came from Codex
-	backoff     time.Duration
-	retryAt     time.Time
-	info        Info
+	// refused is the bearer a provider last refused and no refresh has renewed since: it is not handed out again
+	// until a refresh succeeds or the file holds another token.
+	refused string
+	// refreshes counts successful refreshes. A caller that refused a token while a refresh was running takes that
+	// refresh's result instead of starting another, even when Codex returned the same bearer.
+	refreshes *atomic.Int64 // a pointer, so a copy made by formatting the value shares no lock state
+	backoff   time.Duration
+	retryAt   time.Time
+	info      Info
 	// refresh asks for a refreshed token; refreshCodex, replaced only by this package's tests.
 	refresh func(context.Context) (secret.Token, error)
 }
@@ -120,7 +127,7 @@ func New(cfg Config) (*Credentials, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	c := &Credentials{cfg: cfg, path: path, lock: make(chan struct{}, 1)}
+	c := &Credentials{cfg: cfg, path: path, lock: make(chan struct{}, 1), refreshes: new(atomic.Int64)}
 	c.refresh = c.refreshCodex
 	return c, nil
 }
@@ -150,6 +157,11 @@ func (c *Credentials) fresh(t secret.Token) bool {
 	return t.Expires.IsZero() || t.Expires.Sub(c.cfg.Now()) >= c.cfg.Margin
 }
 
+// usable reports whether t may be handed out: fresh, and not the bearer a provider refused.
+func (c *Credentials) usable(t secret.Token) bool {
+	return c.fresh(t) && (c.refused == "" || t.Bearer() != c.refused)
+}
+
 // Token returns a fresh bearer, fetching on first use and refreshing when less than the margin remains. A token from
 // auth.json is re-read rather than refreshed. The error is an *Error carrying the state.
 func (c *Credentials) Token(ctx context.Context) (secret.Token, error) {
@@ -157,32 +169,38 @@ func (c *Credentials) Token(ctx context.Context) (secret.Token, error) {
 		return secret.Token{}, err
 	}
 	defer c.release()
-	if c.cur == nil || (!c.refreshable && !c.fresh(*c.cur)) {
+	if c.cur == nil || (!c.refreshable && !c.usable(*c.cur)) {
 		if err := c.fetchLocked(ctx); err != nil {
 			return secret.Token{}, err
 		}
 	}
-	if c.fresh(*c.cur) {
+	if c.usable(*c.cur) {
 		return *c.cur, nil
 	}
 	return c.refreshLocked(ctx)
 }
 
 // RefreshAfter is called when a request made with stale was refused as auth-expired. When stale was already
-// replaced, the replacement is returned without a refresh; otherwise a refresh runs, within the backoff.
+// replaced by a fresh token, or a refresh completed while this caller waited, that token is returned without another
+// refresh; otherwise a refresh runs, within the backoff. Until a refresh succeeds, Token does not hand out stale.
 func (c *Credentials) RefreshAfter(ctx context.Context, stale secret.Token) (secret.Token, error) {
+	seen := c.refreshes.Load()
 	if err := c.acquire(ctx); err != nil {
 		return secret.Token{}, err
 	}
 	defer c.release()
-	if c.cur != nil && c.cur.Bearer() != stale.Bearer() {
+	if c.cur != nil && c.refreshes.Load() != seen && c.fresh(*c.cur) {
+		return *c.cur, nil // a refresh ran while this caller waited
+	}
+	if c.cur != nil && c.cur.Bearer() != stale.Bearer() && c.usable(*c.cur) {
 		return *c.cur, nil
 	}
+	c.refused = stale.Bearer()
 	if c.cur == nil || !c.refreshable {
 		if err := c.fetchLocked(ctx); err != nil {
 			return secret.Token{}, err
 		}
-		if c.cur.Bearer() != stale.Bearer() && c.fresh(*c.cur) {
+		if c.usable(*c.cur) {
 			return *c.cur, nil
 		}
 		if !c.refreshable {
@@ -197,8 +215,7 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 	if !c.refreshable {
 		return secret.Token{}, fail(StateExpired, "the token in auth.json is expiring, and the file source cannot refresh", nil)
 	}
-	now := c.cfg.Now()
-	if now.Before(c.retryAt) {
+	if c.cfg.Now().Before(c.retryAt) {
 		return secret.Token{}, fail(StateExpired, "the last refresh failed; the next attempt waits for the backoff", nil)
 	}
 	tok, err := c.refresh(ctx)
@@ -206,16 +223,21 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		err = errors.New("Codex returned a token that is still within the margin")
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			// The caller gave up; Codex did not fail, so no backoff is spent.
+			return secret.Token{}, fail(StateExpired, "the refresh was cancelled", err)
+		}
 		if c.backoff == 0 {
 			c.backoff = backoffStart
 		} else {
 			c.backoff = min(2*c.backoff, backoffMax)
 		}
-		c.retryAt = now.Add(c.backoff)
+		c.retryAt = c.cfg.Now().Add(c.backoff) // from the failure, so a slow attempt does not use up the wait
 		return secret.Token{}, fail(StateExpired, "the refresh did not renew the sign-in", err)
 	}
-	c.backoff, c.retryAt = 0, time.Time{}
+	c.backoff, c.retryAt, c.refused = 0, time.Time{}, ""
 	c.cur = &tok
+	c.refreshes.Add(1)
 	return tok, nil
 }
 
@@ -253,16 +275,17 @@ func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
 // file is then no-codex.
 func (c *Credentials) fileToken(fallback bool) (secret.Token, *Error) {
 	c.info.Source = SourceFile
-	path, e := authFilePath(c.cfg.CodexHome, c.cfg.Home, c.cfg.ConfineCodexHome)
+	loc, e := authFilePath(c.cfg.CodexHome, c.cfg.Home, c.cfg.ConfineCodexHome)
 	if e != nil {
 		return secret.Token{}, c.fallbackState(e, fallback)
 	}
+	defer loc.close()
 	if c.cfg.Guard != nil {
-		if err := c.cfg.Guard(path); err != nil {
+		if err := c.cfg.Guard(loc.path); err != nil {
 			return secret.Token{}, fail(StateCodexError, "reading auth.json was refused", err)
 		}
 	}
-	tok, e := readAuthFile(path, c.cfg.OnFileRetry)
+	tok, e := readAuthFile(loc, c.cfg.OnFileRetry)
 	if e != nil {
 		return secret.Token{}, c.fallbackState(e, fallback)
 	}
@@ -367,10 +390,14 @@ func (c *Credentials) refreshCodex(ctx context.Context) (secret.Token, error) {
 	return tok, nil
 }
 
-// tokenFrom checks the method again on a token reply: a changed method is classified like the metadata reply.
+// tokenFrom checks the provider and the method again on a token reply: a change is classified like the metadata
+// reply.
 func tokenFrom(full codexapp.AuthStatus, err error) (secret.Token, *Error) {
 	if err != nil {
 		return secret.Token{}, fail(StateCodexError, "Codex app-server getAuthStatus failed", err)
+	}
+	if !full.RequiresOpenAIAuth {
+		return secret.Token{}, fail(StateProviderWithoutOpenAIAuth, "the provider in force needs no OpenAI sign-in", nil)
 	}
 	if e := classifyMode(full.Method); e != nil {
 		return secret.Token{}, e
@@ -381,11 +408,21 @@ func tokenFrom(full codexapp.AuthStatus, err error) (secret.Token, *Error) {
 	return newToken(full.Token(), "codex"), nil
 }
 
-// String names the source only, never the cached token.
-func (c *Credentials) String() string { return "codexauth.Credentials{" + string(c.cfg.Source) + "}" }
+// String names the source only, never the cached token or the environment. The formatting methods are on the value
+// so a copy (fmt.Sprintf("%+v", *c)) redacts too; the value is never used otherwise.
+func (c Credentials) String() string { return "codexauth.Credentials{" + string(c.cfg.Source) + "}" }
 
 // GoString redacts like String.
-func (c *Credentials) GoString() string { return c.String() }
+func (c Credentials) GoString() string { return c.String() }
 
 // Format redacts like String for every verb.
-func (c *Credentials) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(c.String())) }
+func (c Credentials) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(c.String())) }
+
+// String names the source only: Env holds the inherited environment, which may hold credentials.
+func (cfg Config) String() string { return "codexauth.Config{" + string(cfg.Source) + "}" }
+
+// GoString redacts like String.
+func (cfg Config) GoString() string { return cfg.String() }
+
+// Format redacts like String for every verb.
+func (cfg Config) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(cfg.String())) }

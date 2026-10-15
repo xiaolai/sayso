@@ -17,6 +17,9 @@ Scenario keys (all optional):
   descendant           start a process in its own session that holds stdout and stderr open for 30 s, and record
                        its pid as {"descendant": pid}
   ignoreTerm           ignore SIGTERM, so only SIGKILL ends the process
+  holdAfterEOF         stay alive after stdin ends, so closing stdin does not end the process either
+  groupDescendant      start a process in the fake's own process group that ignores SIGTERM and lives 30 s, with no
+                       pipe of ours, and record its pid as {"groupDescendant": pid}: only SIGKILL to the group ends it
   methods              {method: [step, ...]}; call n of a method uses step n, and the last step repeats. Calls are
                        counted across starts that share SAYSO_FAKE_RECORD, because a client starts one child per
                        fetch or refresh. A step is
@@ -111,6 +114,11 @@ def main() -> int:
     if scenario.get("descendant"):
         child = subprocess.Popen(["/bin/sleep", "30"], stdout=sys.stdout, stderr=sys.stderr, start_new_session=True)
         record({"descendant": child.pid})
+    if scenario.get("groupDescendant"):
+        # SIG_IGN set before exec survives it, so the sleep ignores SIGTERM from its first instruction.
+        child = subprocess.Popen(["/bin/sleep", "30"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN))
+        record({"groupDescendant": child.pid})
 
     methods = scenario.get("methods", {})
     by_params = scenario.get("byParams", {})
@@ -158,6 +166,8 @@ def main() -> int:
             send({"id": msg["id"], "error": step["error"]})
         else:
             send({"id": msg["id"], "result": step.get("result", {})})
+    if scenario.get("holdAfterEOF"):
+        time.sleep(30)
     return 0
 
 

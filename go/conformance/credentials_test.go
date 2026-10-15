@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,7 @@ type credFile struct {
 	Kind      string          `json:"kind"`
 	JSON      json.RawMessage `json:"json"`
 	Raw       *string         `json:"raw"`
+	Hex       *string         `json:"hex"`
 	RawRepeat *struct {
 		Text  string `json:"text"`
 		Count int    `json:"count"`
@@ -108,6 +110,23 @@ func build(t *testing.T, s credSetup, python, fake string) (*world, error) {
 	w := &world{root: root, home: filepath.Join(root, "home"), binDir: filepath.Join(root, "bin"),
 		record: filepath.Join(root, "record.jsonl"), logs: &bytes.Buffer{}}
 	w.now = time.Unix(cmp(s.Now, 1800000000), 0)
+	t.Cleanup(func() { // what the fake started outlives a failing case; end it with the case
+		rec, err := w.read()
+		if err != nil {
+			return
+		}
+		// Only a process still in the group it was started in: a pid freed and reused is not ours to kill.
+		for _, pid := range rec.group {
+			if g, err := syscall.Getpgid(pid); err == nil && slices.Contains(rec.pids, g) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+		for _, pid := range rec.other {
+			if g, err := syscall.Getpgid(pid); err == nil && g == pid {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
 	for _, d := range []string{w.home, w.binDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, err
@@ -280,6 +299,12 @@ func writeFileContent(path string, f *credFile) error {
 	switch {
 	case f.Raw != nil:
 		data = []byte(*f.Raw)
+	case f.Hex != nil:
+		b, err := hex.DecodeString(*f.Hex)
+		if err != nil {
+			return err
+		}
+		data = b
 	case f.RawRepeat != nil:
 		data = []byte(strings.Repeat(f.RawRepeat.Text, f.RawRepeat.Count))
 	case f.JSON != nil:
@@ -308,6 +333,8 @@ type recorded struct {
 	spawns   []spawn
 	requests []map[string]any // every message received, in order
 	pids     []int
+	group    []int // processes the fake started in its own process group
+	other    []int // processes the fake started in a session of their own
 }
 
 type spawn struct {
@@ -328,9 +355,11 @@ func (w *world) read() (recorded, error) {
 	sc.Buffer(nil, 16<<20)
 	for sc.Scan() {
 		var line struct {
-			Spawn *spawn         `json:"spawn"`
-			Req   map[string]any `json:"req"`
-			PID   int            `json:"pid"`
+			Spawn           *spawn         `json:"spawn"`
+			Req             map[string]any `json:"req"`
+			PID             int            `json:"pid"`
+			GroupDescendant int            `json:"groupDescendant"`
+			Descendant      int            `json:"descendant"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &line); err != nil {
 			return r, err
@@ -341,6 +370,10 @@ func (w *world) read() (recorded, error) {
 			r.pids = append(r.pids, line.PID)
 		case line.Req != nil:
 			r.requests = append(r.requests, line.Req)
+		case line.GroupDescendant > 0:
+			r.group = append(r.group, line.GroupDescendant)
+		case line.Descendant > 0:
+			r.other = append(r.other, line.Descendant)
 		}
 	}
 	return r, sc.Err()
@@ -459,6 +492,17 @@ func (w *world) check(want map[string]any, state string, tok secret.Token, mode 
 			for _, pid := range rec.pids {
 				if syscall.Kill(pid, 0) == nil {
 					p = append(p, fmt.Sprintf("child %d still alive", pid))
+				}
+			}
+			// A member of the child's group is reparented when the child ends, so its new parent reaps it: allow it
+			// a moment to disappear after the signal that ended it.
+			for _, pid := range rec.group {
+				deadline := time.Now().Add(time.Second)
+				for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Millisecond)
+				}
+				if syscall.Kill(pid, 0) == nil {
+					p = append(p, fmt.Sprintf("process %d of the child's group still alive", pid))
 				}
 			}
 		case "closeWithinMs":

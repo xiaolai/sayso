@@ -48,9 +48,9 @@ func (e *Error) Error() string {
 		s += " (mode " + e.Mode + ")"
 	}
 	if e.Err != nil {
-		s += ": " + secret.Scrub(e.Err.Error())
+		s += ": " + e.Err.Error()
 	}
-	return s
+	return secret.Scrub(s) // whole, so a Mode set by a caller and a secret registered later are removed too
 }
 
 func (e *Error) Unwrap() error { return e.Err }
@@ -103,14 +103,15 @@ func classifyMode(mode string) *Error {
 	return e
 }
 
-// cleanMode makes a reported mode safe to print: scrubbed, printable, at most 64 characters.
+// cleanMode makes a reported mode safe to print: printable, scrubbed, at most 64 characters. Filtering comes first:
+// removing a character could join the pieces of a secret ("e\x00k_…") into one the scrubber recognises.
 func cleanMode(m string) string {
-	m = strings.Map(func(r rune) rune {
+	m = secret.Scrub(strings.Map(func(r rune) rune {
 		if unicode.IsPrint(r) {
 			return r
 		}
 		return -1
-	}, secret.Scrub(m))
+	}, m))
 	if r := []rune(m); len(r) > maxModeLen {
 		m = string(r[:maxModeLen])
 	}

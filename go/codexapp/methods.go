@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -34,58 +35,70 @@ func (s AuthStatus) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(s.String
 // GetAuthStatus calls getAuthStatus. Any token in the reply is registered with the scrubber before it is returned,
 // whatever was asked for.
 func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken bool) (AuthStatus, error) {
-	var raw struct {
-		AuthMethod         *string `json:"authMethod"`
-		AuthToken          *string `json:"authToken"`
-		RequiresOpenaiAuth *bool   `json:"requiresOpenaiAuth"`
-	}
+	var raw json.RawMessage
 	params := map[string]any{"includeToken": includeToken, "refreshToken": refreshToken}
 	if err := c.Call(ctx, "getAuthStatus", params, &raw); err != nil {
 		return AuthStatus{}, err
 	}
-	s := AuthStatus{RequiresOpenAIAuth: raw.RequiresOpenaiAuth == nil || *raw.RequiresOpenaiAuth}
-	if raw.AuthToken != nil {
-		secret.Register(*raw.AuthToken)
-		s.token = *raw.AuthToken
+	bad := codexError("Codex app-server sent an unexpected getAuthStatus result", nil)
+	token, err := field[string](raw, "authToken")
+	if err != nil {
+		return AuthStatus{}, bad
 	}
-	if raw.AuthMethod != nil {
-		s.Method = *raw.AuthMethod
+	secret.Register(token) // before anything else can fail or format it
+	method, err := field[string](raw, "authMethod")
+	if err != nil {
+		return AuthStatus{}, bad
 	}
-	return s, nil
+	requires, err := optional[bool](raw, "requiresOpenaiAuth")
+	if err != nil {
+		return AuthStatus{}, bad
+	}
+	return AuthStatus{Method: method, RequiresOpenAIAuth: requires == nil || *requires, token: token}, nil
 }
 
 // CredentialsStore calls config/read and returns the effective cli_auth_credentials_store; "" when absent, which
 // Codex treats as "file".
 func (c *Client) CredentialsStore(ctx context.Context) (string, error) {
-	var raw struct {
-		Config struct {
-			Store *string `json:"cli_auth_credentials_store"`
-		} `json:"config"`
-	}
+	var raw json.RawMessage
 	if err := c.Call(ctx, "config/read", map[string]any{"includeLayers": false}, &raw); err != nil {
 		return "", err
 	}
-	if raw.Config.Store == nil {
-		return "", nil
+	bad := codexError("Codex app-server sent an unexpected config/read result", nil)
+	config, err := field[json.RawMessage](raw, "config")
+	if err != nil {
+		return "", bad
 	}
-	return secret.Scrub(*raw.Config.Store), nil
+	if config == nil {
+		config = json.RawMessage("null")
+	}
+	store, err := field[string](config, "cli_auth_credentials_store")
+	if err != nil {
+		return "", bad
+	}
+	return secret.Scrub(store), nil
 }
 
 // PlanType returns account/read's account.planType, "" when absent. Only this field is decoded: the email and
 // account IDs never reach a Go value. account/read may reach the network.
 func (c *Client) PlanType(ctx context.Context) (string, error) {
-	var out struct {
-		Account *struct {
-			PlanType string `json:"planType"`
-		} `json:"account"`
-	}
-	if err := c.Call(ctx, "account/read", nil, &out); err != nil {
+	var raw json.RawMessage
+	if err := c.Call(ctx, "account/read", nil, &raw); err != nil {
 		return "", err
 	}
-	if out.Account == nil {
+	bad := codexError("Codex app-server sent an unexpected account/read result", nil)
+	account, err := field[json.RawMessage](raw, "account")
+	if err != nil {
+		return "", bad
+	}
+	if account == nil {
 		return "", nil
 	}
-	return secret.Scrub(out.Account.PlanType), nil
+	plan, err := field[string](account, "planType")
+	if err != nil {
+		return "", bad
+	}
+	return secret.Scrub(plan), nil
 }
 
 // Version extracts the Codex version from an initialize userAgent such as "codex_cli_rs/0.162.1 (Mac OS 15.0;

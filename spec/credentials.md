@@ -31,8 +31,11 @@ Apps map states to their own text; this package has no user-facing strings.
 In order: an explicit path from the caller; then `PATH`; then the GUI candidates, because an app launched from the
 Finder has no login-shell `PATH`: `/opt/homebrew/bin`, `/usr/local/bin`, then `~/.local/bin`, `~/.npm-global/bin`,
 `~/.volta/bin`, `~/.bun/bin`, `~/Library/pnpm`, then every `~/.nvm/versions/node/*/bin`, newest version first by
-numeric comparison. The result is absolute, a file, and executable. An explicit path that does not resolve is
-`no-codex`, never a fall-through to the list.
+numeric comparison (a link named like a version is not a version folder). The result is absolute, a regular file,
+and executable by this process (`access(X_OK)`: an execute bit for other users only does not stop the search). A
+path holding a NUL matches nothing. An explicit path that does not resolve is `no-codex`, never a fall-through to the
+list. Version components compare as integers; a non-numeric one is 0 and one too large for a 64-bit integer saturates
+(Go's `strconv.Atoi`).
 
 ## The app-server source (`AUTH-01`, `AUTH-03`)
 
@@ -40,18 +43,23 @@ numeric comparison. The result is absolute, a file, and executable. An explicit 
   answer for its OpenAI sign-in even when the user's configured provider needs none.
 - **Environment.** Inherited, minus these names compared case-insensitively: `OPENAI_API_KEY`, `CODEX_API_KEY`,
   `CODEX_ACCESS_TOKEN`, `CODEX_APP_SERVER_LOGIN_CLIENT_ID`, `CODEX_REFRESH_TOKEN_URL_OVERRIDE`,
-  `CODEX_REVOKE_TOKEN_URL_OVERRIDE`. `CODEX_HOME` is set when the caller configured one. `PATH` is the
+  `CODEX_REVOKE_TOKEN_URL_OVERRIDE`. `CODEX_HOME` is set when the caller configured one (an empty choice is no
+  choice: the inherited `CODEX_HOME` applies, to the child and the file alike). `PATH` is the
   executable's folder, then `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, then the inherited `PATH`, so an
   npm-installed `codex` (`#!/usr/bin/env node`) finds its interpreter. Nothing else is added.
 - **Lifetime.** Started on demand for one fetch or refresh, then closed; the token is cached in memory, not the
   child. The child starts in its own process group. Close: stdin closed, `SIGTERM` to the group, a 2 s grace,
-  `SIGKILL` to the group; close returns within grace + 1 s even when a descendant outside the group still holds the
-  pipes (our ends are closed and the readers abandoned).
-- **Messages.** Newline-delimited JSON-RPC. A line longer than 4 MiB, or a line that is not JSON, is `codex-error`.
-  Notifications are ignored. A server request (a message with both `id` and `method`, such as an approval) is
+  `SIGKILL` to the group unless the child was reaped and no other member of its group remains; close returns within
+  grace + 1 s even when a descendant outside the group still holds the pipes (our ends are closed and the readers
+  abandoned). A client released without a close ends its child the same way.
+- **Messages.** Newline-delimited JSON-RPC, UTF-8 without a byte-order mark. A line longer than 4 MiB, or a line
+  that is not JSON, is `codex-error`; so is a reply with neither `result` nor `error`, while `result: null` reads as
+  an empty object. Keys are matched exactly (`AUTHTOKEN` is not `authToken`), and a present field of the wrong type
+  is `codex-error`. Notifications are ignored. A server request (a message with both `id` and `method`, such as an approval) is
   answered with a JSON-RPC error and never acted on. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
-  Every call has a caller-supplied timeout; expiry is `codex-error`.
+  Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
+  child that stops reading cannot hold a call); expiry is `codex-error`.
 - **Sequence.**
   1. `initialize` with `clientInfo`; the version is the number after the first `/` in `userAgent`. A version below
      `0.162.0` is `codex-too-old`. No parsable version proceeds.
@@ -59,8 +67,9 @@ numeric comparison. The result is absolute, a file, and executable. An explicit 
   3. `getAuthStatus {includeToken: false, refreshToken: false}`. `requiresOpenaiAuth: false` is
      `provider-without-openai-auth`. `authMethod: null` is `not-signed-in`; `apikey` is `api-key`; anything but
      `chatgpt` is `unsupported-auth`.
-  4. Only for `chatgpt`: `getAuthStatus {includeToken: true, refreshToken: false}`. The method is checked again on
-     this reply; a changed method is classified as in step 3. A missing or empty `authToken` is `codex-error`.
+  4. Only for `chatgpt`: `getAuthStatus {includeToken: true, refreshToken: false}`. `requiresOpenaiAuth` and the
+     method are checked again on this reply, and on every refresh reply; a change is classified as in step 3. A
+     missing or empty `authToken` is `codex-error`.
 - **`-32601` on `getAuthStatus`** (Codex removed the deprecated method). Close the child, start a fresh one, and call
   `config/read {includeLayers: false}`; a running app-server keeps the store it started with, so the answer must
   come from a new child. Its `result.config.cli_auth_credentials_store` decides: `file` (or absent) uses the file
@@ -74,9 +83,14 @@ numeric comparison. The result is absolute, a file, and executable. An explicit 
 
 - **Location.** `$CODEX_HOME/auth.json` when `CODEX_HOME` resolves, after following links, to a folder the user
   owns, and, when the caller confines it (a sandboxed app confines it to the home folder; the fixtures run confined
-  to `$home`), inside that folder; otherwise a set `CODEX_HOME` is `codex-error`. Unset: `~/.codex/auth.json`.
+  to `$home`), inside that folder; otherwise a set `CODEX_HOME` is `codex-error`. Unset: `~/.codex/auth.json`. A
+  set `CODEX_HOME` is opened once, through the confining folder when there is one, and every read, the re-read
+  included, goes through that open folder, whose ownership is checked on its descriptor: replacing a folder of the
+  path afterwards cannot redirect a read.
 - **Read.** One `open` with `O_NOFOLLOW | O_NONBLOCK`; `fstat` on that descriptor must show a regular file owned by
-  the user and smaller than 64 KiB (65,536 bytes is refused); the bytes are read from that descriptor, bounded.
+  the user and smaller than 64 KiB (65,536 bytes is refused); the bytes are read from that descriptor, bounded. The
+  content is JSON in UTF-8 without a byte-order mark (UTF-16 and UTF-32 are not JSON here, as for Codex), with exact
+  keys.
   A link, a FIFO, a folder, a foreign owner or an oversize file is `codex-error`. A missing file is
   `no-sign-in-file`. When the file source was only the fallback for a missing executable, a missing or unusable
   file (and a failing `CODEX_HOME`) is `no-codex` instead: with no usable file either, the fix is to install Codex. The raw
@@ -91,21 +105,27 @@ numeric comparison. The result is absolute, a file, and executable. An explicit 
 
 ## Expiry and refresh (`AUTH-04`)
 
-- **Expiry** is the JWT `exp` claim, read without checking the signature. A token that is not a JWT, or has no
-  `exp`, has unknown expiry: it is `ready`, and the provider decides (a refusal leads to a refresh, below).
+- **Expiry** is the JWT `exp` claim (exactly `exp`), read without checking the signature. A token that is not a JWT,
+  or whose `exp` is absent or not a signed 64-bit integer (a fraction, an overflow), has unknown expiry: it is
+  `ready`, and the provider decides (a refusal leads to a refresh, below).
 - **Margin.** A token whose `exp - now` is below the caller's margin (recite: 10 min) is refreshed before use.
 - **Refresh** goes through `getAuthStatus {includeToken: true, refreshToken: true}` only, never through the file.
   It is single-flight. A refresh **succeeds when the token it returns is fresh** beyond the margin, changed or not;
   a still-stale token is a failure.
-- **After a refusal.** A request refused as `auth-expired` asks for a refresh with the refused token; if another
-  caller already replaced it, the replacement is returned without a second refresh.
+- **After a refusal.** A request refused as `auth-expired` asks for a refresh with the refused token. If another
+  caller already replaced it with a token that is still fresh, or a refresh completed while this caller waited (even
+  one that returned the same bearer), that token is returned without a second refresh. Until a refresh succeeds, or
+  the file holds another token, the refused token is not handed out again, though its expiry looks fresh.
 - **Failure** fails the current call as `expired` and spends no permanent budget: the next refresh is allowed after a
-  backoff of 60 s, doubling to at most 15 min, reset by a success. Within the backoff a call fails as `expired`
-  without starting Codex.
+  backoff of 60 s, doubling to at most 15 min, reset by a success, counted from when the failure completed. Within
+  the backoff a call fails as `expired` without starting Codex. A refresh the caller cancelled is not a failure and
+  spends no backoff.
 
 ## Hygiene (`AUTH-05`)
 
 Every token and `ek_` secret is registered with the scrubber before use. The scrubber replaces registered secrets
 (longest first) and anything shaped like a JWT (`eyJ…​.…​.…`) or an `ek_` secret with `<redacted>`. Every string an
-error or a log line carries from Codex, a file or the network passes through it. Token values are never part of a
-type's printed or encoded form.
+error or a log line carries from Codex, a file or the network passes through it, and an error's text is scrubbed
+whole when formatted. A reported mode is filtered to printable characters before it is scrubbed, because removing
+a character can join a secret's pieces. Token values and the inherited environment are never part of a type's
+printed, reflected or encoded form.
