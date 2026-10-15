@@ -4,7 +4,6 @@ package secret
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -13,9 +12,6 @@ import (
 
 // Redacted replaces every secret Scrub removes.
 const Redacted = "<redacted>"
-
-// patterns match bearer JWTs and ephemeral client secrets whatever their source.
-var patterns = regexp.MustCompile(`eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+`)
 
 // registry holds every secret the process has seen, so opaque formats that no pattern matches are removed too. It
 // only grows: a secret seen once stays secret.
@@ -43,26 +39,18 @@ func Register(s string) {
 }
 
 // Scrub removes every registered secret and every secret-shaped pattern from s. Use it on any text that may reach a
-// user, a log or an artifact, such as error messages. Every match is found in the original text and the union of
-// the matched spans is replaced, overlapping or touching spans as one, so a registered secret inside a longer
-// secret-shaped value never leaves the rest of that value behind.
+// user, a log or an artifact, such as error messages. Every match is found in the original text, at every starting
+// position, and the union of the matched spans is replaced, overlapping or touching spans as one: a registered secret
+// inside a longer secret-shaped value never leaves the rest of that value behind, and a JWT starting inside an ek_
+// match ("ek_eyJa.b.c") is removed whole. The scan is linear in the text and in each secret.
 func Scrub(s string) string {
 	var spans [][2]int
 	registry.mu.RLock()
 	for _, sec := range registry.ordered {
-		for i := 0; i+len(sec) <= len(s); {
-			j := strings.Index(s[i:], sec)
-			if j < 0 {
-				break
-			}
-			spans = append(spans, [2]int{i + j, i + j + len(sec)})
-			i += j + 1 // overlapping occurrences too
-		}
+		spans = append(spans, occurrences(sec, s)...)
 	}
 	registry.mu.RUnlock()
-	for _, m := range patterns.FindAllStringIndex(s, -1) {
-		spans = append(spans, [2]int{m[0], m[1]})
-	}
+	spans = append(spans, patternSpans(s)...)
 	if len(spans) == 0 {
 		return s
 	}
@@ -82,10 +70,95 @@ func Scrub(s string) string {
 	return b.String()
 }
 
-// Token is a sign-in bearer with its metadata. The bearer is unexported and reachable only through Bearer, so no
-// formatting or encoding path can print it.
+// occurrences returns every occurrence of needle in s, overlapping ones included, in O(len(s) + len(needle))
+// (Knuth-Morris-Pratt): repeating strings.Index after each match is quadratic for a long, repetitive secret.
+func occurrences(needle, s string) [][2]int {
+	m := len(needle)
+	if m == 0 || m > len(s) {
+		return nil
+	}
+	fail := make([]int, m) // fail[q]: the longest proper border of needle[:q+1]
+	for q, k := 1, 0; q < m; q++ {
+		for k > 0 && needle[q] != needle[k] {
+			k = fail[k-1]
+		}
+		if needle[q] == needle[k] {
+			k++
+		}
+		fail[q] = k
+	}
+	var found [][2]int
+	for i, k := 0, 0; i < len(s); i++ {
+		for k > 0 && s[i] != needle[k] {
+			k = fail[k-1]
+		}
+		if s[i] == needle[k] {
+			k++
+		}
+		if k == m {
+			found = append(found, [2]int{i + 1 - m, i + 1})
+			k = fail[k-1]
+		}
+	}
+	return found
+}
+
+// patternSpans returns the matches of `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+` starting at every position. [\w-]
+// excludes ".", so each run is maximal and a match is decided in constant time from the precomputed run ends. The
+// Swift implementation runs the same scan.
+func patternSpans(s string) [][2]int {
+	isWord := func(c byte) bool {
+		return c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_' || c == '-'
+	}
+	n := len(s)
+	runEnd := make([]int, n+1) // runEnd[i]: the end of the word run starting at i
+	runEnd[n] = n
+	for i := n - 1; i >= 0; i-- {
+		if isWord(s[i]) {
+			runEnd[i] = runEnd[i+1]
+		} else {
+			runEnd[i] = i
+		}
+	}
+	var spans [][2]int
+	for i := 0; i+3 <= n; i++ {
+		switch s[i : i+3] {
+		case "eyJ": // then three dot-separated non-empty runs
+			a := runEnd[i+3]
+			if a > i+3 && a < n && s[a] == '.' {
+				if b := runEnd[a+1]; b > a+1 && b < n && s[b] == '.' {
+					if c := runEnd[b+1]; c > b+1 {
+						spans = append(spans, [2]int{i, c})
+					}
+				}
+			}
+		case "ek_":
+			if e := runEnd[i+3]; e > i+3 {
+				spans = append(spans, [2]int{i, e})
+			}
+		}
+	}
+	return spans
+}
+
+// sealed holds a secret behind a pointer. fmt prints a nested pointer as an address, so a struct that contains a
+// Token or ClientSecret in an unexported field, which fmt formats by reflection without calling its methods, still
+// cannot print the secret.
+type sealed struct{ value string }
+
+func seal(s string) *sealed { return &sealed{value: s} }
+
+func (p *sealed) get() string {
+	if p == nil {
+		return ""
+	}
+	return p.value
+}
+
+// Token is a sign-in bearer with its metadata. The bearer is sealed and reachable only through Bearer, so no
+// formatting or encoding path can print it. Compare tokens by Bearer, not with ==.
 type Token struct {
-	bearer string
+	bearer *sealed
 	// Expires is the JWT expiry; the zero time means unknown (a token that is not a JWT, or has no exp).
 	Expires time.Time
 	Plan    string
@@ -95,14 +168,14 @@ type Token struct {
 // NewToken returns a Token and registers its bearer with the scrubber.
 func NewToken(bearer string, expires time.Time, plan, source string) Token {
 	Register(bearer)
-	return Token{bearer: bearer, Expires: expires, Plan: plan, Source: source}
+	return Token{bearer: seal(bearer), Expires: expires, Plan: plan, Source: source}
 }
 
 // Bearer returns the secret. Call it only to build an Authorization header.
-func (t Token) Bearer() string { return t.bearer }
+func (t Token) Bearer() string { return t.bearer.get() }
 
 // IsZero reports whether t holds no bearer.
-func (t Token) IsZero() bool { return t.bearer == "" }
+func (t Token) IsZero() bool { return t.bearer.get() == "" }
 
 func (Token) String() string               { return Redacted }
 func (Token) GoString() string             { return Redacted }
@@ -112,18 +185,18 @@ func (Token) MarshalText() ([]byte, error) { return []byte(Redacted), nil }
 
 // ClientSecret is a minted ephemeral `ek_` realtime secret.
 type ClientSecret struct {
-	value     string
+	value     *sealed
 	ExpiresAt time.Time
 }
 
 // NewClientSecret returns a ClientSecret and registers it with the scrubber.
 func NewClientSecret(value string, expiresAt time.Time) ClientSecret {
 	Register(value)
-	return ClientSecret{value: value, ExpiresAt: expiresAt}
+	return ClientSecret{value: seal(value), ExpiresAt: expiresAt}
 }
 
 // Bearer returns the secret. Call it only to build an Authorization header.
-func (s ClientSecret) Bearer() string { return s.value }
+func (s ClientSecret) Bearer() string { return s.value.get() }
 
 func (ClientSecret) String() string               { return Redacted }
 func (ClientSecret) GoString() string             { return Redacted }

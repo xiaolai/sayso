@@ -17,26 +17,38 @@ public enum ErrorClass: String, Sendable, Equatable, CaseIterable {
     case `internal`
 }
 
+/// A string scrubbed whenever it is stored, so neither a field set after construction nor reflection (`dump`,
+/// `Mirror`) can reach an unscrubbed value.
+@propertyWrapper
+public struct Scrubbed: Sendable, Equatable {
+    private var value: String
+    public init(wrappedValue: String) { value = Secret.scrub(wrappedValue) }
+    public var wrappedValue: String {
+        get { value }
+        set { value = Secret.scrub(newValue) }
+    }
+}
+
 /// A classified failure. `type`, `code`, `param` and `message` come from the provider's error body or event; every
-/// string is scrubbed when the error is built, and ``description`` scrubs again, so a field set afterwards cannot
-/// leak a secret either. No header or bearer is ever stored. `message` is for diagnostics, never for display.
+/// string is scrubbed whenever it is stored, and ``description`` scrubs again. No header or bearer is ever stored.
+/// `message` is for diagnostics, never for display.
 public struct RealtimeError: Error, Sendable, Equatable, CustomStringConvertible {
     public var errorClass: ErrorClass
     /// The HTTP status; 0 if none.
     public var status: Int
-    public var type: String
+    @Scrubbed public var type: String
     /// The provider error code; a number is kept as its decimal string.
-    public var code: String
-    public var param: String
-    public var message: String
+    @Scrubbed public var code: String
+    @Scrubbed public var param: String
+    @Scrubbed public var message: String
     /// `x-request-id`.
-    public var requestID: String
+    @Scrubbed public var requestID: String
     /// The call a route-denied failure is tracked against; the caller chooses the names.
-    public var route: String
+    @Scrubbed public var route: String
     /// Set for a realtime error the session cannot continue after (spec/session.md).
     public var fatal: Bool
     /// The underlying cause, scrubbed text only.
-    public var cause: String
+    @Scrubbed public var cause: String
 
     public init(
         _ errorClass: ErrorClass, status: Int = 0, type: String = "", code: String = "", param: String = "",
@@ -44,14 +56,14 @@ public struct RealtimeError: Error, Sendable, Equatable, CustomStringConvertible
     ) {
         self.errorClass = errorClass
         self.status = status
-        self.type = Secret.scrub(type)
-        self.code = Secret.scrub(code)
-        self.param = Secret.scrub(param)
-        self.message = Secret.scrub(message)
-        self.requestID = Secret.scrub(requestID)
-        self.route = Secret.scrub(route)
+        self.type = type
+        self.code = code
+        self.param = param
+        self.message = message
+        self.requestID = requestID
+        self.route = route
         self.fatal = fatal
-        self.cause = Secret.scrub(cause)
+        self.cause = cause
     }
 
     public var description: String {
