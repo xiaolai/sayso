@@ -1,5 +1,5 @@
 {
- "count": 665,
+ "count": 668,
  "fixtures": [
   {
    "id": "app-ready",
@@ -350,6 +350,12 @@
    "requires": []
   },
   {
+   "id": "app-reply-duplicate-key",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
    "id": "auth-file-missing",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
@@ -573,6 +579,18 @@
   },
   {
    "id": "auth-file-utf8-bom",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-duplicate-key",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-invalid-utf8",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []

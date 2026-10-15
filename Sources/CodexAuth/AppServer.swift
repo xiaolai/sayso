@@ -584,7 +584,9 @@ final class AppServerCore: @unchecked Sendable {
 /// UTF-16 and UTF-32, whose text always holds NUL bytes, and skips a leading UTF-8 byte-order mark; Go accepts
 /// neither, and no JSON text holds a raw NUL.
 func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
-    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF])
+    // The strict grammar also refuses duplicate keys and invalid UTF-8, which JSONSerialization and Go's
+    // encoding/json each settle their own way; Codex's serde refuses both.
+    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF]) && WireJSON.isValid(Data(bytes))
 }
 
 /// A JSON object, with null read as an empty one.

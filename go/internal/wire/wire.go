@@ -19,6 +19,13 @@ var ErrInvalid = errors.New("wire: invalid JSON")
 // Node is one JSON value: its exact bytes, as received.
 type Node struct{ raw jsontext.Value }
 
+// Valid reports whether data is one strict JSON value. Codex's own replies and files are read through it too, so a
+// duplicate key or invalid UTF-8 is refused in Go as in Swift (Codex's serde refuses both).
+func Valid(data []byte) bool {
+	_, err := Parse(data)
+	return err == nil
+}
+
 // Parse validates data as one strict JSON value, whitespace around it allowed, and returns its root.
 func Parse(data []byte) (Node, error) {
 	dec := jsontext.NewDecoder(bytes.NewReader(data))

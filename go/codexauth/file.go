@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
+
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -195,7 +197,7 @@ func readOnce(loc authLocation) (tok secret.Token, e *Error, parsed bool) {
 		decodeMu.Unlock()
 	}()
 	var doc map[string]wipedRaw
-	if json.Unmarshal(buf[:n], &doc) != nil || doc == nil {
+	if !wire.Valid(buf[:n]) || json.Unmarshal(buf[:n], &doc) != nil || doc == nil {
 		return secret.Token{}, nil, false
 	}
 	tok, e = decodeAuthFile(doc)

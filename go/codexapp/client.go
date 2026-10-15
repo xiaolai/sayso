@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
+
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -231,7 +233,7 @@ func (c *Client) readLoop(r io.Reader) {
 			continue
 		}
 		var m wireMsg
-		if err := json.Unmarshal(line, &m); err != nil {
+		if !wire.Valid(line) || json.Unmarshal(line, &m) != nil {
 			// The line is never quoted: it may carry a credential.
 			failure = codexError("Codex app-server sent malformed JSON", nil)
 			break

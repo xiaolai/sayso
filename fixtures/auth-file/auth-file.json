@@ -924,5 +924,48 @@
    "state": "codex-error"
   },
   "note": "A byte-order mark is not JSON."
+ },
+ {
+  "id": "auth-file-duplicate-key",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "hex": "7b22617574685f6d6f6465223a226170696b6579222c224f50454e41495f4150495f4b4559223a2263616e6172792d6475702d6b6579222c22617574685f6d6f6465223a2263686174677074222c22746f6b656e73223a7b226163636573735f746f6b656e223a2263616e6172792d6475702d746f6b656e227d7d"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-dup-key",
+    "canary-dup-token"
+   ]
+  },
+  "note": "A duplicate key is refused, as Codex's serde refuses it; Go's encoding/json kept the last value and JSONSerialization the first, so the two read different sign-ins."
+ },
+ {
+  "id": "auth-file-invalid-utf8",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "hex": "7b22746f6b656e73223a7b226163636573735f746f6b656e223a2263616e6172792d6261642dff2d75746638227d7d"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-bad"
+   ]
+  },
+  "note": "Invalid UTF-8 in a string is refused, as Codex's serde refuses it; Go's encoding/json replaced it and read a token."
  }
 ]

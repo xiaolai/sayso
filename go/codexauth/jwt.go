@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
+
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -27,7 +29,7 @@ func jwtExpiry(tok string) time.Time {
 	// Exact key: a struct field would also match "EXP", which the Swift implementation does not read.
 	var claims map[string]json.RawMessage
 	var exp int64
-	if json.Unmarshal(payload, &claims) != nil {
+	if !wire.Valid(payload) || json.Unmarshal(payload, &claims) != nil {
 		return time.Time{}
 	}
 	raw, ok := claims["exp"]

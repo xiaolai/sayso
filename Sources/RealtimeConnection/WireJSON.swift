@@ -5,12 +5,15 @@ import Foundation
 /// and at most 10,000 levels of nesting; member names match exactly; null is absence. `JSONSerialization` and Go's
 /// `encoding/json` disagree on each of these (case-folded names, merged or dropped duplicates, replaced invalid
 /// UTF-8, rewritten numbers), which is why both implementations read the provider's JSON through this one grammar.
-enum WireJSON {
+package enum WireJSON {
     /// Any document or field the rules refuse.
     struct Invalid: Error {}
 
     /// Go's `jsontext` limit: 10,000 levels are accepted, 10,001 are not.
     static let maximumDepth = 10_000
+
+    /// Whether `data` is one strict JSON value. CodexAuth reads Codex's replies and files through it.
+    package static func isValid(_ data: Data) -> Bool { (try? parse(data)) != nil }
 
     /// Validates `data` as one strict JSON value, whitespace around it allowed, and returns its root.
     static func parse(_ data: Data) throws -> Node {
