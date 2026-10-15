@@ -13,7 +13,20 @@ package enum WireJSON {
     static let maximumDepth = 10_000
 
     /// Whether `data` is one strict JSON value. CodexAuth reads Codex's replies and files through it.
-    package static func isValid(_ data: Data) -> Bool { (try? parse(data)) != nil }
+    /// The bytes it validates are wiped afterwards: auth.json and token replies hold credentials (AUTH-02).
+    package static func isValid(_ data: Data) -> Bool {
+        var bytes = Array(data)
+        // The validator shares the buffer; it is released before the wipe, or the wipe would copy the buffer first
+        // and clear only the copy.
+        let valid: Bool = {
+            var v = Validator(bytes)
+            return (try? v.document()) != nil
+        }()
+        bytes.withUnsafeMutableBytes { raw in
+            if let base = raw.baseAddress { _ = memset_s(base, raw.count, 0, raw.count) }
+        }
+        return valid
+    }
 
     /// Validates `data` as one strict JSON value, whitespace around it allowed, and returns its root.
     static func parse(_ data: Data) throws -> Node {

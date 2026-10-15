@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,5 +51,33 @@ func TestFieldRules(t *testing.T) {
 	}
 	if _, err := Parse([]byte(strings.Repeat("[", 10001) + strings.Repeat("]", 10001))); err == nil {
 		t.Error("10,001 levels accepted")
+	}
+}
+
+// Valid reads the document in place: a credential document must not be copied into memory nobody wipes (AUTH-02).
+func TestValidDoesNotCopyTheDocument(t *testing.T) {
+	doc := []byte(`{"tokens":{"access_token":"` + strings.Repeat("s", 60000) + `"}}`)
+	Valid(doc) // warm the decoder pool
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range 10 {
+		if !Valid(doc) {
+			t.Fatal("a valid document was refused")
+		}
+	}
+	runtime.ReadMemStats(&after)
+	if got := after.TotalAlloc - before.TotalAlloc; got > uint64(len(doc)) {
+		t.Errorf("10 validations allocated %d bytes for a %d-byte document", got, len(doc))
+	}
+}
+
+// Valid and Parse apply the same rules.
+func TestValidAgreesWithParse(t *testing.T) {
+	for _, in := range []string{`{}`, ` {"a":1} `, `{"a":1,"a":2}`, "{\"a\":\"\xff\"}", `{"a":1} {}`, `[`, `"x"`, `1e999`, `{"a":"é","á":1}`} {
+		_, err := Parse([]byte(in))
+		if Valid([]byte(in)) != (err == nil) {
+			t.Errorf("%q: Valid %v, Parse err %v", in, Valid([]byte(in)), err)
+		}
 	}
 }

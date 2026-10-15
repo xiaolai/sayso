@@ -23,9 +23,11 @@ type Node struct{ raw jsontext.Value }
 
 // Valid reports whether data is one strict JSON value. Codex's own replies and files are read through it too, so a
 // duplicate key or invalid UTF-8 is refused in Go as in Swift (Codex's serde refuses both).
+//
+// It reads data in place: auth.json and token replies hold credentials, and a validating copy could not be wiped
+// (AUTH-02). The rules are Parse's: jsontext's defaults, one value, nothing after it.
 func Valid(data []byte) bool {
-	_, err := Parse(data)
-	return err == nil
+	return jsontext.Value(data).IsValid()
 }
 
 // Parse validates data as one strict JSON value, whitespace around it allowed, and returns its root.
