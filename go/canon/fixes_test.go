@@ -126,3 +126,40 @@ func TestRoundTwoCanonFixes(t *testing.T) {
 		}
 	}
 }
+
+// Audit round 3: domains with a capital or one letter before a lowercase label, "X O" as a code, unified
+// apostrophes, any whitespace before a saint's name, normalised compounds, guided compounds beyond the bound, and
+// year pairs that never continue a number.
+func TestRoundThree(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"Example2.com", "example two dot com", true},
+		{"ETC.com", "etc dot com", true},
+		{"X.com", "x dot com", true},
+		{"Mr.Smith", "mister smith", true},
+		{"XO 7", "X O 7", true},
+		{"four point oh", "4.0", true},
+		{"St.\nLouis", "saint louis", true},
+		{"Drʼs office", "doctors office", true},
+		{"e－mail", "email", true},
+		{"café-au-lait", "caféaulait", true},
+		{"e-mail long-term well-known part-time full-time", "email long term well known part time full time", true},
+		{"e-mail long-term well-known part-time full-time", "email longterm wellknown parttime fulltime", true},
+		{"e-mail long-term well-known part-time full-time", "e mail long term well known part time full time", true},
+		{"in 2010, 20 people", "in twenty ten, 20 people", true},
+		{"2010, 20 people; nineteen ninety nine", "twenty ten, 20 people; 1999", true},
+		{"2010, 20 people", "1020 people", false},
+	} {
+		if got := Equivalent(c.a, c.b); got != c.want {
+			t.Errorf("Equivalent(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+		for _, s := range []string{c.a, c.b} {
+			once := Canon(s)
+			if twice := Canon(strings.Join(once, " ")); !slices.Equal(once, twice) {
+				t.Errorf("Canon(%q) = %q, then %q", s, once, twice)
+			}
+		}
+	}
+}

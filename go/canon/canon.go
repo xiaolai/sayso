@@ -19,7 +19,7 @@ import (
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
 // to Canon's output: cache keys and verification provenance record it.
-const CanonVersion = 11 // 11: lowercase domains first, ".5", numbers after joined letters, Han beyond the cardinal range
+const CanonVersion = 12 // 12: domains with a capital or one letter before a lowercase label, "X O" a code, apostrophes unified, "St.\nLouis"
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -36,10 +36,10 @@ func Canon(s string) []string { return canon(s, false) }
 // is the cardinal).
 func Equivalent(a, b string) bool {
 	var tas, tbs [][]string
-	for _, v := range hyphenVariants(a) {
+	for _, v := range hyphenVariants(a, b) {
 		tas = append(tas, canon(v, false))
 	}
-	for _, v := range hyphenVariants(b) {
+	for _, v := range hyphenVariants(b, a) {
 		tbs = append(tbs, canon(v, false))
 	}
 	for _, ta := range tas {
@@ -56,16 +56,18 @@ func Equivalent(a, b string) bool {
 }
 
 // maxCompounds bounds the per-compound alternatives: 2^4 variants a side. Beyond it every compound is
-// joined, or every one split.
+// joined, or every one split, or each joined exactly when the other side has its joined word.
 const maxCompounds = 4
 
 // hyphenVariants is s with each hyphen between two letters kept or removed, every combination; the
 // hyphens of numbers ("3-4", "COVID-19") are never removed, as Canon reads them as separators.
-func hyphenVariants(s string) []string {
-	rs := []rune(s)
+func hyphenVariants(s, other string) []string {
+	// Compounds are found in the text Canon reads: a full-width hyphen ("e－mail") is a hyphen after NFKC, and a
+	// decomposed accent composes ("café-au-lait"). A mark that does not compose still ends the letter run before it.
+	rs := []rune(width.Fold.String(norm.NFKC.String(strings.ToValidUTF8(s, " "))))
 	var at []int
 	for i := 1; i+1 < len(rs); i++ {
-		if isHyphen(rs[i]) && unicode.IsLetter(rs[i-1]) && unicode.IsLetter(rs[i+1]) {
+		if isHyphen(rs[i]) && (unicode.IsLetter(rs[i-1]) || unicode.IsMark(rs[i-1])) && unicode.IsLetter(rs[i+1]) {
 			at = append(at, i)
 		}
 	}
@@ -85,10 +87,45 @@ func hyphenVariants(s string) []string {
 		return b.String()
 	}
 	if len(at) == 0 {
-		return []string{s}
+		return []string{string(rs)}
 	}
 	if len(at) > maxCompounds {
-		return []string{s, join(func(int) bool { return true })}
+		// Guided: a compound is joined when its joined word is a token of the other side, split or joined, which
+		// decides "e-mail long-term ..." against "email long term ..." without trying every combination.
+		words := map[string]bool{}
+		for _, j := range []bool{false, true} {
+			for _, t := range canon(other, j) {
+				words[t] = true
+			}
+		}
+		guided := make([]bool, len(at))
+		for k := 0; k < len(at); {
+			// A chain of compounds ("well-known-ish") is one word, joined or split as a whole.
+			m := k
+			for m+1 < len(at) && strings.IndexFunc(string(rs[at[m]+1:at[m+1]]), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsMark(r) }) < 0 {
+				m++
+			}
+			start, end := at[k], at[m]
+			for start > 0 && (unicode.IsLetter(rs[start-1]) || unicode.IsMark(rs[start-1])) {
+				start--
+			}
+			for end+1 < len(rs) && (unicode.IsLetter(rs[end+1]) || unicode.IsMark(rs[end+1])) {
+				end++
+			}
+			joined := strings.Map(func(r rune) rune {
+				if isHyphen(r) {
+					return -1
+				}
+				return r
+			}, string(rs[start:end+1]))
+			if t := canon(joined, false); len(t) == 1 && words[t[0]] {
+				for x := k; x <= m; x++ {
+					guided[x] = true
+				}
+			}
+			k = m + 1
+		}
+		return []string{string(rs), join(func(int) bool { return true }), join(func(k int) bool { return guided[k] })}
 	}
 	out := make([]string, 0, 1<<len(at))
 	for m := 0; m < 1<<len(at); m++ {
@@ -116,9 +153,16 @@ func canon(s string, joinHyphens bool) []string {
 	s = width.Fold.String(norm.NFKC.String(s))
 	// NFKC keeps U+2212; it is the same sign as "-" ("−7" is "minus seven").
 	s = strings.ReplaceAll(s, "\u2212", "-")
-	// A lowercase domain ("example2.com", "x.com", "etc.com") is read before the number pass
-	// spaces a digit off its dot and before an abbreviation swallows one; a capital waits, so
-	// "Mr.Smith" still expands.
+	// One apostrophe, so "Drʼs" is "Dr's" to the abbreviation pass, which reads U+02BC as a letter otherwise.
+	s = strings.Map(func(r rune) rune {
+		if isApostrophe(r) {
+			return '\''
+		}
+		return r
+	}, s)
+	// A domain ending in a lowercase label ("example2.com", "Example2.com", "X.com", "ETC.com") is read
+	// before the number pass spaces a digit off its dot and before an abbreviation swallows one; a
+	// capital on the right waits, so "Mr.Smith" still expands.
 	s = lowerDomainDots(s)
 	// Numbers first: digits glued to letters ("Mr00") must not hide a word
 	// boundary from the abbreviation pass, or a second pass would differ.
@@ -165,6 +209,14 @@ func spokenZeros(toks []string) []string {
 		j := i
 		for j < len(out) && zero(out[j]) {
 			j++
+		}
+		// Beside a single letter, O is a letter of a spelled code ("X O 7" = "XO 7"), not a zero.
+		letter := func(k int) bool {
+			return k >= 0 && k < len(out) && len(out[k]) == 1 && out[k][0] >= 'a' && out[k][0] <= 'z'
+		}
+		if letter(i-1) || letter(j) {
+			i = j
+			continue
 		}
 		if i > 0 && (isNumberWord(out[i-1]) || out[i-1] == "point") || j < len(out) && isNumberWord(out[j]) {
 			for k := i; k < j; k++ {
@@ -229,9 +281,9 @@ func isHyphen(r rune) bool {
 // and initials ("U.S.") do not match.
 var domainDot = regexp.MustCompile(`([\p{L}\p{N}]{2})\.(\p{L}{2})`)
 
-// lowerDomainDots reads "dot" for a dot between a run of lowercase letters or digits (one letter is a
-// label: "x.com") and a run of two or more lowercase letters. A capital anywhere in either run waits
-// for domainDots, after the abbreviations; a run of digits on the right is a decimal.
+// lowerDomainDots reads "dot" for a dot between a run of letters or digits (one letter is a label:
+// "x.com", "X.com") and a run of two or more lowercase letters. A capital on the right ("Mr.Smith",
+// "end.Next") waits for domainDots, after the abbreviations; a run of digits on the right is a decimal.
 func lowerDomainDots(s string) string {
 	rs := []rune(s)
 	run := func(i, step int) (n int, lower bool) {
@@ -245,13 +297,13 @@ func lowerDomainDots(s string) string {
 	var b strings.Builder
 	for i, r := range rs {
 		if r == '.' && i > 0 {
-			left, ll := run(i-1, -1)
+			left, _ := run(i-1, -1)
 			right, rl := run(i+1, 1)
 			letters := right >= 2
 			for k := i + 1; k <= i+right && letters; k++ {
 				letters = unicode.IsLetter(rs[k])
 			}
-			if left >= 1 && ll && rl && letters {
+			if left >= 1 && rl && letters {
 				b.WriteString(" dot ")
 				continue
 			}
@@ -323,7 +375,7 @@ func expandAbbreviations(s string) string {
 		exp := abbreviations[word]
 		if word == "st" {
 			exp = "street"
-			if r, _ := utf8.DecodeRuneInString(strings.TrimLeft(s[loc[1]:], " \t")); unicode.IsUpper(r) {
+			if r, _ := utf8.DecodeRuneInString(strings.TrimLeftFunc(s[loc[1]:], unicode.IsSpace)); unicode.IsUpper(r) {
 				exp = "saint"
 			}
 		}
@@ -510,7 +562,9 @@ func twoDigit(toks []string, i int) (int, int) {
 func yearPairsToCardinal(toks []string) []string {
 	var out []string
 	for i := 0; i < len(toks); {
-		if v, n := yearPairAt(toks, i); n > 0 {
+		// A pair starts a number: "two thousand ten twenty" ("2010, 20" once the comma is gone) holds no
+		// pair "ten twenty".
+		if v, n := yearPairAt(toks, i); n > 0 && (i == 0 || !isNumberWord(toks[i-1]) && !isScale(toks[i-1])) {
 			out = append(out, cardinal(uint64(v))...)
 			i += n
 			continue
