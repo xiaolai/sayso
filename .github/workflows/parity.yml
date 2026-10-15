@@ -1,13 +1,9 @@
 name: parity
-on:
-  workflow_run:
-    workflows: [go, swift]
-    types: [completed]
-  push:
-    paths: [fixtures/**, tools/**]
+# The one entry point. Both suites run as called workflows in this run, so the parity job reads their artifacts from
+# the same run and never checks out or executes code from a different event's context.
+on: [push, pull_request]
 permissions:
   contents: read
-  actions: read
 jobs:
   tools:
     runs-on: ubuntu-latest
@@ -15,17 +11,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 -I tools/manifest.py --check
       - run: python3 -I -m unittest discover -s tools -p 'test_*.py'
+  go:
+    uses: ./.github/workflows/go.yml
+  swift:
+    uses: ./.github/workflows/swift.yml
   parity:
-    if: github.event_name == 'workflow_run'
+    needs: [tools, go, swift]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/download-artifact@v4
         with:
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: results
       - name: Both suites' results are required
         run: test -f results/results-go/results-go.json && test -f results/results-swift/results-swift.json
