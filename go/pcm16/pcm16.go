@@ -61,13 +61,14 @@ func WAV(pcm []byte, rate int) ([]byte, error) {
 	if rate < 1 || rate > MaxRate || int64(len(pcm)) > MaxData {
 		return nil, ErrWAVRange
 	}
-	out := header(len(pcm), rate)
-	return append(out, pcm...), nil
+	h := header(len(pcm), rate)
+	out := make([]byte, 0, HeaderSize+len(pcm))
+	return append(append(out, h[:]...), pcm...), nil
 }
 
 // header is the canonical header for n bytes of PCM at rate, both already in range.
-func header(n, rate int) []byte {
-	out := make([]byte, HeaderSize, HeaderSize+n)
+func header(n, rate int) [HeaderSize]byte {
+	var out [HeaderSize]byte
 	copy(out[0:], "RIFF")
 	binary.LittleEndian.PutUint32(out[4:], uint32(36+n))
 	copy(out[8:], "WAVEfmt ")
@@ -90,7 +91,8 @@ func ValidWAV(wav []byte, maxData int) bool {
 	if n <= 0 || n%2 != 0 || n > maxData || int64(n) > MaxData {
 		return false
 	}
-	return string(wav[:HeaderSize]) == string(header(n, SampleRate))
+	h := header(n, SampleRate)
+	return string(wav[:HeaderSize]) == string(h[:])
 }
 
 // Plausible reports whether pcm can be a reading of script: at least one second per 25 letters of the script, and
@@ -103,7 +105,8 @@ func Plausible(pcm []byte, script string) bool {
 		}
 	}
 	// bytes / (2 × SampleRate) ≥ letters / 25, in integers.
-	if len(pcm)*25 < letters*2*SampleRate {
+	// In int64: on a 32-bit platform letters × 48,000 overflows int from 44,740 letters.
+	if int64(len(pcm))*25 < int64(letters)*2*SampleRate {
 		return false
 	}
 	for i := 0; i+1 < len(pcm); i += 2 {
