@@ -128,13 +128,22 @@ public final class RealtimeSession: Sendable {
         try await inbox.take()
     }
 
-    /// Writes one client event, an encoded JSON object, as a text message.
+    /// Writes one client event, an encoded JSON object, as a text message. A task cancelled before the write throws
+    /// `CancellationError` and sends nothing. Cancelling a write in flight ends the session, as in Go: a message
+    /// partly handed to the transport cannot be withdrawn, and a stalled write must not hold the caller.
     public func send(_ event: Data) async throws {
         if inbox.isClosing { throw Closed() }
+        try Task.checkCancellation()
+        let task = self.task
         do {
-            try await task.send(.string(String(decoding: event, as: UTF8.self)))
+            try await withTaskCancellationHandler {
+                try await task.send(.string(String(decoding: event, as: UTF8.self)))
+            } onCancel: {
+                task.cancel(with: .goingAway, reason: nil)
+            }
         } catch {
             if inbox.isClosing { throw Closed() }
+            if Task.isCancelled { throw CancellationError() }
             throw transportError(error, "realtime send")
         }
     }
@@ -160,11 +169,19 @@ public final class RealtimeSession: Sendable {
         task.cancel(with: .normalClosure, reason: nil)
         let reader = self.reader
         let task = self.task
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .nanoseconds(Int64(Deadline.nanoseconds(Self.closeGrace) ?? 0)))
         let dropped = Task {
-            try? await Task.sleep(nanoseconds: Deadline.nanoseconds(Self.closeGrace) ?? 0)
+            try? await Task.sleep(until: deadline, clock: clock)
             if !Task.isCancelled { task.cancel() }
         }
         await reader.value
+        // The reader can end before the transport does (a buffered message releases it at once), so the close
+        // handshake keeps its grace until the task completes, then is dropped.
+        while task.state != .completed, clock.now < deadline {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        if task.state != .completed { task.cancel() }
         dropped.cancel()
     }
 
@@ -263,7 +280,7 @@ private final class Inbox: @unchecked Sendable {
         lock.lock()
         closing = true
         buffered = nil
-        if terminal == nil { terminal = RealtimeSession.Closed() }
+        terminal = RealtimeSession.Closed()  // after close every call gets Closed, an earlier failure included, as in Go
         let error = terminal!
         let pending = order.compactMap { waiters.removeValue(forKey: $0) }
         order = []

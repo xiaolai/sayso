@@ -44,24 +44,35 @@ public enum Secret {
         return String(decoding: out, as: UTF8.self)
     }
 
-    /// Every occurrence of `needle` in `haystack`, overlapping ones included.
+    /// Every occurrence of `needle` in `haystack`, overlapping ones included, in O(n + m) (Knuth-Morris-Pratt), as in
+    /// Go: a naive scan is quadratic for a long, repetitive secret against a long, repetitive text.
     static func occurrences(of needle: [UInt8], in haystack: [UInt8]) -> [Range<Int>] {
-        guard !needle.isEmpty, needle.count <= haystack.count else { return [] }
+        let m = needle.count
+        guard m > 0, m <= haystack.count else { return [] }
+        var fail = [Int](repeating: 0, count: m)  // fail[q]: the longest proper border of needle[0...q]
+        var k = 0
+        for q in 1..<m {
+            while k > 0, needle[q] != needle[k] { k = fail[k - 1] }
+            if needle[q] == needle[k] { k += 1 }
+            fail[q] = k
+        }
         var found: [Range<Int>] = []
-        let first = needle[0]
-        var i = 0
-        while i + needle.count <= haystack.count {
-            if haystack[i] == first, haystack[i..<i + needle.count].elementsEqual(needle) {
-                found.append(i..<i + needle.count)
+        k = 0
+        for (i, b) in haystack.enumerated() {
+            while k > 0, b != needle[k] { k = fail[k - 1] }
+            if b == needle[k] { k += 1 }
+            if k == m {
+                found.append(i + 1 - m..<i + 1)
+                k = fail[k - 1]
             }
-            i += 1
         }
         return found
     }
 
-    /// The matches of `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+` (`\w` is ASCII `[A-Za-z0-9_]`, as in Go's RE2), leftmost
-    /// first and non-overlapping like Go's `FindAllStringIndex`. `[\w-]` excludes `.`, so each run is maximal and a
-    /// match is decided in constant time from the precomputed run ends: the scan is linear.
+    /// The matches of `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+` (`\w` is ASCII `[A-Za-z0-9_]`, as in Go's RE2) starting at
+    /// every position, overlapping ones included: a JWT can start inside an `ek_` match (`ek_eyJa.b.c`) and reach past
+    /// it. `[\w-]` excludes `.`, so each run is maximal and a match is decided in constant time from the precomputed
+    /// run ends: the scan is linear.
     static func patternSpans(_ bytes: [UInt8]) -> [Range<Int>] {
         func isWord(_ b: UInt8) -> Bool {
             (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || b == 0x5F || b == 0x2D
@@ -82,21 +93,13 @@ public enum Secret {
                     let b = runEnd[a + 1]
                     if b > a + 1, b < n, bytes[b] == 0x2E {
                         let c = runEnd[b + 1]
-                        if c > b + 1 {
-                            spans.append(i..<c)
-                            i = c
-                            continue
-                        }
+                        if c > b + 1 { spans.append(i..<c) }
                     }
                 }
             }
             if has(0x65, 0x6B, 0x5F, at: i) {  // ek_
                 let e = runEnd[i + 3]
-                if e > i + 3 {
-                    spans.append(i..<e)
-                    i = e
-                    continue
-                }
+                if e > i + 3 { spans.append(i..<e) }
             }
             i += 1
         }
@@ -152,6 +155,13 @@ public struct Token: Sendable, Equatable, CustomStringConvertible, CustomDebugSt
         var c = encoder.singleValueContainer()
         try c.encode(Secret.redacted)
     }
+
+    /// Byte equality, as in Go: `String` equality is canonical equivalence, which would make two different bearers
+    /// equal when they differ only in how an accented letter is encoded.
+    public static func == (a: Token, b: Token) -> Bool {
+        a.bearer.utf8.elementsEqual(b.bearer.utf8) && a.expires == b.expires && a.plan.utf8.elementsEqual(b.plan.utf8)
+            && a.source.utf8.elementsEqual(b.source.utf8)
+    }
 }
 
 /// A minted ephemeral `ek_` realtime client secret, redacted like ``Token``.
@@ -174,6 +184,11 @@ public struct ClientSecret: Sendable, Equatable, CustomStringConvertible, Custom
     public func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         try c.encode(Secret.redacted)
+    }
+
+    /// Byte equality, as for ``Token``.
+    public static func == (a: ClientSecret, b: ClientSecret) -> Bool {
+        a.bearer.utf8.elementsEqual(b.bearer.utf8) && a.expiresAt == b.expiresAt
     }
 }
 

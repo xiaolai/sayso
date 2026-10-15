@@ -54,13 +54,14 @@ package enum WireJSON {
             return String(decoding: Scanner.unescape(bytes, &i), as: UTF8.self)
         }
 
-        /// An object's members.
-        func members() throws -> [String: Node] {
+        /// An object's members, keyed by the bytes of their names: a `String` key would merge canonically
+        /// equivalent names ("\u{E9}" and "e\u{301}") that are different names to Go and to the validator.
+        func members() throws -> [[UInt8]: Node] {
             guard kind == UInt8(ascii: "{") else { throw Invalid() }
-            var out: [String: Node] = [:]
+            var out: [[UInt8]: Node] = [:]
             var i = Scanner.skipSpace(bytes, range.lowerBound + 1)
             while bytes[i] != UInt8(ascii: "}") {
-                let name = String(decoding: Scanner.unescape(bytes, &i), as: UTF8.self)
+                let name = Scanner.unescape(bytes, &i)
                 i = Scanner.skipSpace(bytes, i) + 1  // the colon
                 let start = Scanner.skipSpace(bytes, i)
                 let end = Scanner.skipValue(bytes, start)
@@ -89,12 +90,12 @@ package enum WireJSON {
     /// An object's members, read with the field rules: absent and null are the same, and a present field of the
     /// wrong kind throws ``Invalid``.
     struct Object {
-        let members: [String: Node]
+        let members: [[UInt8]: Node]
 
         init(_ node: Node) throws { members = try node.members() }
 
         func field(_ name: String) -> Node? {
-            guard let n = members[name], !n.isNull else { return nil }
+            guard let n = members[Array(name.utf8)], !n.isNull else { return nil }
             return n
         }
 
@@ -121,11 +122,16 @@ package enum WireJSON {
 
         func array(_ name: String) throws -> [Node]? { try field(name)?.elements() }
 
-        /// An object whose values are strings, null being "".
+        /// An object whose values are strings, null being "". Two names that are canonically equivalent are
+        /// invalid: a `String`-keyed result cannot hold both, and Go refuses them too (spec/session.md, wire JSON).
         func stringMap(_ name: String) throws -> [String: String]? {
             guard let o = try object(name) else { return nil }
             var out: [String: String] = [:]
-            for k in o.members.keys { out[k] = try o.string(k) ?? "" }
+            for (k, n) in o.members {
+                let key = String(decoding: k, as: UTF8.self)
+                guard out[key] == nil else { throw Invalid() }
+                out[key] = n.isNull ? "" : try n.string()
+            }
             return out
         }
 
@@ -235,8 +241,15 @@ package enum WireJSON {
 
         init(_ b: [UInt8]) { self.b = b }
 
+        final class Names {
+            var set: Set<[UInt8]>
+            init(_ first: [UInt8]) { set = [first] }
+        }
+
         private enum Frame {
-            case object(names: Set<[UInt8]>)
+            /// The names seen so far, in a reference so adding one does not copy the set (a copy per member made a
+            /// wide object quadratic).
+            case object(names: Names)
             case array
         }
 
@@ -269,7 +282,7 @@ package enum WireJSON {
                                 i += 1
                                 needValue = false
                             } else {
-                                stack.append(.object(names: [try name()]))
+                                stack.append(.object(names: Names(try name())))
                                 skipSpace()
                                 try expect(":")
                             }
@@ -296,12 +309,11 @@ package enum WireJSON {
                 }
                 guard let c = peek() else { throw Invalid() }
                 switch (top, c) {
-                case (.object(var names), UInt8(ascii: ",")):
+                case (.object(let names), UInt8(ascii: ",")):
                     i += 1
                     skipSpace()
                     let n = try name()
-                    guard names.insert(n).inserted else { throw Invalid() }  // a duplicate member name
-                    stack[stack.count - 1] = .object(names: names)
+                    guard names.set.insert(n).inserted else { throw Invalid() }  // a duplicate member name
                     skipSpace()
                     try expect(":")
                     needValue = true

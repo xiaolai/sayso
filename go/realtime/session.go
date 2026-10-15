@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -88,8 +89,13 @@ func Open(ctx context.Context, src SecretSource, session any, cfg DialConfig) (*
 
 // Dial opens the session with `Authorization: Bearer ek_…` within cfg.HandshakeTimeout.
 func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
-	if !openaihttp.Guarded(cfg.Client) || cfg.HandshakeTimeout <= 0 || cfg.ReadLimit <= 0 {
-		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a client from openaihttp.NewClient, a HandshakeTimeout and a ReadLimit"}
+	// math.MaxInt64 is refused: the library adds one to the limit, which would wrap and disable it.
+	if !openaihttp.Guarded(cfg.Client) || cfg.HandshakeTimeout <= 0 || cfg.ReadLimit <= 0 || cfg.ReadLimit == math.MaxInt64 {
+		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a client from openaihttp.NewClient, a HandshakeTimeout and a ReadLimit below math.MaxInt64"}
+	}
+	// A scheme the library cannot dial is a configuration error, as in Swift, not a network failure.
+	if u, err := url.Parse(cfg.URL); err != nil || !dialable[u.Scheme] || u.Host == "" {
+		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a ws, wss, http or https URL"}
 	}
 	logger := cfg.Logger
 	if logger == nil {
@@ -115,6 +121,9 @@ func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
 		var e *openaihttp.Error
 		if errors.As(err, &e) {
 			return nil, err // the origin policy or a refused redirect
+		}
+		if ctx.Err() != nil {
+			return nil, openaihttp.TransportError("realtime: open WebSocket", ctx.Err()) // the caller's, before any reply
 		}
 		if resp != nil {
 			return nil, handshakeRefused(resp, cfg.Route)
@@ -185,12 +194,27 @@ func (s *Session) Unknown() map[string]int {
 	return maps.Clone(s.unknown)
 }
 
-// Next returns the next event, ignored and unknown types included. A protocol error for one malformed event does not end the session; a
-// connection failure does, and is returned classified from then on. Cancelling ctx unblocks it with ctx.Err().
+// Next returns the next event, ignored and unknown types included. A protocol error for one malformed event does not
+// end the session; a connection failure does, and is returned classified from then on, until Close, after which Next
+// returns ErrClosed. Cancelling ctx unblocks it with ctx.Err().
 func (s *Session) Next(ctx context.Context) (Event, error) {
+	// A cancelled ctx returns before select, which could otherwise take a pending event and lose it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case <-s.closing:
+		return nil, ErrClosed // after Close, an earlier connection failure included, as in Swift
+	default:
+	}
 	select {
 	case it, ok := <-s.events:
 		if !ok {
+			select {
+			case <-s.closing:
+				return nil, ErrClosed
+			default:
+			}
 			return nil, s.readErr // written before events was closed
 		}
 		return it.ev, it.err
@@ -287,6 +311,8 @@ func handshakeRefused(resp *http.Response, route string) error {
 		RequestID: secret.Scrub(resp.Header.Get("x-request-id")), Message: "realtime handshake: not a WebSocket upgrade"}
 }
 
+var dialable = map[string]bool{"ws": true, "wss": true, "http": true, "https": true}
+
 // upgradeCapture keeps the upgraded connection of the handshake response, so Close can drop it when the library's
 // close handshake hangs, and Dial when its deadline passes. It wraps the client's transport, so the origin policy and
 // proxy still apply.
@@ -299,6 +325,12 @@ type upgradeCapture struct {
 
 func (u *upgradeCapture) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := u.rt.RoundTrip(req)
+	if err == nil && resp.StatusCode != http.StatusSwitchingProtocols {
+		// A refusal is classified from its status and request id alone (spec/session.md); dropping the body here
+		// keeps the library's cleanup from reading it, which could stall the return.
+		_ = resp.Body.Close()
+		resp.Body = http.NoBody
+	}
 	if err == nil && resp.StatusCode == http.StatusSwitchingProtocols {
 		u.mu.Lock()
 		u.conn = resp.Body // an io.ReadWriteCloser for a 101

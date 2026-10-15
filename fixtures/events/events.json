@@ -451,7 +451,7 @@
   "kind": "event",
   "raw": "{\"type\": \"response.output_audio.delta\", \"response_id\": 5, \"delta\": [\"x\"]}",
   "expect": {
-   "protocolError": null
+   "protocolError": "response.output_audio.delta"
   },
   "note": "A field of the wrong JSON type makes the event invalid."
  },
@@ -606,7 +606,7 @@
   "kind": "event",
   "raw": "{\"type\": \"rate_limits.updated\", \"rate_limits\": [{\"name\": \"requests\", \"limit\": 1, \"remaining\": 9223372036854775808}]}",
   "expect": {
-   "protocolError": null
+   "protocolError": "rate_limits.updated"
   },
   "note": "An integer field must fit a signed 64-bit integer."
  },
@@ -616,7 +616,7 @@
   "kind": "event",
   "raw": "{\"type\": \"rate_limits.updated\", \"rate_limits\": [{\"name\": \"requests\", \"limit\": 1e3, \"remaining\": 1}]}",
   "expect": {
-   "protocolError": null
+   "protocolError": "rate_limits.updated"
   },
   "note": "An integer field is written as an integer: no fraction, no exponent."
  },
@@ -644,7 +644,7 @@
   "kind": "event",
   "raw": "{\"type\": \"rate_limits.updated\", \"rate_limits\": [{\"name\": \"requests\", \"limit\": 1, \"remaining\": 1, \"reset_seconds\": 1e400}]}",
   "expect": {
-   "protocolError": null
+   "protocolError": "rate_limits.updated"
   },
   "note": "A float out of range is refused."
  },
@@ -713,5 +713,45 @@
    "pcmHex": "00"
   },
   "note": "Non-zero trailing bits are ignored, as Go's standard decoder ignores them."
+ },
+ {
+  "id": "event-wrong-field-type-named",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"input_audio_buffer.committed\", \"item_id\": 7}",
+  "expect": {
+   "protocolError": "input_audio_buffer.committed"
+  },
+  "note": "A consumed field of the wrong type is a protocol error that names the event type (spec/session.md), not a bare JSON error."
+ },
+ {
+  "id": "event-usage-count-int64",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"completed\", \"usage\": {\"input_tokens\": 9223372036854775808}}}",
+  "expect": {
+   "protocolError": "response.done"
+  },
+  "note": "A token count beyond int64 is refused, naming the type."
+ },
+ {
+  "id": "event-metadata-equivalent-names-typed",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"\\u00e9\": 7, \"e\\u0301\": \"ok\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "Two names that are canonically equivalent are still two members: the numeric one is a wrong type. A String-keyed decoder merged them and dropped it."
+ },
+ {
+  "id": "event-metadata-equivalent-names",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"\\u00e9\": \"a\", \"e\\u0301\": \"b\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "Canonically equivalent metadata names are refused: a Swift String-keyed map cannot hold both, so both implementations refuse them (spec/session.md, wire JSON)."
  }
 ]

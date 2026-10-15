@@ -15,18 +15,24 @@ public enum RealtimeDeadline {
         public init() {}
     }
 
-    /// `seconds` at or below zero expires at once; a value that is not finite, or beyond what a timer can represent
-    /// (about 584 years), is refused as `internal`.
+    /// `seconds` at or below zero expires at once, before the operation runs; a value that is not finite, or beyond
+    /// what a timer can represent (about 584 years), is refused as `internal`. The deadline is an instant fixed when
+    /// `run` starts, so a late timer cannot extend it, and an operation that finishes after it is expired too.
     public static func run<T>(
         seconds: TimeInterval, close: @escaping @Sendable () -> Void, operation: () async throws -> T
     ) async throws -> T {
         guard seconds.isFinite, seconds <= 0 || Deadline.nanoseconds(seconds) != nil else {
             throw RealtimeError(.internal, message: "RealtimeDeadline needs a finite deadline")
         }
-        let nanoseconds = seconds <= 0 ? 0 : Deadline.nanoseconds(seconds)!
         let state = State()
+        if seconds <= 0 {
+            if state.settle(.expired) { close() }
+            throw Expired()
+        }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .nanoseconds(Int64(Deadline.nanoseconds(seconds)!)))
         let timer = Task {
-            do { try await Task.sleep(nanoseconds: nanoseconds) } catch { return }
+            do { try await Task.sleep(until: deadline, clock: clock) } catch { return }
             if state.settle(.expired) { close() }
         }
         let outcome: Result<T, Error>
@@ -41,6 +47,8 @@ public enum RealtimeDeadline {
         } catch {
             outcome = .failure(error)
         }
+        // Finished after the instant but before the timer ran: expired all the same.
+        if clock.now >= deadline, state.settle(.expired) { close() }
         _ = state.settle(.finished)
         timer.cancel()
         await timer.value  // a close already under way completes before run returns

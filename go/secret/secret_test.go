@@ -88,3 +88,45 @@ func TestRepeatedPrefixIsLinear(t *testing.T) {
 		t.Fatalf("Scrub took %v", d)
 	}
 }
+
+// A secret inside an unexported field of another struct, which fmt formats by reflection without calling the
+// secret's methods, still prints no bearer.
+func TestSecretsInUnexportedFieldsNeverFormat(t *testing.T) {
+	type holder struct {
+		t Token
+		c ClientSecret
+	}
+	h := holder{NewToken("opaque-held-token-canary", time.Time{}, "", ""), NewClientSecret("opaque-held-secret-canary", time.Time{})}
+	for _, verb := range []string{"%v", "%+v", "%#v"} {
+		if got := fmt.Sprintf(verb, h); strings.Contains(got, "canary") {
+			t.Fatalf("%s printed the bearer", verb)
+		}
+	}
+	if h.t.Bearer() != "opaque-held-token-canary" || h.c.Bearer() != "opaque-held-secret-canary" || !(Token{}).IsZero() {
+		t.Fatal("Bearer lost its value")
+	}
+}
+
+// A JWT that starts inside an ek_ match is removed whole.
+func TestJWTInsideAnEKMatch(t *testing.T) {
+	if got := Scrub("x ek_eyJa.b.c y"); got != "x "+Redacted+" y" {
+		t.Fatalf("Scrub = %q", got)
+	}
+}
+
+// A long, repetitive registered secret against a long, repetitive text scrubs in linear time.
+func TestRepetitiveSecretIsLinear(t *testing.T) {
+	sec := strings.Repeat("a", 32_768) + "b"
+	Register(sec)
+	s := strings.Repeat("a", 65_536)
+	start := time.Now()
+	if got := Scrub(s); got != s {
+		t.Fatal("no occurrence, nothing to scrub")
+	}
+	if got := Scrub(s + "b"); got != strings.Repeat("a", 32_768)+Redacted {
+		t.Fatalf("Scrub found the wrong span (%d bytes)", len(got))
+	}
+	if d := time.Since(start); d > 30*time.Second { // a quadratic scan takes about 10^9 comparisons
+		t.Fatalf("Scrub took %v", d)
+	}
+}
