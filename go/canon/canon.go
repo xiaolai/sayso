@@ -6,6 +6,7 @@ package canon
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,7 +19,7 @@ import (
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
 // to Canon's output: cache keys and verification provenance record it.
-const CanonVersion = 10 // 10: U+2212 minus, digit-ending domain labels, zeros after joined letters, "Mr.Smith"
+const CanonVersion = 11 // 11: lowercase domains first, ".5", numbers after joined letters, Han beyond the cardinal range
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -29,17 +30,71 @@ const CanonVersion = 10 // 10: U+2212 minus, digit-ending domain labels, zeros a
 func Canon(s string) []string { return canon(s, false) }
 
 // Equivalent reports whether a and b canonicalise equal, also trying the
-// alternatives Canon cannot decide alone: hyphenated compounds joined
-// ("e-mail" = "email") and years read as pairs ("nineteen ninety-nine" =
-// "1999", whose canonical form is the cardinal).
+// alternatives Canon cannot decide alone: each hyphenated compound joined or
+// split on its own ("e-mail long-term" = "email long term") and years read as
+// pairs on either side ("nineteen ninety-nine" = "1999", whose canonical form
+// is the cardinal).
 func Equivalent(a, b string) bool {
-	for _, join := range []bool{false, true} {
-		ta, tb := canon(a, join), canon(b, join)
-		if equalTokens(ta, tb) || equalTokens(yearPairsToCardinal(ta), yearPairsToCardinal(tb)) {
-			return true
+	var tas, tbs [][]string
+	for _, v := range hyphenVariants(a) {
+		tas = append(tas, canon(v, false))
+	}
+	for _, v := range hyphenVariants(b) {
+		tbs = append(tbs, canon(v, false))
+	}
+	for _, ta := range tas {
+		for _, tb := range tbs {
+			// A year read as a pair is rewritten on one side at a time as well: rewriting both reads
+			// "2010, 20" as "two thousand" then the pair "ten twenty".
+			ya, yb := yearPairsToCardinal(ta), yearPairsToCardinal(tb)
+			if equalTokens(ta, tb) || equalTokens(ta, yb) || equalTokens(ya, tb) || equalTokens(ya, yb) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// maxCompounds bounds the per-compound alternatives: 2^4 variants a side. Beyond it every compound is
+// joined, or every one split.
+const maxCompounds = 4
+
+// hyphenVariants is s with each hyphen between two letters kept or removed, every combination; the
+// hyphens of numbers ("3-4", "COVID-19") are never removed, as Canon reads them as separators.
+func hyphenVariants(s string) []string {
+	rs := []rune(s)
+	var at []int
+	for i := 1; i+1 < len(rs); i++ {
+		if isHyphen(rs[i]) && unicode.IsLetter(rs[i-1]) && unicode.IsLetter(rs[i+1]) {
+			at = append(at, i)
+		}
+	}
+	join := func(mask func(int) bool) string {
+		var b strings.Builder
+		k := 0
+		for i, r := range rs {
+			if k < len(at) && at[k] == i {
+				if mask(k) {
+					k++
+					continue
+				}
+				k++
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
+	if len(at) == 0 {
+		return []string{s}
+	}
+	if len(at) > maxCompounds {
+		return []string{s, join(func(int) bool { return true })}
+	}
+	out := make([]string, 0, 1<<len(at))
+	for m := 0; m < 1<<len(at); m++ {
+		out = append(out, join(func(k int) bool { return m&(1<<k) != 0 }))
+	}
+	return out
 }
 
 func equalTokens(a, b []string) bool {
@@ -61,9 +116,10 @@ func canon(s string, joinHyphens bool) []string {
 	s = width.Fold.String(norm.NFKC.String(s))
 	// NFKC keeps U+2212; it is the same sign as "-" ("−7" is "minus seven").
 	s = strings.ReplaceAll(s, "\u2212", "-")
-	// A domain label ending in a digit ("example2.com") must be read before the number pass
-	// spaces the digit off its dot; other dots wait, so "Mr.Smith" still expands.
-	s = digitDomainDots(s)
+	// A lowercase domain ("example2.com", "x.com", "etc.com") is read before the number pass
+	// spaces a digit off its dot and before an abbreviation swallows one; a capital waits, so
+	// "Mr.Smith" still expands.
+	s = lowerDomainDots(s)
 	// Numbers first: digits glued to letters ("Mr00") must not hide a word
 	// boundary from the abbreviation pass, or a second pass would differ.
 	s = chineseNumbers(englishNumbers(s))
@@ -88,9 +144,10 @@ func canon(s string, joinHyphens bool) []string {
 	// joined ("M s" -> "ms" -> "miz").
 	// Dropping an apostrophe can bring a letter and a combining mark together ("A'̆"), which a
 	// second pass would compose; compose them now.
-	// Joining can make a number word ("T W O" -> "two"), after which a second pass would read a
-	// following "oh" as zero; read it now.
-	return expandTokens(spokenZeros(joinLetters(spokenZeros(scaleArticle(dropNumberAnd(strings.Fields(norm.NFKC.String(b.String()))))))))
+	// Joining can make a number word ("T W O" -> "two"), so the number rewrites run again after it,
+	// or a second pass would read a following "oh" as zero or drop an "and" before it.
+	numberWords := func(t []string) []string { return spokenZeros(scaleArticle(dropNumberAnd(t))) }
+	return expandTokens(numberWords(joinLetters(numberWords(strings.Fields(norm.NFKC.String(b.String()))))))
 }
 
 // spokenZeros reads "oh" and "o" as zero inside a reading of digits: the spoken form says
@@ -172,17 +229,36 @@ func isHyphen(r rune) bool {
 // and initials ("U.S.") do not match.
 var domainDot = regexp.MustCompile(`([\p{L}\p{N}]{2})\.(\p{L}{2})`)
 
-// digitDomainDot is a domainDot whose left run ends in a digit.
-var digitDomainDot = regexp.MustCompile(`([\p{L}\p{N}]\p{N})\.(\p{L}{2})`)
-
-func digitDomainDots(s string) string {
-	for {
-		t := digitDomainDot.ReplaceAllString(s, "$1 dot $2")
-		if t == s {
-			return s
+// lowerDomainDots reads "dot" for a dot between a run of lowercase letters or digits (one letter is a
+// label: "x.com") and a run of two or more lowercase letters. A capital anywhere in either run waits
+// for domainDots, after the abbreviations; a run of digits on the right is a decimal.
+func lowerDomainDots(s string) string {
+	rs := []rune(s)
+	run := func(i, step int) (n int, lower bool) {
+		lower = true
+		for j := i; j >= 0 && j < len(rs) && isWordRune(rs[j]); j += step {
+			lower = lower && !unicode.IsUpper(rs[j])
+			n++
 		}
-		s = t
+		return n, lower
 	}
+	var b strings.Builder
+	for i, r := range rs {
+		if r == '.' && i > 0 {
+			left, ll := run(i-1, -1)
+			right, rl := run(i+1, 1)
+			letters := right >= 2
+			for k := i + 1; k <= i+right && letters; k++ {
+				letters = unicode.IsLetter(rs[k])
+			}
+			if left >= 1 && ll && rl && letters {
+				b.WriteString(" dot ")
+				continue
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func domainDots(s string) string {
@@ -301,13 +377,19 @@ func englishNumbers(s string) string {
 		c := s[i]
 		neg := false
 		start := i
-		if c == '-' && i+1 < len(s) && isASCIIDigit(s[i+1]) {
+		// ".5" is a decimal with its zero unwritten, also after a sign ("-.5"); after a digit or a
+		// letter the dot belongs to what precedes it.
+		leadDot := func(k int) bool {
+			prev, _ := utf8.DecodeLastRuneInString(s[:k])
+			return k+1 < len(s) && s[k] == '.' && isASCIIDigit(s[k+1]) && (k == 0 || !isWordRune(prev))
+		}
+		if c == '-' && i+1 < len(s) && (isASCIIDigit(s[i+1]) || i+2 < len(s) && s[i+1] == '.' && isASCIIDigit(s[i+2])) {
 			prev, _ := utf8.DecodeLastRuneInString(s[:i])
 			if i == 0 || !isWordRune(prev) {
 				neg, start = true, i+1
 			}
 		}
-		if !neg && !isASCIIDigit(c) {
+		if !neg && !isASCIIDigit(c) && !leadDot(i) {
 			b.WriteByte(c)
 			i++
 			continue
@@ -327,6 +409,9 @@ func englishNumbers(s string) string {
 			}
 		}
 		words := integerWords(digits.String())
+		if digits.Len() == 0 {
+			words = cardinal(0) // ".5"
+		}
 		if j+1 < len(s) && s[j] == '.' && isASCIIDigit(s[j+1]) {
 			k := j + 1
 			for k < len(s) && isASCIIDigit(s[k]) {
@@ -516,21 +601,7 @@ func hanRunWords(run []rune) []string {
 	if !ok {
 		return []string{string(run)}
 	}
-	if n > maxCardinal {
-		return digitWordsHan(run)
-	}
-	return cardinal(n)
-}
-
-// digitWordsHan is the fallback for out-of-range runs: each rune read alone.
-func digitWordsHan(run []rune) []string {
-	var w []string
-	for _, r := range run {
-		if d, ok := hanDigits[r]; ok {
-			w = append(w, cardinal(d)...)
-		} else {
-			w = append(w, cardinal(hanUnits[r])...)
-		}
-	}
-	return w
+	// Beyond the cardinal range, the value's digits are read as the digits written in Arabic numerals
+	// are, so "一千万亿" and "1000000000000000" share one form.
+	return integerWords(strconv.FormatUint(n, 10))
 }

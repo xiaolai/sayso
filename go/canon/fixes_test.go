@@ -87,3 +87,42 @@ func TestIdempotentAfterJoinedNumberWord(t *testing.T) {
 		}
 	}
 }
+
+// Round-2 audit rows: lowercase domains before numbers and abbreviations, a leading decimal, numbers after joined
+// letters, a Han value beyond the cardinal range, and the per-compound and per-side alternatives of Equivalent.
+func TestRoundTwoCanonFixes(t *testing.T) {
+	for in, want := range map[string]string{
+		"example2x.com":         "example two x dot com",
+		"x.com":                 "x dot com",
+		"etc.com":               "et cetera dot com",
+		".5":                    "zero point five",
+		"-.5":                   "minus zero point five",
+		"one hundred and T W O": "one hundred two",
+		"一千万亿":                  strings.Join(Canon("1000000000000000"), " "),
+	} {
+		if got := strings.Join(Canon(in), " "); got != want {
+			t.Errorf("Canon(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, p := range [][2]string{
+		{"e-mail long-term", "email long term"},
+		{"in 2010, 20 people", "in twenty ten, 20 people"},
+		{"etc.com", "etc dot com"},
+		{"x.com", "x dot com"},
+	} {
+		if !Equivalent(p[0], p[1]) {
+			t.Errorf("Equivalent(%q, %q) = false", p[0], p[1])
+		}
+	}
+	for _, p := range [][2]string{{".5", "5"}, {"-.5", ".5"}, {"3-4", "34"}} {
+		if Equivalent(p[0], p[1]) {
+			t.Errorf("Equivalent(%q, %q) = true", p[0], p[1])
+		}
+	}
+	for _, in := range []string{"example2x.com", "x.com", "etc.com", ".5", "-.5", "one hundred and T W O", "一千万亿", "Mr.Smith"} {
+		once := Canon(in)
+		if twice := Canon(strings.Join(once, " ")); !slices.Equal(once, twice) {
+			t.Errorf("Canon(%q) = %q, then %q", in, once, twice)
+		}
+	}
+}
