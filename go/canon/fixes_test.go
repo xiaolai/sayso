@@ -51,3 +51,39 @@ func TestExports(t *testing.T) {
 		t.Error("IsAbbreviation")
 	}
 }
+
+// U+2212 is a minus sign, not a separator (audit row 23).
+func TestUnicodeMinusIsASign(t *testing.T) {
+	if Equivalent("−7", "7") {
+		t.Error(`"−7" compared equal to "7"`)
+	}
+	if !Equivalent("−7", "minus seven") || !Equivalent("−7", "-7") {
+		t.Error(`"−7" did not read as "minus seven"`)
+	}
+}
+
+// A domain label ending in a digit keeps its dot (audit row 24); a title before a dot still expands.
+func TestDigitDomainKeepsItsDot(t *testing.T) {
+	if got := strings.Join(Canon("example2.com"), " "); got != "example two dot com" {
+		t.Errorf(`Canon("example2.com") = %q`, got)
+	}
+	if !Equivalent("example2.com", "example two dot com") {
+		t.Error(`"example2.com" did not match its spoken form`)
+	}
+	if got := strings.Join(Canon("Mr.Smith"), " "); got != "mister smith" {
+		t.Errorf(`Canon("Mr.Smith") = %q`, got)
+	}
+	if got := strings.Join(Canon("Dr's office"), " "); got != "doctors office" {
+		t.Errorf(`Canon("Dr's office") = %q`, got)
+	}
+}
+
+// Canon is idempotent when joining letters makes a number word (audit row 25).
+func TestIdempotentAfterJoinedNumberWord(t *testing.T) {
+	for _, in := range []string{"T W O oh", "O N E o o", "example2.com", "−7", "T E N point oh", "Mr.Smith", "Dr's office"} {
+		once := Canon(in)
+		if twice := Canon(strings.Join(once, " ")); !slices.Equal(once, twice) {
+			t.Errorf("Canon(%q) = %q, then %q", in, once, twice)
+		}
+	}
+}

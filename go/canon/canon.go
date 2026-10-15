@@ -18,7 +18,7 @@ import (
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
 // to Canon's output: cache keys and verification provenance record it.
-const CanonVersion = 9 // 9: strict Han numerals, case-sensitive titles
+const CanonVersion = 10 // 10: U+2212 minus, digit-ending domain labels, zeros after joined letters, "Mr.Smith"
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -59,6 +59,11 @@ func canon(s string, joinHyphens bool) []string {
 	// from stalling on it ("\xf7¾" would keep "3 4" as digits, and a second pass read them).
 	s = strings.ToValidUTF8(s, " ")
 	s = width.Fold.String(norm.NFKC.String(s))
+	// NFKC keeps U+2212; it is the same sign as "-" ("−7" is "minus seven").
+	s = strings.ReplaceAll(s, "\u2212", "-")
+	// A domain label ending in a digit ("example2.com") must be read before the number pass
+	// spaces the digit off its dot; other dots wait, so "Mr.Smith" still expands.
+	s = digitDomainDots(s)
 	// Numbers first: digits glued to letters ("Mr00") must not hide a word
 	// boundary from the abbreviation pass, or a second pass would differ.
 	s = chineseNumbers(englishNumbers(s))
@@ -83,7 +88,9 @@ func canon(s string, joinHyphens bool) []string {
 	// joined ("M s" -> "ms" -> "miz").
 	// Dropping an apostrophe can bring a letter and a combining mark together ("A'̆"), which a
 	// second pass would compose; compose them now.
-	return expandTokens(joinLetters(spokenZeros(scaleArticle(dropNumberAnd(strings.Fields(norm.NFKC.String(b.String())))))))
+	// Joining can make a number word ("T W O" -> "two"), after which a second pass would read a
+	// following "oh" as zero; read it now.
+	return expandTokens(spokenZeros(joinLetters(spokenZeros(scaleArticle(dropNumberAnd(strings.Fields(norm.NFKC.String(b.String()))))))))
 }
 
 // spokenZeros reads "oh" and "o" as zero inside a reading of digits: the spoken form says
@@ -165,6 +172,19 @@ func isHyphen(r rune) bool {
 // and initials ("U.S.") do not match.
 var domainDot = regexp.MustCompile(`([\p{L}\p{N}]{2})\.(\p{L}{2})`)
 
+// digitDomainDot is a domainDot whose left run ends in a digit.
+var digitDomainDot = regexp.MustCompile(`([\p{L}\p{N}]\p{N})\.(\p{L}{2})`)
+
+func digitDomainDots(s string) string {
+	for {
+		t := digitDomainDot.ReplaceAllString(s, "$1 dot $2")
+		if t == s {
+			return s
+		}
+		s = t
+	}
+}
+
 func domainDots(s string) string {
 	for {
 		t := domainDot.ReplaceAllString(s, "$1 dot $2")
@@ -232,6 +252,10 @@ func expandAbbreviations(s string) string {
 			}
 		}
 		b.WriteString(exp)
+		// "Mr.Smith": the consumed dot was the only boundary. An apostrophe keeps the possessive ("Dr's").
+		if r, _ := utf8.DecodeRuneInString(s[loc[1]:]); loc[1] < len(s) && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			b.WriteByte(' ')
+		}
 		last = loc[1]
 	}
 	b.WriteString(s[last:])
