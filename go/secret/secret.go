@@ -4,9 +4,11 @@ package secret
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -141,18 +143,32 @@ func patternSpans(s string) [][2]int {
 	return spans
 }
 
-// sealed holds a secret behind a pointer. fmt prints a nested pointer as an address, so a struct that contains a
-// Token or ClientSecret in an unexported field, which fmt formats by reflection without calling its methods, still
-// cannot print the secret.
-type sealed struct{ value string }
+// sealed is an opaque handle to a secret held in the vault. Nothing reachable from a Token or ClientSecret holds the
+// secret itself, so no formatting or reflection path through one can print it: fmt, a reflect.Value of the field,
+// or a dumper that walks unexported fields finds only a number. The vault entry is dropped once the last copy of
+// the handle is unreachable.
+type sealed struct{ id uint64 }
 
-func seal(s string) *sealed { return &sealed{value: s} }
+var (
+	vault   sync.Map // uint64 -> string
+	vaultID atomic.Uint64
+)
+
+func seal(s string) *sealed {
+	p := &sealed{id: vaultID.Add(1)}
+	vault.Store(p.id, s)
+	runtime.AddCleanup(p, func(id uint64) { vault.Delete(id) }, p.id)
+	return p
+}
 
 func (p *sealed) get() string {
 	if p == nil {
 		return ""
 	}
-	return p.value
+	v, _ := vault.Load(p.id)
+	runtime.KeepAlive(p) // p must outlive the load, or its cleanup could empty the entry first
+	s, _ := v.(string)
+	return s
 }
 
 // Token is a sign-in bearer with its metadata. The bearer is sealed and reachable only through Bearer, so no

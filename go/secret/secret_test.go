@@ -3,6 +3,7 @@ package secret
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +129,27 @@ func TestRepetitiveSecretIsLinear(t *testing.T) {
 	}
 	if d := time.Since(start); d > 30*time.Second { // a quadratic scan takes about 10^9 comparisons
 		t.Fatalf("Scrub took %v", d)
+	}
+}
+
+// Reflection finds no plaintext either: a reflect.Value of the field, and a dumper walking unexported fields, see only
+// an opaque handle.
+func TestSecretsNeverReflect(t *testing.T) {
+	tok := NewToken("opaque-reflect-token-canary", time.Time{}, "", "")
+	cs := NewClientSecret("opaque-reflect-secret-canary", time.Time{})
+	for _, v := range []reflect.Value{reflect.ValueOf(tok).Field(0), reflect.ValueOf(cs).Field(0)} {
+		for _, verb := range []string{"%v", "%+v", "%#v"} {
+			if got := fmt.Sprintf(verb, v); strings.Contains(got, "canary") {
+				t.Fatalf("%s of the reflected field printed the secret", verb)
+			}
+			if v.Kind() == reflect.Pointer && !v.IsNil() {
+				if got := fmt.Sprintf(verb, v.Elem()); strings.Contains(got, "canary") {
+					t.Fatalf("%s of the dereferenced field printed the secret", verb)
+				}
+			}
+		}
+	}
+	if tok.Bearer() != "opaque-reflect-token-canary" || cs.Bearer() != "opaque-reflect-secret-canary" {
+		t.Fatal("Bearer lost its value")
 	}
 }
