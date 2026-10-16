@@ -423,8 +423,8 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			i = j
 		case svLetter(r) || isApostrophe(r) && marksBeforeLetter(i):
 			// "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
-			// initials ("E.G. White"), lexed letter by letter like any other.
-			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && !unicode.IsUpper(rs[i+2]) && (i == 0 || !svLetter(rs[i-1]) && rs[i-1] != '.') && (i+3 >= len(rs) || !svLetter(rs[i+3])) && !(i+4 < len(rs) && rs[i+3] == '.' && svLetter(rs[i+4])) {
+			// initials ("E.G. White"), lexed letter by letter like any other; with a mark on it ("e.g̣") another word.
+			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && !unicode.IsUpper(rs[i+2]) && (i == 0 || !svLetter(rs[i-1]) && rs[i-1] != '.') && (i+3 >= len(rs) || !svLetter(rs[i+3]) && !unicode.IsMark(rs[i+3])) && !(i+4 < len(rs) && rs[i+3] == '.' && svLetter(rs[i+4])) {
 				// Not inside a domain ("www.e.g.com"), where its letters are labels.
 				emit(svWord, i, i+3, svDashNone)
 				i += 3

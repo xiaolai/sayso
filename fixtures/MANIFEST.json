@@ -1,5 +1,5 @@
 {
- "count": 985,
+ "count": 990,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5729,6 +5729,36 @@
   },
   {
    "id": "r13-join-domain-label-written",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-not-abbreviation",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-kept",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-added",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-letters",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-ie-spacing-mark-not-abbreviation",
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []

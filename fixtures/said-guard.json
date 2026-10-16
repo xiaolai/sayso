@@ -5582,5 +5582,50 @@
   "language": "en",
   "expect": true,
   "note": "The same label with its dot written."
+ },
+ {
+  "id": "r13-eg-mark-not-abbreviation",
+  "component": "said-guard",
+  "script": "e.g̣",
+  "transcript": "for example",
+  "language": "en",
+  "expect": false,
+  "note": "A mark on the g makes another word, not e.g., so it is not read for example."
+ },
+ {
+  "id": "r13-eg-mark-kept",
+  "component": "said-guard",
+  "script": "e.g̣",
+  "transcript": "e g",
+  "language": "en",
+  "expect": false,
+  "note": "The mark is spoken: it may not be dropped."
+ },
+ {
+  "id": "r13-eg-mark-added",
+  "component": "said-guard",
+  "script": "e.g",
+  "transcript": "e.g̣",
+  "language": "en",
+  "expect": false,
+  "note": "Nor may a transcript add one to e.g."
+ },
+ {
+  "id": "r13-eg-mark-letters",
+  "component": "said-guard",
+  "script": "e.g̣",
+  "transcript": "e g̣",
+  "language": "en",
+  "expect": true,
+  "note": "The letters read apart, the mark kept on its letter."
+ },
+ {
+  "id": "r13-ie-spacing-mark-not-abbreviation",
+  "component": "said-guard",
+  "script": "i.eः",
+  "transcript": "that is",
+  "language": "en",
+  "expect": false,
+  "note": "A spacing mark on the e makes another word too."
  }
 ]
