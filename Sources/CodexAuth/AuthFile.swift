@@ -172,10 +172,8 @@ enum AuthFile {
             used += n
         }
         guard used < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
-        var data = Data(buf[0..<used])
-        defer { data.resetBytes(in: 0..<data.count) }
-        guard isPlainJSON(data) else { return nil }
-        return try decode(data)
+        // Read where it lies, in `buf`, which is wiped on every exit: no check or lookup copies any of it.
+        return try buf.withUnsafeBytes { all in try decode(borrowing: UnsafeRawBufferPointer(rebasing: all[0..<used])) }
     }
 
     /// The auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey. Compared as bytes.
@@ -183,84 +181,43 @@ enum AuthFile {
         "chatgptAuthTokens", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
     ]
 
+    /// ``decode(borrowing:)`` of `data`'s bytes, in place.
+    static func decode(_ data: Data) throws -> Token? { try data.withUnsafeBytes { try decode(borrowing: $0) } }
+
     /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token; nil
-    /// when `data`, already validated as plain JSON, is not one object. An unknown auth_mode makes the file
-    /// unreadable to Codex itself, so it is codex-error.
+    /// when `raw` is not one plain JSON object (``plainJSON(_:)``). An unknown auth_mode makes the file unreadable to
+    /// Codex itself, so it is codex-error.
     ///
-    /// Only the members needed are read, as the bytes the file holds, and member names match as bytes, as in Go and
-    /// Codex (a Swift `String` key would take "OPENAI_API_\u{212A}EY", with a Kelvin sign, for OPENAI_API_KEY). No
-    /// other value, such as a refresh token or an API key, ever becomes a `String`, which could not be wiped; each
-    /// copy of a member's bytes is wiped once read. Only the mode and the access token are decoded.
-    static func decode(_ data: Data) throws -> Token? {
-        do { _ = try WireJSON.memberBytes(data, "auth_mode") } catch { return nil }  // not an object
-        func present(_ key: String) throws -> Bool { try withMember(data, key) { $0.map { !isNull($0) } ?? false } }
+    /// Every check and lookup reads `raw` where it lies (``WireJSON/Borrowed``): member names match as decoded bytes,
+    /// as in Go and Codex (a Swift `String` key would take "OPENAI_API_\u{212A}EY", with a Kelvin sign, for
+    /// OPENAI_API_KEY), the mode is compared in place with the modes Codex knows, and a value of the wrong kind is
+    /// refused from its first byte. The access token, decoded straight into the `String` kept, is the one copy made
+    /// of anything in the file.
+    static func decode(borrowing raw: UnsafeRawBufferPointer) throws -> Token? {
+        guard let doc = plainJSON(raw), doc.kind(doc.root) == UInt8(ascii: "{") else { return nil }
+        let root = doc.root
+        func present(_ key: String) -> Bool { doc.member(root, key).map { !doc.isNull($0) } ?? false }
         var mode = modeChatGPT
-        if try present("auth_mode") {
-            let m = try withMember(data, "auth_mode") { $0.flatMap(stringValue) }
-            guard let m, let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { $0.utf8.elementsEqual(m.utf8) })
-            else { throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode") }
+        if let m = doc.member(root, "auth_mode"), !doc.isNull(m) {
+            guard let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { doc.stringEquals(m, $0) }) else {
+                throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode")
+            }
             mode = known
-        } else if try present("personal_access_token") {
+        } else if present("personal_access_token") {
             mode = "personalAccessToken"
-        } else if try present("bedrock_api_key") {
+        } else if present("bedrock_api_key") {
             mode = "bedrockApiKey"
-        } else if try present("bedrock_access_keys") {
+        } else if present("bedrock_access_keys") {
             mode = "bedrockAccessKeys"
-        } else if try present("OPENAI_API_KEY") {
+        } else if present("OPENAI_API_KEY") {
             mode = modeAPIKey
         }
         if let e = classifyMode(mode) { throw e }
-        let access = try withMember(data, "tokens") { tokens -> String? in
-            guard let tokens, !isNull(tokens) else { return nil }
-            // A tokens value that is not an object holds no access token.
-            return (try? withMember(tokens, "access_token") { $0.flatMap(stringValue) }) ?? nil
-        }
-        guard let access, !access.isEmpty else {
-            throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token")
-        }
+        // A tokens value that is not an object holds no access token.
+        guard let tokens = doc.member(root, "tokens"), let a = doc.member(tokens, "access_token"),
+            let access = doc.string(a), !access.isEmpty
+        else { throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token") }
         return makeToken(access, source: "file")
-    }
-
-    /// The bytes of the member `name` of the object `data`, nil when absent, handed to `body` and wiped after it.
-    private static func withMember<T>(_ data: Data, _ name: String, _ body: (Data?) throws -> T) throws -> T {
-        var raw = try WireJSON.memberBytes(data, name)
-        defer { if let n = raw?.count { raw?.resetBytes(in: 0..<n) } }
-        return try body(raw)
-    }
-
-    private static func isNull(_ raw: Data) -> Bool { raw.elementsEqual("null".utf8) }
-
-    /// A JSON string's value; nil for any other value, told from its first byte: an object or array is never decoded,
-    /// so a credential nested in one never becomes a Foundation string. Only a string reaches the decoder.
-    private static func stringValue(_ raw: Data) -> String? {
-        guard raw.first == UInt8(ascii: "\"") else { return nil }
-        decoded.saw(raw)
-        return (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])) as? String
-    }
-
-    /// For tests: whether a value holding the watched bytes was handed to the Foundation decoder.
-    static let decoded = DecodeWatch()
-
-    final class DecodeWatch: @unchecked Sendable {
-        private let lock = NSLock()
-        private var watched: [UInt8] = []
-        private var seen = false
-
-        func watch(_ s: String) { lock.withLock { (watched, seen) = (Array(s.utf8), false) } }
-
-        func saw(_ raw: Data) {
-            lock.withLock {
-                guard !watched.isEmpty, !seen else { return }
-                seen = raw.withUnsafeBytes { b in
-                    b.count >= watched.count && (0...(b.count - watched.count)).contains { i in
-                        watched.indices.allSatisfy { b[i + $0] == watched[$0] }
-                    }
-                }
-            }
-        }
-
-        /// Whether the watched bytes were seen since `watch`; stops watching.
-        func take() -> Bool { lock.withLock { defer { (watched, seen) = ([], false) }; return seen } }
     }
 }
 
@@ -270,22 +227,55 @@ func makeToken(_ bearer: String, source: String) -> Token {
     Token(bearer: bearer, expires: jwtExpiry(bearer), source: source)
 }
 
+/// The `exp` claim, read in place from the payload decoded into a buffer wiped before it is freed: the token is
+/// kept, but no other copy of what it holds is.
 func jwtExpiry(_ token: String) -> Date? {
-    let parts = token.split(separator: ".", omittingEmptySubsequences: false)
-    guard parts.count == 3 else { return nil }
-    // The base64url alphabet only, unpadded (RFC 7515, and Codex's own decoder): "eyJleHAiOjF9====" is no JWT.
-    let payload = String(parts[1])
-    guard payload.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
+    let u = token.utf8
+    guard let first = u.firstIndex(of: 0x2E) else { return nil }
+    let start = u.index(after: first)
+    guard let second = u[start...].firstIndex(of: 0x2E), !u[u.index(after: second)...].contains(0x2E) else {
         return nil
     }
-    var b64 = payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-    guard b64.count % 4 != 1 else { return nil }
-    b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
-    guard let data = Data(base64Encoded: b64), isPlainJSON(data),
-        let claims = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-        let exp = claims["exp"] as? NSNumber, CFGetTypeID(exp) != CFBooleanGetTypeID(), !CFNumberIsFloatType(exp),
-        NSNumber(value: exp.int64Value) == exp  // a signed 64-bit integer exactly, as Go decodes it; not wrapped
-    else { return nil }
-    return Date(timeIntervalSince1970: TimeInterval(exp.int64Value))
+    let payload = u[start..<second]
+    // The base64url alphabet only, unpadded (RFC 7515, and Codex's own decoder): "eyJleHAiOjF9====" is no JWT.
+    var count = 0
+    for c in payload {
+        guard base64URL(c) != nil else { return nil }
+        count += 1
+    }
+    guard count % 4 != 1 else { return nil }
+    var bytes = [UInt8](repeating: 0, count: count * 3 / 4)
+    defer { bytes.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } }
+    var acc: UInt32 = 0, bits = 0, k = 0
+    for c in payload {
+        acc = acc << 6 | base64URL(c)!
+        bits += 6
+        if bits >= 8 {
+            bits -= 8
+            bytes[k] = UInt8(truncatingIfNeeded: acc >> bits)
+            k += 1
+        }
+        acc &= (1 << bits) - 1
+    }
+    // The bits left over are ignored, as Foundation's and Go's decoders ignore them.
+    // A signed 64-bit integer exactly, as Go decodes it: not a fraction, an exponent or a wrapped value.
+    return bytes.withUnsafeBytes { raw -> Date? in
+        guard let doc = plainJSON(raw), let exp = doc.member(doc.root, "exp"), let v = doc.int64(exp) else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: TimeInterval(v))
+    }
+}
+
+/// A base64url digit's value.
+private func base64URL(_ c: UInt8) -> UInt32? {
+    switch c {
+    case 0x41...0x5A: return UInt32(c - 0x41)
+    case 0x61...0x7A: return UInt32(c - 0x61 + 26)
+    case 0x30...0x39: return UInt32(c - 0x30 + 52)
+    case UInt8(ascii: "-"): return 62
+    case UInt8(ascii: "_"): return 63
+    default: return nil
+    }
 }
 #endif

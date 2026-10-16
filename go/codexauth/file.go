@@ -1,19 +1,18 @@
 package codexauth
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/xiaolai/sayso/go/codexapp"
+	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -228,56 +227,49 @@ func readOnce(loc authLocation) (tok secret.Token, e *Error, parsed bool) {
 	if n >= maxAuthFile {
 		return secret.Token{}, fail(StateCodexError, "auth.json is 64 KiB or larger", nil), true
 	}
-	decodeMu.Lock()
-	defer func() {
-		for _, b := range decoded {
-			clear(b)
-		}
-		decoded = nil
-		decodeMu.Unlock()
-	}()
-	var doc map[string]wipedRaw
-	if !codexapp.ValidJSON(buf[:n]) || json.Unmarshal(buf[:n], &doc) != nil || doc == nil {
+	// Read where it lies, in buf, which is cleared on every exit: no check or lookup copies any of it.
+	doc := buf[:n]
+	if !codexapp.ValidJSON(doc) || wire.KindOf(doc, wire.Root(doc)) != '{' {
 		return secret.Token{}, nil, false
 	}
 	tok, e = decodeAuthFile(doc)
 	return tok, e, true
 }
 
-// Every value decoded from auth.json is a wipedRaw, recorded in decoded so it is wiped after the read, including a
-// value a duplicate key replaced. decodeMu serialises reads, which are rare.
-var (
-	decodeMu sync.Mutex
-	decoded  [][]byte
-)
-
-type wipedRaw []byte
-
-func (w *wipedRaw) UnmarshalJSON(b []byte) error {
-	c := append([]byte(nil), b...)
-	decoded = append(decoded, c)
-	*w = c
-	return nil
-}
-
-// fileModes are the auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey.
-var fileModes = map[string]bool{
-	"chatgptAuthTokens": true, "headers": true, "agentIdentity": true,
-	"personalAccessToken": true, "bedrockApiKey": true, "bedrockAccessKeys": true,
+// fileModeList is every auth_mode value Codex knows (protocol/src/auth.rs).
+var fileModeList = []string{
+	modeChatGPT, modeAPIKey, "chatgptAuthTokens", "headers", "agentIdentity",
+	"personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
 }
 
 // decodeAuthFile resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT
-// token. An unknown auth_mode makes the file unreadable to Codex itself, so it is codex-error. Keys are exact.
-func decodeAuthFile(doc map[string]wipedRaw) (secret.Token, *Error) {
-	present := func(key string) bool { v, ok := doc[key]; return ok && string(v) != "null" }
+// token from doc, one validated JSON object. An unknown auth_mode makes the file unreadable to Codex itself, so it is
+// codex-error. Keys are exact.
+//
+// Every lookup reads doc where it lies (wire.Member): names match as decoded bytes, the mode is compared in place
+// with the modes Codex knows, and a value of the wrong kind is refused from its first byte. The access token, decoded
+// into a buffer cleared once the string kept is made from it, is the one copy made of anything in the file.
+func decodeAuthFile(doc []byte) (secret.Token, *Error) {
+	root := wire.Root(doc)
+	present := func(key string) bool {
+		v, ok := wire.Member(doc, root, key)
+		return ok && wire.KindOf(doc, v) != 'n'
+	}
 	mode := modeChatGPT
 	switch {
 	case present("auth_mode"):
-		var m string
-		if !decodeMember(doc["auth_mode"], '"', &m) || (m != modeChatGPT && m != modeAPIKey && !fileModes[m]) {
+		v, _ := wire.Member(doc, root, "auth_mode")
+		known := ""
+		for _, m := range fileModeList {
+			if wire.StringEquals(doc, v, m) {
+				known = m
+				break
+			}
+		}
+		if known == "" {
 			return secret.Token{}, fail(StateCodexError, "auth.json names an unknown auth_mode", nil)
 		}
-		mode = m
+		mode = known
 	case present("personal_access_token"):
 		mode = "personalAccessToken"
 	case present("bedrock_api_key"):
@@ -291,30 +283,20 @@ func decodeAuthFile(doc map[string]wipedRaw) (secret.Token, *Error) {
 		return secret.Token{}, e
 	}
 	missing := fail(StateCodexError, "auth.json has a ChatGPT sign-in without an access token", nil)
-	var tokens map[string]wipedRaw
-	if !present("tokens") || !decodeMember(doc["tokens"], '{', &tokens) {
+	// A tokens value that is not an object holds no access token.
+	tokens, ok := wire.Member(doc, root, "tokens")
+	if !ok {
 		return secret.Token{}, missing
 	}
-	var access string
-	if raw, ok := tokens["access_token"]; !ok || !decodeMember(raw, '"', &access) || access == "" {
+	a, ok := wire.Member(doc, tokens, "access_token")
+	if !ok {
 		return secret.Token{}, missing
 	}
-	return newToken(access, "file"), nil
-}
-
-// decodeMember decodes a member of auth.json into v when its first byte is kind ('"' for a string, '{' for an
-// object), and reports whether it did. Any other value is refused from its bytes, never handed to the decoder: a
-// string decoded where an object belongs is unquoted first, into a copy that is never wiped when it holds an escape.
-func decodeMember(raw wipedRaw, kind byte, v any) bool {
-	if len(raw) == 0 || raw[0] != kind {
-		return false
+	buf := make([]byte, 0, a.End-a.Start)
+	defer clear(buf[:cap(buf)])
+	buf, ok = wire.AppendString(buf, doc, a)
+	if !ok || len(buf) == 0 {
+		return secret.Token{}, missing
 	}
-	if raw[0] == '"' && stringDecoded != nil {
-		stringDecoded(raw)
-	}
-	return json.Unmarshal(raw, v) == nil
+	return newToken(string(buf), "file"), nil
 }
-
-// stringDecoded, when set, sees each string value handed to the decoder, the one kind of value that leaves a copy the
-// read does not wipe; an object's members stay wipedRaw. For tests.
-var stringDecoded func([]byte)

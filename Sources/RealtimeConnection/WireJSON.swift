@@ -12,18 +12,10 @@ package enum WireJSON {
     /// Go's `jsontext` limit: 10,000 levels are accepted, 10,001 are not.
     static let maximumDepth = 10_000
 
-    /// Whether `data` is one strict JSON value. CodexAuth reads Codex's replies and files through it.
-    /// The bytes it validates are wiped afterwards: auth.json and token replies hold credentials (AUTH-02).
+    /// Whether `data` is one strict JSON value. It is read in place and nothing of it is copied: auth.json and
+    /// token replies hold credentials (AUTH-02).
     package static func isValid(_ data: Data) -> Bool {
-        var bytes = Array(data)
-        // The validator shares the buffer; it is released before the wipe, or the wipe would copy the buffer first
-        // and clear only the copy.
-        let valid: Bool = {
-            var v = Validator(bytes)
-            return (try? v.document()) != nil
-        }()
-        wipe(&bytes)
-        return valid
+        data.withUnsafeBytes { Borrowed($0) != nil }
     }
 
     /// Zeroes `bytes` in place and returns where they were, which differs from where they were before the call when
@@ -41,10 +33,12 @@ package enum WireJSON {
     /// the mint reply and app-server events hold secrets.
     static func parse<C: Collection>(_ data: C) throws -> Node where C.Element == UInt8 {
         let doc = Document(copying: data)
-        // The validator's copy of the bytes ends inside the document's lifetime, so the wipe finds them unshared.
+        // The validator reads the document's bytes in place, inside its lifetime, so the wipe finds them unshared.
         let range = try withExtendedLifetime(doc) { () throws -> Range<Int> in
-            var v = Validator(doc.bytes)
-            return try v.document()
+            try doc.bytes.withUnsafeBytes { raw in
+                var v = Validator(raw)
+                return try v.document()
+            }
         }
         return Node(doc: doc, range: range)
     }
@@ -239,18 +233,105 @@ package enum WireJSON {
         return false
     }
 
+    /// A strict JSON document read where it lies (AUTH-02): validation, member lookup and comparison read the caller's
+    /// bytes in place and copy none of them, so a value the caller does not keep never leaves the caller's buffer,
+    /// which the caller wipes. ``string(_:)`` makes the one copy, of a value the caller keeps. The caller's bytes must
+    /// outlive the value.
+    package struct Borrowed {
+        private let b: UnsafeRawBufferPointer
+        /// The root value.
+        package let root: Range<Int>
+
+        /// nil unless `bytes` is one strict JSON value.
+        package init?(_ bytes: UnsafeRawBufferPointer) {
+            var v = Validator(bytes)
+            guard let r = try? v.document() else { return nil }
+            (b, root) = (bytes, r)
+        }
+
+        /// `{`, `[`, `"`, `0` (a number), `t`, `f` or `n`.
+        package func kind(_ v: Range<Int>) -> UInt8 {
+            let c = b[v.lowerBound]
+            return (c == 0x2D || (c >= 0x30 && c <= 0x39)) ? 0x30 : c
+        }
+
+        package func isNull(_ v: Range<Int>) -> Bool { kind(v) == UInt8(ascii: "n") }
+
+        /// The value of the member `name` of the object `object`; nil when it has none, or is no object. Names match
+        /// as decoded bytes.
+        package func member(_ object: Range<Int>, _ name: String) -> Range<Int>? {
+            guard kind(object) == UInt8(ascii: "{") else { return nil }
+            var i = Scanner.skipSpace(b, object.lowerBound + 1)
+            while b[i] != UInt8(ascii: "}") {
+                let at = i
+                i = Scanner.skipSpace(b, Scanner.skipString(b, i)) + 1  // the colon
+                let start = Scanner.skipSpace(b, i)
+                let end = Scanner.skipValue(b, start)
+                if Scanner.unescapedEquals(b, at, name.utf8) { return start..<end }
+                i = Scanner.skipSpace(b, end)
+                if b[i] == UInt8(ascii: ",") { i = Scanner.skipSpace(b, i + 1) }
+            }
+            return nil
+        }
+
+        /// Whether `v` is a string that decodes to exactly `s`.
+        package func stringEquals(_ v: Range<Int>, _ s: String) -> Bool {
+            kind(v) == UInt8(ascii: "\"") && Scanner.unescapedEquals(b, v.lowerBound, s.utf8)
+        }
+
+        /// The string `v` decoded, written straight into the new `String`'s storage; nil for any other value.
+        package func string(_ v: Range<Int>) -> String? {
+            guard kind(v) == UInt8(ascii: "\"") else { return nil }
+            var count = 0
+            var it = Scanner.Unescaped(b, at: v.lowerBound)
+            while it.next() != nil { count += 1 }
+            return String(unsafeUninitializedCapacity: count) { out in
+                var it = Scanner.Unescaped(b, at: v.lowerBound)
+                var k = 0
+                while let c = it.next() {
+                    out[k] = c
+                    k += 1
+                }
+                return k
+            }
+        }
+
+        /// A number written as an integer, without fraction or exponent, within `Int64`, as Go decodes one into an
+        /// int64; nil for any other value. Read digit by digit, in place.
+        package func int64(_ v: Range<Int>) -> Int64? {
+            guard kind(v) == 0x30 else { return nil }
+            var i = v.lowerBound
+            let negative = b[i] == UInt8(ascii: "-")
+            if negative { i += 1 }
+            var n: Int64 = 0  // accumulated negative, so Int64.min fits
+            while i < v.upperBound {
+                let c = b[i]
+                guard c >= 0x30, c <= 0x39 else { return nil }  // a fraction or an exponent
+                let (m, o1) = n.multipliedReportingOverflow(by: 10)
+                let (d, o2) = m.subtractingReportingOverflow(Int64(c - 0x30))
+                guard !o1, !o2 else { return nil }
+                n = d
+                i += 1
+            }
+            if negative { return n }
+            return n == .min ? nil : -n
+        }
+    }
+
     /// Helpers that walk a document already validated.
     enum Scanner {
         static func isSpace(_ b: UInt8) -> Bool { b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D }
 
-        static func skipSpace(_ b: [UInt8], _ i: Int) -> Int {
+        static func skipSpace<B: RandomAccessCollection>(_ b: B, _ i: Int) -> Int
+        where B.Element == UInt8, B.Index == Int {
             var i = i
             while i < b.count, isSpace(b[i]) { i += 1 }
             return i
         }
 
         /// The end of the value starting at `i`.
-        static func skipValue(_ b: [UInt8], _ i: Int) -> Int {
+        static func skipValue<B: RandomAccessCollection>(_ b: B, _ i: Int) -> Int
+        where B.Element == UInt8, B.Index == Int {
             switch b[i] {
             case UInt8(ascii: "\""):
                 return skipString(b, i)
@@ -283,7 +364,8 @@ package enum WireJSON {
 
         /// The end of the string starting at `i` (its opening quote), after the closing quote. It copies nothing: a
         /// skipped value may be a credential, and a copy could not be wiped.
-        static func skipString(_ b: [UInt8], _ i: Int) -> Int {
+        static func skipString<B: RandomAccessCollection>(_ b: B, _ i: Int) -> Int
+        where B.Element == UInt8, B.Index == Int {
             var j = i + 1
             while b[j] != UInt8(ascii: "\"") {
                 j += b[j] == UInt8(ascii: "\\") ? 2 : 1  // an escape's second byte is never a quote that ends it
@@ -294,21 +376,72 @@ package enum WireJSON {
         /// The UTF-8 bytes of the string starting at `i` (its opening quote); `i` ends after the closing quote.
         static func unescape(_ b: [UInt8], _ i: inout Int) -> [UInt8] {
             var out: [UInt8] = []
-            i += 1
-            while b[i] != UInt8(ascii: "\"") {
-                guard b[i] == UInt8(ascii: "\\") else {
-                    out.append(b[i])
+            var it = Unescaped(b, at: i)
+            while let c = it.next() { out.append(c) }
+            i = it.end
+            return out
+        }
+
+        /// Whether the string starting at `i` (its opening quote) decodes to exactly `other`. Nothing is copied.
+        static func unescapedEquals<B: RandomAccessCollection, S: Sequence>(_ b: B, _ i: Int, _ other: S) -> Bool
+        where B.Element == UInt8, B.Index == Int, S.Element == UInt8 {
+            var it = Unescaped(b, at: i)
+            var o = other.makeIterator()
+            while true {
+                let c = it.next()
+                guard c == o.next() else { return false }
+                if c == nil { return true }
+            }
+        }
+
+        /// Whether the strings starting at `x` and `y` decode to the same bytes. Nothing is copied.
+        static func unescapedEqual<B: RandomAccessCollection>(_ b: B, _ x: Int, _ y: Int) -> Bool
+        where B.Element == UInt8, B.Index == Int {
+            var p = Unescaped(b, at: x), q = Unescaped(b, at: y)
+            while true {
+                let c = p.next()
+                guard c == q.next() else { return false }
+                if c == nil { return true }
+            }
+        }
+
+        /// The decoded bytes of a validated string, one at a time, read where the string lies: an escape's bytes are
+        /// made in a register, so decoding a value, or comparing it, copies none of it into memory.
+        struct Unescaped<B: RandomAccessCollection>: IteratorProtocol where B.Element == UInt8, B.Index == Int {
+            private let b: B
+            private var i: Int
+            /// The rest of an escaped scalar's UTF-8 bytes, the next one highest.
+            private var pending: UInt32 = 0
+            private var pendingCount = 0
+
+            /// The string whose opening quote is at `quote`.
+            init(_ b: B, at quote: Int) {
+                self.b = b
+                i = quote + 1
+            }
+
+            /// Where the string ends, after its closing quote, once ``next()`` has returned nil.
+            var end: Int { i + 1 }
+
+            mutating func next() -> UInt8? {
+                if pendingCount > 0 {
+                    pendingCount -= 1
+                    return UInt8(truncatingIfNeeded: pending >> (8 * pendingCount))
+                }
+                let c = b[i]
+                if c == UInt8(ascii: "\"") { return nil }
+                guard c == UInt8(ascii: "\\") else {
                     i += 1
-                    continue
+                    return c
                 }
                 let e = b[i + 1]
                 i += 2
                 switch e {
-                case UInt8(ascii: "b"): out.append(0x08)
-                case UInt8(ascii: "f"): out.append(0x0C)
-                case UInt8(ascii: "n"): out.append(0x0A)
-                case UInt8(ascii: "r"): out.append(0x0D)
-                case UInt8(ascii: "t"): out.append(0x09)
+                case UInt8(ascii: "b"): return 0x08
+                case UInt8(ascii: "f"): return 0x0C
+                case UInt8(ascii: "n"): return 0x0A
+                case UInt8(ascii: "r"): return 0x0D
+                case UInt8(ascii: "t"): return 0x09
                 case UInt8(ascii: "u"):
                     var scalar = hex4(b, i)
                     i += 4
@@ -317,12 +450,24 @@ package enum WireJSON {
                         i += 6
                         scalar = 0x10000 + ((scalar - 0xD800) << 10) + (low - 0xDC00)
                     }
-                    out += Array(String(Character(Unicode.Scalar(scalar)!)).utf8)
-                default: out.append(e)  // " \ /
+                    switch scalar {
+                    case ..<0x80:
+                        return UInt8(scalar)
+                    case ..<0x800:
+                        (pending, pendingCount) = (0x80 | scalar & 0x3F, 1)
+                        return UInt8(0xC0 | scalar >> 6)
+                    case ..<0x10000:
+                        (pending, pendingCount) = ((0x80 | scalar >> 6 & 0x3F) << 8 | (0x80 | scalar & 0x3F), 2)
+                        return UInt8(0xE0 | scalar >> 12)
+                    default:
+                        pending = (0x80 | scalar >> 12 & 0x3F) << 16 | (0x80 | scalar >> 6 & 0x3F) << 8
+                            | (0x80 | scalar & 0x3F)
+                        pendingCount = 3
+                        return UInt8(0xF0 | scalar >> 18)
+                    }
+                default: return e  // " \ /
                 }
             }
-            i += 1
-            return out
         }
 
         static func hexDigit(_ c: UInt8) -> UInt32? {
@@ -334,21 +479,37 @@ package enum WireJSON {
             }
         }
 
-        static func hex4(_ b: [UInt8], _ i: Int) -> UInt32 {
+        static func hex4<B: RandomAccessCollection>(_ b: B, _ i: Int) -> UInt32
+        where B.Element == UInt8, B.Index == Int {
             (0..<4).reduce(0) { $0 << 4 | (hexDigit(b[i + $1]) ?? 0) }
         }
     }
 
     /// Checks a whole document without recursion, so nesting to the depth limit cannot exhaust a thread's stack.
     struct Validator {
-        let b: [UInt8]
+        let b: UnsafeRawBufferPointer
         var i = 0
 
-        init(_ b: [UInt8]) { self.b = b }
+        init(_ b: UnsafeRawBufferPointer) { self.b = b }
 
+        /// The names of one object seen so far: where each starts, by a seeded hash of its decoded bytes. Names are
+        /// compared where they lie, so checking for a duplicate copies none of them. The hash mixes one byte at a
+        /// time, as `Hasher`, which buffers what it is given, would not.
         final class Names {
-            var set: Set<[UInt8]>
-            init(_ first: [UInt8]) { set = [first] }
+            private var starts: [UInt64: [Int]] = [:]
+            private let seed = UInt64.random(in: .min ... .max)
+
+            /// Records the name at `at`; false when the object already has one that decodes the same.
+            func insert(_ b: UnsafeRawBufferPointer, _ at: Int) -> Bool {
+                var key = seed
+                var it = Scanner.Unescaped(b, at: at)
+                while let c = it.next() {
+                    key = ((key ^ UInt64(c)) &* 0x9E37_79B9_7F4A_7C15).rotateLeft(29) &* 0xBF58_476D_1CE4_E5B9
+                }
+                if let seen = starts[key], seen.contains(where: { Scanner.unescapedEqual(b, $0, at) }) { return false }
+                starts[key, default: []].append(at)
+                return true
+            }
         }
 
         private enum Frame {
@@ -389,7 +550,9 @@ package enum WireJSON {
                                 if stack.isEmpty { end = i }
                                 needValue = false
                             } else {
-                                stack.append(.object(names: Names(try name())))
+                                let names = Names()
+                                _ = names.insert(b, try name())
+                                stack.append(.object(names: names))
                                 skipSpace()
                                 try expect(":")
                             }
@@ -421,8 +584,7 @@ package enum WireJSON {
                 case (.object(let names), UInt8(ascii: ",")):
                     i += 1
                     skipSpace()
-                    let n = try name()
-                    guard names.set.insert(n).inserted else { throw Invalid() }  // a duplicate member name
+                    guard names.insert(b, try name()) else { throw Invalid() }  // a duplicate member name
                     skipSpace()
                     try expect(":")
                     needValue = true
@@ -439,12 +601,12 @@ package enum WireJSON {
             }
         }
 
-        private mutating func name() throws -> [UInt8] {
+        /// A member name, validated; returns where it starts.
+        private mutating func name() throws -> Int {
             guard peek() == UInt8(ascii: "\"") else { throw Invalid() }
             let at = i
             try string()
-            var j = at
-            return Scanner.unescape(b, &j)
+            return at
         }
 
         private mutating func literal(_ word: String) throws {
@@ -580,4 +742,8 @@ enum StrictBase64 {
         }
         return out
     }
+}
+
+extension UInt64 {
+    fileprivate func rotateLeft(_ n: UInt64) -> UInt64 { self << n | self >> (64 - n) }
 }
