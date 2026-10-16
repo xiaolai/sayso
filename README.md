@@ -13,8 +13,7 @@ Status: early. The contract and its fixtures cover every component, and Go and S
 | PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | `go/pcm16` | `PCM16` |
 | Said guard: did the model read exactly this script? | [`spec/said-guard.md`](spec/said-guard.md) | `go/saidguard` | `SaidGuard`, with ICU spell-out for `ar de es fr hi it ja ko pt` |
 
-Go also has `go/secret` (the scrubber and the redacting secret types), `go/canon` (a symmetric canonicaliser for
-scoring speech-to-text, outside the fixture contract) and `go/numwords`. Swift's `RealtimeConnection` holds the same scrubber and secret types, and `RealtimeDeadline`, a
+Go also has `go/secret` (the scrubber and the redacting secret types) and `go/numwords`. Swift's `RealtimeConnection` holds the same scrubber and secret types, and `RealtimeDeadline`, a
 helper outside the contract. `CodexAuth` builds on macOS only; the other three products also build for iOS 17.
 
 How the implementations are held to one behaviour: [`spec/parity.md`](spec/parity.md). Fixture format:
@@ -54,4 +53,4 @@ The Go tests read `../fixtures` from this checkout, and fail if the fixtures are
 
 ## Licence
 
-ISC. `go/numwords`, `go/canon` and much of the Go module come from [recite](https://github.com/xiaolai/recite).
+ISC. `go/numwords` and much of the Go module come from [recite](https://github.com/xiaolai/recite).

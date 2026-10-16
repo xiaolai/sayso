@@ -1791,7 +1791,7 @@ func (s *svSet) orShifted(src *svSet, e *svMask) {
 // ParseHanNumeral reads s as a Chinese numeral written in characters (一百一十, 两万五, 零), or as a digit string of
 // one digit or three or more (一〇八, 二〇二四), and reports false for a run that is not a well-formed numeral
 // (一五一十, 亿万, 零十), a two-digit string (三五 is "three or five", an approximation), a digit string with 两, or
-// a value that overflows. Units are read by the strict parser the said guard uses; package canon shares it.
+// a value that overflows. Units are read by the strict parser the said guard uses; recite's canonicaliser shares it.
 func ParseHanNumeral(s string) (uint64, bool) {
 	rs := []rune(s)
 	digits := len(rs) > 0

@@ -1,5 +1,5 @@
-// Package numwords spells numbers as English words. The said guard's readings,
-// the canonicaliser (package canon) and a consumer's own spoken-form rules
+// Package numwords spells numbers as English words. The said guard's readings
+// and a consumer's own spoken-form rules (recite's canonicaliser among them)
 // share it, so all of them read a digit string the same way.
 package numwords
 
