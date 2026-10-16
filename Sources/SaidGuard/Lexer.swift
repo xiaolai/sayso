@@ -142,9 +142,11 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
         } else if svFreeDash(rs, i) {
             emit(.symbol, i, i + 1, freeDash: svFreeSign(rs, i) ? .sign : .silentable)
             i += 1
-        } else if isApostrophe(r) && i > 0 && svDigit(rs[i - 1]) && !(i + 1 < rs.count && svLetter(rs[i + 1])) {
-            // A mark after a number that svUnquote(_:) kept is no quotation mark but feet or minutes ("5'", "5’10"):
-            // a spoken symbol on both sides, so a transcript cannot drop it.
+        } else if isApostrophe(r) && i > 0 && out.last?.kind == .number && prevEnd == i
+            && !(i + 1 < rs.count && svLetter(rs[i + 1]))
+        {
+            // A mark right after a number that svUnquote(_:) kept is no quotation mark but feet or minutes ("5'",
+            // "5’10", "21st’"): a spoken symbol on both sides, so a transcript cannot drop it.
             emit(.symbol, i, i + 1)
             i += 1
         } else if hanNumbers && isHanNumeral(r) && !(i + 1 < rs.count && isMark(rs[i + 1])) {

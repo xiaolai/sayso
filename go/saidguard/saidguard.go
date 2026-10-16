@@ -312,9 +312,9 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			}
 			emit(svSymbol, i, i+1, dash)
 			i++
-		case isApostrophe(r) && i > 0 && svDigit(rs[i-1]) && !(i+1 < len(rs) && svLetter(rs[i+1])):
-			// A mark after a number that svUnquote kept is no quotation mark but feet or minutes ("5'", "5’10"): a
-			// spoken symbol on both sides, so a transcript cannot drop it.
+		case isApostrophe(r) && len(out) > 0 && out[len(out)-1].kind == svNumber && prevEnd == i && !(i+1 < len(rs) && svLetter(rs[i+1])):
+			// A mark right after a number that svUnquote kept is no quotation mark but feet or minutes ("5'", "5’10",
+			// "21st’"): a spoken symbol on both sides, so a transcript cannot drop it.
 			emit(svSymbol, i, i+1, svDashNone)
 			i++
 		case hanNumbers && isHanNumeral(r) && !(i+1 < len(rs) && unicode.IsMark(rs[i+1])):

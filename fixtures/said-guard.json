@@ -4640,5 +4640,83 @@
   "language": "en",
   "expect": false,
   "note": "Accepted false mismatch: a number's mark the transcript keeps without its opener is a symbol the script's quotation marks lack."
+ },
+ {
+  "id": "r9-number-apostrophe-ordinal",
+  "component": "said-guard",
+  "script": "Came 21st’",
+  "transcript": "Came 21st",
+  "language": "en",
+  "expect": false,
+  "note": "A mark after a number with an ordinal suffix is a symbol too."
+ },
+ {
+  "id": "r9-number-apostrophe-percent",
+  "component": "said-guard",
+  "script": "Rose 5%’",
+  "transcript": "Rose 5%",
+  "language": "en",
+  "expect": false,
+  "note": "A mark after a percent sign that ends a number is a symbol too."
+ },
+ {
+  "id": "r9-marks-number-words-literal",
+  "component": "said-guard",
+  "script": "Say ‘forty-two’ now.",
+  "transcript": "Say forty-two’ now.",
+  "language": "en",
+  "expect": true,
+  "note": "A number in words keeps the trailing mark as an apostrophe on its literal reading."
+ },
+ {
+  "id": "r9-marks-number-words-joined",
+  "component": "said-guard",
+  "script": "Say ‘forty-two’ now.",
+  "transcript": "Say fortytwo’ now.",
+  "language": "en",
+  "expect": true,
+  "note": "The joined reading of a number word takes the trailing mark."
+ },
+ {
+  "id": "r9-marks-number-words-misplaced",
+  "component": "said-guard",
+  "script": "Say ‘forty-two’ now.",
+  "transcript": "Say forty’ two now.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the mark on the first word."
+ },
+ {
+  "id": "r9-marks-spellout",
+  "component": "said-guard",
+  "script": "Il a dit ‘vingt-deux’ hier.",
+  "transcript": "Il a dit vingt-deux’ hier.",
+  "language": "fr",
+  "expect": true,
+  "note": "A locale number word keeps the trailing mark on its literal reading.",
+  "requires": [
+   "spellout:fr"
+  ]
+ },
+ {
+  "id": "r9-marks-spellout-digits",
+  "component": "said-guard",
+  "script": "Il a dit ‘vingt-deux’ hier.",
+  "transcript": "Il a dit 22 hier.",
+  "language": "fr",
+  "expect": true,
+  "note": "The locale number word in quotation marks read as digits.",
+  "requires": [
+   "spellout:fr"
+  ]
+ },
+ {
+  "id": "r9-marks-spellout-misplaced",
+  "component": "said-guard",
+  "script": "Il a dit ‘vingt-deux’ hier.",
+  "transcript": "Il a dit vingt’-deux hier.",
+  "language": "fr",
+  "expect": false,
+  "note": "Control: the mark inside the number word."
  }
 ]

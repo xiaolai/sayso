@@ -1,5 +1,5 @@
 {
- "count": 856,
+ "count": 864,
  "fixtures": [
   {
    "id": "app-ready",
@@ -4975,6 +4975,58 @@
   },
   {
    "id": "r9-number-apostrophe-transcript-mark",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r9-number-apostrophe-ordinal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r9-number-apostrophe-percent",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r9-marks-number-words-literal",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r9-marks-number-words-joined",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r9-marks-number-words-misplaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r9-marks-spellout",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "r9-marks-spellout-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "r9-marks-spellout-misplaced",
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []
