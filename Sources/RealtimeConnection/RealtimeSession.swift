@@ -245,6 +245,9 @@ public final class RealtimeSession: Sendable {
     /// Whether URLSession has reported the task complete; for tests.
     var transportCompleted: Bool { events.isComplete }
 
+    /// Whether the reader holds a message nobody has taken yet; for tests.
+    var holdsBufferedMessage: Bool { inbox.holdsBuffered }
+
     /// The error for a close frame received while more events were expected; the reason is scrubbed.
     public static func closeError(code: Int, reason: String) -> RealtimeError {
         RealtimeError.connectionClosed(code: code, reason: reason)
@@ -447,6 +450,8 @@ final class Inbox: @unchecked Sendable {
         defer { lock.unlock() }
         return closing
     }
+
+    var holdsBuffered: Bool { lock.withLock { buffered != nil } }
 
     var unknownCounts: [UnknownTypeCount] {
         lock.lock()
