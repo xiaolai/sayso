@@ -7,6 +7,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import unittest
 from unittest import mock
 
@@ -70,6 +71,14 @@ class Generation(unittest.TestCase):
         for name, units in d.CLASSES.items():
             for u in units:
                 self.assertTrue(d.assigned15(u), f"{name}: {u!r}")
+
+    def test_digits_cover_every_unicode_15_block(self):
+        # As far as Python's own tables reach: every decimal digit assigned in 15.0 counts from a listed zero.
+        for cp in range(0x110000):
+            ch = chr(cp)
+            if unicodedata.category(ch) == "Nd" and d.assigned15(ch):
+                self.assertIn(cp - unicodedata.decimal(ch), d.ND_ZEROS, hex(cp))
+        self.assertTrue(all(d.assigned15(chr(z + 9)) for z in d.ND_ZEROS))
 
     def test_draw_uses_random_alone(self):
         a, b = d.Draw("x"), d.Draw("x")
