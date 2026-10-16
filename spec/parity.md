@@ -8,9 +8,9 @@ fixture is not run by an implementation that must run it.
 The components are `credentials`, `mint`, `session`, `pcm16` and `said-guard`. `fixtures/capabilities.json` is
 checked-in policy: for each implementation, the components it must implement and the capabilities it must declare.
 Go and Swift implement all five. Swift must declare `spellout:<lang>` for `ar de es fr hi it ja ko pt`, the voice
-languages of Checkmate other than `en` and `zh` (which use the said guard's own tables); Go declares none. A later
-implementation may implement fewer components and is held to exactly the ones it declares, and to all of their
-fixtures.
+languages of Checkmate other than `en` and `zh` (which use the said guard's own tables); Go declares none. Swift's
+declaration is its `saidGuardSpellOutLanguages`, so the two cannot drift apart. A later implementation may implement
+fewer components and is held to exactly the ones it declares, and to all of their fixtures.
 
 `capabilities.json` also records the said guard's revision, `saidGuardVersion` (spec/said-guard.md). Each suite fails
 when its constant (Go `saidguard.Version`, Swift `saidGuardVersion`) differs from it, so a change that raises the
