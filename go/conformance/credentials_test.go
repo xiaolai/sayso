@@ -563,6 +563,14 @@ func (w *world) check(want map[string]any, state string, err error, tok secret.T
 					p = append(p, fmt.Sprintf("the description does not name %q: %s", s, desc))
 				}
 			}
+		case "stderr": // what the child wrote to stderr, carried by a failed start; never in the description
+			got := ""
+			if e := (*codexapp.StartError)(nil); errors.As(err, &e) {
+				got = e.Stderr()
+			}
+			if got != v {
+				p = append(p, fmt.Sprintf("stderr %q, want %q", got, v))
+			}
 		case "retryAt": // Unix seconds; null for none
 			var got any
 			if e := (*codexauth.Error)(nil); errors.As(err, &e) && !e.RetryAt.IsZero() {

@@ -74,6 +74,9 @@ public final class AppServerClient: @unchecked Sendable {
     static let maxLine = 4 << 20
     /// How long close waits, once the child is gone, for its last stderr bytes.
     static let stderrDrain: TimeInterval = 0.1
+    /// How long a start that failed once the child's output ended waits for the child to exit by itself, so the exit
+    /// status it reports is the child's own, not the signal close sends.
+    static let exitWait: TimeInterval = 0.5
 
     /// The child's process ID.
     public var pid: pid_t { core.pid }
@@ -143,6 +146,10 @@ public final class AppServerClient: @unchecked Sendable {
             }
             c.userAgent = Secret.scrub(agent ?? "")
             try c.core.notify(["method": "initialized"])
+        } catch var e as AppServerError {
+            e.exitStatus = c.core.closeAfterFailedStart()
+            e.capturedStderr = c.core.stderr
+            throw e
         } catch {
             c.close()
             throw error
@@ -263,6 +270,8 @@ final class AppServerCore: @unchecked Sendable {
     /// Set before `exited` is signalled: the kernel reaped the child itself (the host ignores SIGCHLD), so its ID, and
     /// its group ID, may name another process and nothing is signalled. Guarded by `lock`.
     private var lost = false
+    /// How the child ended, once close has reaped it; "" before, or when the kernel reaped it. Guarded by `lock`.
+    private var exitStatus = ""
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
 
@@ -512,7 +521,10 @@ final class AppServerCore: @unchecked Sendable {
         let child = pid
         if reaped(by: .now()) {
             var status: Int32 = 0
-            while waitpid(child, &status, 0) == -1 && errno == EINTR {}
+            var r: pid_t
+            repeat { r = waitpid(child, &status, 0) } while r == -1 && errno == EINTR
+            // A child the kernel reaped itself leaves no status (ECHILD).
+            if r == child { lock.withLock { exitStatus = Self.describe(waitStatus: status) } }
         } else {
             let exited = exited
             Self.thread {
@@ -525,6 +537,24 @@ final class AppServerCore: @unchecked Sendable {
     }
 
     var hasExited: Bool { reaped(by: .now()) }
+
+    /// Ends the child of a start that failed and returns its exit status when it exited by itself, "" otherwise. A
+    /// child whose output ended is given ``AppServerClient/exitWait`` to exit first; a call the caller cancelled is
+    /// not waited for.
+    func closeAfterFailedStart() -> String {
+        let ended = lock.withLock { failure.map { $0.errorClass != .cancelled } ?? false }
+        let exitedFirst = reaped(by: .now() + (ended ? AppServerClient.exitWait : 0))
+        close()  // reaps a child that has exited before it returns, so the status is recorded
+        return exitedFirst ? lock.withLock { exitStatus } : ""
+    }
+
+    /// How a reaped child ended, as Go prints it: "exit status N" or "signal N"; "" for neither.
+    static func describe(waitStatus status: Int32) -> String {
+        let signal = status & 0x7F
+        if signal == 0 { return "exit status \((status >> 8) & 0xFF)" }
+        if signal != 0x7F { return "signal \(signal)" }
+        return ""  // stopped, which a reaped child is not
+    }
 
     var held: (outbound: Int, refusalBytes: Int, events: Int, eventBytes: Int) {
         lock.withLock { (out.count, refusalBytes, events.count, eventBytes) }

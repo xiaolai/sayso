@@ -98,6 +98,7 @@ with more room for an instrumented or debug build.
 | `inDescription` | strings the error description must contain |
 | `inLog` | strings some debug line so far must contain |
 | `retryAt` | when the error says the next refresh may run, in Unix seconds (`null`: it names no time) |
+| `stderr` | what the child wrote to stderr, as the error carries it from a failed start (`""`: none) |
 
 A client case has `setup.client` and drives the app-server client itself, started with the fake at
 `$binDir/codex`, the case's environment and timeout: `handler` (`record`: keep every event; `block`: never return

@@ -14,6 +14,14 @@ public struct AppServerError: ClassifiedError, Sendable, Equatable, CustomString
     /// codex-error for a failure of Codex, cancelled for a call the caller gave up, internal for a configuration the
     /// client refused, as in Go.
     public let errorClass: ErrorClass
+    /// For a start that failed once the child was running: "exit status N" or "signal N" when the child exited by
+    /// itself before it was stopped, as Go's StartError; "" otherwise. Part of ``description``.
+    public internal(set) var exitStatus = ""
+    /// For a start that failed once the child was running, the first 64 KiB the child wrote to stderr, scrubbed when
+    /// captured and again when read; "" otherwise. Never part of ``description`` or reflection: the scrubber cannot
+    /// recognise every credential format, so showing it is the caller's choice, as with ``AppServerClient/stderr``.
+    public var stderr: String { Secret.scrub(capturedStderr) }
+    var capturedStderr = ""
 
     /// Both strings are scrubbed.
     public init(_ message: String, rpcCode: Int? = nil, rpcMessage: String = "", errorClass: ErrorClass = .codexError) {
@@ -28,14 +36,19 @@ public struct AppServerError: ClassifiedError, Sendable, Equatable, CustomString
 
     /// Scrubbed whole when formatted, so a secret registered since is removed too.
     public var description: String {
-        Secret.scrub(rpcCode.map { "\(message): JSON-RPC error \($0)" } ?? message)
+        var s = rpcCode.map { "\(message): JSON-RPC error \($0)" } ?? message
+        if !exitStatus.isEmpty { s += " (\(exitStatus))" }
+        return Secret.scrub(s)
     }
 
-    /// Reflection shows what `description` shows; `rpcMessage` stays out, as there.
+    /// Reflection shows what `description` shows; `rpcMessage` and the stderr stay out, as there.
     public var customMirror: Mirror {
         Mirror(
-            self, children: ["rpcCode": rpcCode as Any, "message": Secret.scrub(message), "errorClass": errorClass],
-            displayStyle: .struct)
+            self,
+            children: [
+                "rpcCode": rpcCode as Any, "message": Secret.scrub(message), "errorClass": errorClass,
+                "exitStatus": exitStatus,
+            ], displayStyle: .struct)
     }
 }
 

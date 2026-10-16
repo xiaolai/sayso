@@ -1,5 +1,5 @@
 {
- "count": 1045,
+ "count": 1049,
  "fixtures": [
   {
    "id": "app-ready",
@@ -129,6 +129,30 @@
   },
   {
    "id": "app-crash",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-crash-reports-exit-and-stderr",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-crash-by-signal",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-initialize-timeout-names-no-exit",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-refresh-start-crash-keeps-stderr",
    "file": "app-server/app-server.jsonl",
    "component": "credentials",
    "requires": []

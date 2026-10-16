@@ -112,6 +112,13 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.
+- **A failed start.** When the start fails once the child is running (the handshake below fails, times out or is
+  cancelled), the client closes the child and the error carries what it left: the stderr, scrubbed when captured and
+  again when read, which no description, formatting path, log line or reflection shows; and, for a child that
+  exited by itself, its exit status, written `exit status N` or `signal N` and named in the description. A child
+  whose output ended is given 0.5 s to exit by itself first; a child the client had to stop, or one the kernel
+  reaped itself, names no exit status: the signal would be the client's own, or the status is gone. The credentials
+  error keeps both, through its cause in Go and as its own `stderr` in Swift, the backoff's refusals included.
 - **Sequence.**
   1. `initialize` with `clientInfo` and `capabilities`, which is empty unless the caller asks for the experimental
      API (`{"experimentalApi": true}`); the version is the number after the first `/` in `userAgent`. A version below

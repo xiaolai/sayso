@@ -404,6 +404,9 @@ final class CredentialWorld {
                 for s in v as? [String] ?? [] where !description.contains(s) {
                     p.append("the description does not name \(s.debugDescription): \(description)")
                 }
+            case "stderr":  // what the child wrote to stderr, carried by a failed start; never in the description
+                let got = (error as? CodexAuthError)?.stderr ?? ""
+                if got != v as? String { p.append("stderr \(got.debugDescription), want \(v)") }
             case "retryAt":  // Unix seconds; null for none
                 let at = (error as? CodexAuthError)?.retryAt
                 let got: Any = at.map { NSNumber(value: Int64($0.timeIntervalSince1970)) } ?? NSNull()
