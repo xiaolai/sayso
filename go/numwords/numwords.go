@@ -51,8 +51,12 @@ func Cardinal(n uint64) []string {
 	panic("unreachable")
 }
 
-// Digits reads an ASCII digit string one digit at a time.
+// Digits reads an ASCII digit string one digit at a time: "07" is "zero", "seven". It returns nil when ds holds
+// anything but the digits 0-9, so a caller's mistake reads as no words, never as a crash; "" reads as none.
 func Digits(ds string) []string {
+	if !asciiDigits(ds) {
+		return nil
+	}
 	w := make([]string, 0, len(ds))
 	for _, d := range ds {
 		w = append(w, ones[d-'0'])
@@ -61,8 +65,12 @@ func Digits(ds string) []string {
 }
 
 // Integer reads an ASCII digit string as a cardinal, or digit by digit when it
-// has a leading zero or exceeds MaxCardinal.
+// has a leading zero or exceeds MaxCardinal. It returns nil when ds is empty or
+// holds anything but the digits 0-9.
 func Integer(ds string) []string {
+	if ds == "" || !asciiDigits(ds) {
+		return nil
+	}
 	if len(ds) > 1 && ds[0] == '0' || len(ds) > 15 {
 		return Digits(ds)
 	}
@@ -74,6 +82,16 @@ func Integer(ds string) []string {
 		return Digits(ds)
 	}
 	return Cardinal(n)
+}
+
+// asciiDigits reports whether s holds only the digits 0-9.
+func asciiDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 var ordinalIrregular = map[string]string{

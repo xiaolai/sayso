@@ -32,3 +32,31 @@ func TestNumberWords(t *testing.T) {
 		t.Error("hundred is not a small value")
 	}
 }
+
+// Digits and Integer read any string without panicking: nil unless it holds only ASCII digits (and, for Integer, is
+// not empty); otherwise one word per digit, and a reading.
+func FuzzDigits(f *testing.F) {
+	for _, s := range []string{"", "0", "007", "1a", "\u0663", "-1", "+1", "12345678901234567890", "9\u0301", "\xff"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		w, n := Digits(s), Integer(s)
+		if !asciiDigits(s) {
+			if w != nil || n != nil {
+				t.Fatalf("%q: Digits %q, Integer %q; want nil for a string that is not all digits", s, w, n)
+			}
+			return
+		}
+		if len(w) != len(s) || w == nil {
+			t.Fatalf("%q: Digits %q, want one word per digit", s, w)
+		}
+		for i, word := range w {
+			if word != ones[s[i]-'0'] {
+				t.Fatalf("%q: digit %d read as %q", s, i, word)
+			}
+		}
+		if (s == "") != (n == nil) {
+			t.Fatalf("%q: Integer %q", s, n)
+		}
+	})
+}
