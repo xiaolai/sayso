@@ -61,6 +61,26 @@ final class SessionLifecycleTests: XCTestCase {
         await session.close()
     }
 
+    /// The handshake timeout bounds the handshake only. The request carries it as `timeoutInterval`, which URLSession
+    /// could also apply as an idle limit on the task; a session idle for more than twice that still receives.
+    func testIdleLongerThanTheHandshakeTimeout() async throws {
+        let server = try FakeWebSocketServer(
+            messages: [Data(#"{"type":"input_audio_buffer.committed","item_id":"i"}"#.utf8)], after: 2)
+        defer { server.stop() }
+        let client = try FakeOpenAI.client(port: server.port)
+        let session = try await RealtimeSession.open(
+            client: client, secret: ClientSecret(bearer: "ek_idle", expiresAt: Date()),
+            configuration: RealtimeSession.Configuration(
+                url: RealtimeSession.url(model: "m", base: URL(string: "ws://127.0.0.1:\(server.port)")!),
+                handshakeTimeout: 1, readLimit: 1 << 20))
+        try await Task.sleep(nanoseconds: 2_500_000_000)  // no call waiting while the connection is idle
+        let m = try await RealtimeDeadline.run(seconds: 10, close: { Task { await session.close() } }) {
+            try await session.next()
+        }
+        XCTAssertEqual(m.event, .inputCommitted(itemID: "i"))
+        await session.close()
+    }
+
     func testNextAfterFailureThenCloseIsClosed() async throws {
         let server = try FakeWebSocketServer(message: Data(#"{"type":"input_audio_buffer.committed","item_id":"i"}"#.utf8))
         defer { server.stop() }

@@ -145,8 +145,9 @@ final class FakeWebSocketServer: @unchecked Sendable {
 
     convenience init(message: Data) throws { try self.init(messages: [message]) }
 
-    /// Sends `messages` in order to each client, then waits for the client's first message or close.
-    init(messages: [Data]) throws {
+    /// Sends `messages` in order to each client, `after` seconds once it is connected, then waits for the client's
+    /// first message or close.
+    init(messages: [Data], after delay: TimeInterval = 0) throws {
         let parameters = FakeOpenAI.loopbackParameters(NWParameters(tls: nil, tcp: .init()))
         let options = NWProtocolWebSocket.Options()
         options.autoReplyPing = true
@@ -159,8 +160,11 @@ final class FakeWebSocketServer: @unchecked Sendable {
                 guard case .ready = state else { return }
                 let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
                 let context = NWConnection.ContentContext(identifier: "message", metadata: [metadata])
-                for message in messages {
-                    connection.send(content: message, contentContext: context, isComplete: true, completion: .idempotent)
+                queue.asyncAfter(deadline: .now() + delay) {
+                    for message in messages {
+                        connection.send(
+                            content: message, contentContext: context, isComplete: true, completion: .idempotent)
+                    }
                 }
                 connection.receiveMessage { _, _, _, _ in connection.cancel() }
             }
