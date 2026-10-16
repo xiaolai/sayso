@@ -20,7 +20,7 @@ HEAD = {"id", "component", "note", "requires"}
 CREDENTIAL_EXPECT = {
     "state", "class", "token", "expiresAt", "mode", "codexVersion", "spawns", "argv", "requests", "envAbsent",
     "envEquals", "pathStartsWith", "binDir", "childrenExited", "closeWithinMs", "serverRequestAnswered", "outbound",
-    "refreshCalls", "notInDescription",
+    "refreshCalls", "notInDescription", "retryAt", "inDescription", "inLog",
     # client cases (setup.client)
     "startFails", "calls", "callError", "events", "eventCount", "eventSequence", "typedResults",
 }
