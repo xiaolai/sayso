@@ -210,7 +210,11 @@ final class AppServerQueueTests: XCTestCase {
         while c.held.outbound != 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.002) }
         XCTAssertEqual(c.held.outbound, 2, "the call was not held behind the answer being encoded")
         release.signal()
-        XCTAssertEqual(finished.wait(timeout: .now() + 5), .success, "the call did not return")
+        // reply is read only once the worker has finished writing it.
+        guard finished.wait(timeout: .now() + 5) == .success else {
+            XCTFail("the call did not return")
+            return
+        }
         XCTAssertEqual((reply as? [String: Any])?["order"] as? [String], ["srv-1", "call"])
     }
 
@@ -304,10 +308,13 @@ final class AppServerQueueTests: XCTestCase {
         seen.release.signal()  // before close: the held events drain
         XCTAssertEqual(seen.all.wait(timeout: .now() + 60), .success, "the held events were not delivered")
         c.close()
+        // close does not wait for a handler already running: the record is final only once the event thread ends.
+        XCTAssertTrue(c.waitForEventLoop(timeout: 5), "the event thread did not end")
         let methods = seen.lock.withLock { seen.methods }
         XCTAssertEqual(methods.count, maxEvents)
-        XCTAssertEqual(methods.first, "e0")
-        XCTAssertEqual(methods.last, "e\(maxEvents - 1)")
+        if let i = methods.indices.first(where: { methods[$0] != "e\($0)" }) {
+            XCTFail("event \(i) is \(methods[i]), want e\(i)")
+        }
     }
 }
 #endif

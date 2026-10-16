@@ -124,6 +124,12 @@ final class AppServerLifecycleTests: XCTestCase {
         let c = try start(script, timeout: 5) { e in
             r.record(e)
         }
+        // A throw or a failed wait below must not leave the event thread blocked in the seam; an extra signal is
+        // harmless.
+        defer {
+            release.signal()
+            c.close()
+        }
         c.setTestSeams(eventAdmitted: {
             let isFirst = once.withLock { () -> Bool in
                 defer { first = false }
@@ -136,7 +142,14 @@ final class AppServerLifecycleTests: XCTestCase {
         })
         _ = try c.call("echo")  // its reply follows the three events
         XCTAssertEqual(admitted.wait(timeout: .now() + 5), .success, "no event was admitted")
-        c.close()  // "a" is taken; its handler has not been called
+        // "a" is taken; its handler has not been called. close runs on a worker so a close that waited for the
+        // handler fails the bounded wait instead of deadlocking the test.
+        let closed = DispatchSemaphore(value: 0)
+        Thread {
+            c.close()
+            closed.signal()
+        }.start()
+        XCTAssertEqual(closed.wait(timeout: .now() + 5), .success, "close waited for the admitted event's handler")
         release.signal()
         XCTAssertTrue(c.waitForEventLoop(timeout: 5), "the event thread did not end")
         XCTAssertEqual(r.seen, ["a"])
