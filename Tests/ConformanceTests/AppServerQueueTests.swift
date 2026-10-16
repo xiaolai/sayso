@@ -77,6 +77,17 @@ final class AppServerQueueTests: XCTestCase {
         XCTAssertEqual(held.refusalBytes, 0, "refusal charge kept after the failure")
     }
 
+    /// A client closed as soon as it starts keeps nothing queued, and a later call fails.
+    func testImmediateClose() throws {
+        let (script, cleanup) = try fakeCodex("for line in sys.stdin:\n    pass\n")
+        defer { cleanup() }
+        let c = try start(script, timeout: 5) { _ in }
+        c.close()
+        let held = c.held
+        XCTAssertEqual(held.outbound + held.events + held.refusalBytes + held.eventBytes, 0, "kept after close: \(held)")
+        XCTAssertThrowsError(try c.call("echo"))
+    }
+
     /// An answer admitted before a request is written ahead of it, and one admitted while the request's call waits is
     /// written while it waits. The child is the barrier: it sends srv-2 only after it has read the request, and
     /// answers the request only after it has read the answer to srv-2, reporting the order it read them in.
@@ -148,5 +159,39 @@ final class AppServerQueueTests: XCTestCase {
         XCTAssertEqual(refused, 24)
     }
 
+    /// After an overflow, the events held before it are delivered once the handler is released, before close; the
+    /// event that overflowed and everything after it are not.
+    func testEventsHeldAtAnOverflowAreDelivered() throws {
+        let maxEvents = 65_536
+        let (script, cleanup) = try fakeCodex(
+            "call = json.loads(sys.stdin.readline())\n"
+                + "sys.stdout.write(''.join(json.dumps({'method': 'e%d' % i}) + '\\n' for i in range(\(maxEvents + 10))))\n"
+                + "sys.stdout.write(json.dumps({'id': call['id'], 'result': {}}) + '\\n')\nsys.stdout.flush()\n"
+                + "time.sleep(30)\n")
+        defer { cleanup() }
+        final class Seen: @unchecked Sendable {
+            let lock = NSLock()
+            var methods: [String] = []
+            let release = DispatchSemaphore(value: 0)
+            let all = DispatchSemaphore(value: 0)
+        }
+        let seen = Seen()
+        let c = try start(script, timeout: 60) { e in
+            let n = seen.lock.withLock { () -> Int in
+                seen.methods.append(e.method)
+                return seen.methods.count
+            }
+            if n == 1 { seen.release.wait() }
+            if n == maxEvents { seen.all.signal() }
+        }
+        XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("faster than the handler"), "\($0)") }
+        seen.release.signal()  // before close: the held events drain
+        XCTAssertEqual(seen.all.wait(timeout: .now() + 60), .success, "the held events were not delivered")
+        c.close()
+        let methods = seen.lock.withLock { seen.methods }
+        XCTAssertEqual(methods.count, maxEvents)
+        XCTAssertEqual(methods.first, "e0")
+        XCTAssertEqual(methods.last, "e\(maxEvents - 1)")
+    }
 }
 #endif

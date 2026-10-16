@@ -1,5 +1,5 @@
 #if os(macOS)
-import CodexAuth
+@testable import CodexAuth
 import Darwin
 import Foundation
 import XCTest
@@ -92,8 +92,12 @@ final class AppServerLifecycleTests: XCTestCase {
             closed.signal()
         }.start()
         XCTAssertEqual(closed.wait(timeout: .now() + 5), .success, "close waited for the running handler")
+        // The barrier is the state close leaves: the queue is released and no event can be queued after close began,
+        // so once the running handler returns there is nothing left to admit.
+        let held = c.held
+        XCTAssertEqual(held.events, 0, "events kept after close")
+        XCTAssertEqual(held.eventBytes, 0, "event charge kept after close")
         r.release.signal()
-        usleep(50_000)  // a second event would be admitted at once; none may be
         XCTAssertEqual(r.seen, ["first"])
     }
 
