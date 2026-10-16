@@ -103,5 +103,32 @@ final class CredentialsRound5Tests: XCTestCase {
         XCTAssertFalse(String(reflecting: e).contains(canary))
         XCTAssertFalse(e.description.contains(canary))
     }
+
+    /// A value-type error wrapping the next one, as many apps write them: each bridge makes a temporary object, which
+    /// must not read as a loop when a later temporary reuses its address.
+    private struct Wrapper: CustomNSError {
+        let underlying: Error
+        var errorUserInfo: [String: Any] { [NSUnderlyingErrorKey: underlying] }
+    }
+
+    func testValueTypeChainsAreFollowedToTheEnd() {
+        var e: Error = CodexAuthError(.expired, message: "expired")
+        for _ in 0..<500 { e = Wrapper(underlying: e) }
+        XCTAssertEqual(CodexAuthError.state(of: e), .expired)
+    }
+
+    /// A real loop of reference-type errors ends the walk instead of running forever.
+    private final class Loop: CustomNSError, @unchecked Sendable {
+        var next: Loop?
+        var errorUserInfo: [String: Any] { next.map { [NSUnderlyingErrorKey: $0] } ?? [:] }
+    }
+
+    func testAReferenceLoopEndsTheWalk() {
+        let a = Loop(), b = Loop()
+        a.next = b
+        b.next = a
+        defer { a.next = nil }
+        XCTAssertEqual(CodexAuthError.state(of: a), .codexError)
+    }
 }
 #endif

@@ -78,13 +78,17 @@ public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertibl
     /// The whole chain is followed; a chain that loops back to an error already seen ends there.
     public static func state(of error: Error?) -> CodexAuthState {
         var next = error
-        var seen = Set<ObjectIdentifier>()
+        // Every object seen is kept until the walk ends: an identifier alone would let a released temporary (the
+        // box bridging gives a Swift value) free its address for the next one, which would then read as a loop.
+        var seen: [ObjectIdentifier: AnyObject] = [:]
         while let e = next {
             if let a = e as? CodexAuthError { return a.state }
             let underlying = (e as NSError).userInfo[NSUnderlyingErrorKey]
             // The stored object's identity: a loop of NSErrors repeats objects, while bridging a Swift error makes a
             // new box each time, which is why the check is on what userInfo holds.
-            if let object = underlying as AnyObject?, !seen.insert(ObjectIdentifier(object)).inserted { break }
+            if let object = underlying as AnyObject? {
+                guard seen.updateValue(object, forKey: ObjectIdentifier(object)) == nil else { break }
+            }
             next = underlying as? Error
         }
         return error == nil ? .ready : .codexError
