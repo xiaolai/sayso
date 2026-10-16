@@ -36,7 +36,11 @@ Finder has no login-shell `PATH`: `/opt/homebrew/bin`, `/usr/local/bin`, then `~
 `~/.volta/bin`, `~/.bun/bin`, `~/Library/pnpm`, then every `~/.nvm/versions/node/*/bin`, newest version first by
 numeric comparison (a link named like a version is not a version folder). The result is absolute, a regular file,
 and executable by this process (`access(X_OK)`: an execute bit for other users only does not stop the search). A
-path holding a NUL matches nothing. An explicit path that does not resolve is `no-codex`, never a fall-through to the
+path holding a NUL matches nothing. A file every user can change is not used: one writable by all, or reached
+through a folder writable by all (links followed as the system follows them, each link's own folder included; a
+sticky folder owned by the user or root, holding an entry owned by one of them, does not count). A search skips it;
+an explicit path to it is `no-codex`. This is world-write hardening, not a judgement of the installation's owners:
+group write (a multi-user Homebrew prefix), ACLs, owners and the interpreter a script names (`node`) are not checked. An explicit path that does not resolve is `no-codex`, never a fall-through to the
 list. Version components compare as integers; a non-numeric one is 0 and one too large for a 64-bit integer saturates
 (Go's `strconv.Atoi`).
 

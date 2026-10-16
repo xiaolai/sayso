@@ -64,10 +64,11 @@ func nvmBins(home string) []string {
 func Resolve(explicit, path string, candidates []string) (string, error) {
 	if explicit != "" {
 		if strings.Contains(explicit, "/") {
-			if p, ok := executable(explicit); ok {
+			p, why := executable(explicit)
+			if why == "" {
 				return p, nil
 			}
-			return "", &resolveError{explicit: sealed(explicit), reason: "is not an executable file"}
+			return "", &resolveError{explicit: sealed(explicit), reason: why}
 		}
 		if p, ok := lookIn(filepath.SplitList(path), explicit); ok {
 			return p, nil
@@ -118,28 +119,33 @@ func lookIn(dirs []string, name string) (string, bool) {
 		if d == "" || !filepath.IsAbs(d) || strings.ContainsRune(d, 0) {
 			continue
 		}
-		if p, ok := executable(filepath.Join(d, name)); ok {
+		if p, why := executable(filepath.Join(d, name)); why == "" {
 			return p, true
 		}
 	}
 	return "", false
 }
 
-// executable returns the absolute form of p when it is a regular file this process may execute: an execute bit for
-// another user only would stop the search at a file that cannot start.
-func executable(p string) (string, bool) {
+// executable returns the absolute form of p when it is a regular file this process may execute (an execute bit for
+// another user only would stop the search at a file that cannot start) and that not every user can change; otherwise
+// why not.
+func executable(p string) (string, string) {
+	const notExecutable = "is not an executable file"
 	if strings.ContainsRune(p, 0) {
-		return "", false
+		return "", notExecutable
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
-		return "", false
+		return "", notExecutable
 	}
 	fi, err := os.Stat(abs)
 	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 || syscall.Access(abs, xOK) != nil {
-		return "", false
+		return "", notExecutable
 	}
-	return abs, true
+	if changeableByOthers(abs) {
+		return "", "is writable by every user, or lies in a folder that is"
+	}
+	return abs, ""
 }
 
 // xOK is access(2)'s X_OK.

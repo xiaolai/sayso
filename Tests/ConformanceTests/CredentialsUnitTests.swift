@@ -82,6 +82,48 @@ final class CredentialsUnitTests: XCTestCase {
         XCTAssertEqual(nvm, ["\(node)/v20.0.0/bin"])
     }
 
+    /// A Codex is refused when every user can change it, as in Go: the file is writable by all, or a folder read on
+    /// the way to it, a link's own folder included, is; a sticky folder of this user's is not such a folder. Owners
+    /// and group write are not judged. A search skips such a Codex and takes the next; an explicit one is refused.
+    func testCodexEveryoneCanChangeIsRefused() throws {
+        let tmp = try XCTUnwrap(realpath(NSTemporaryDirectory(), nil).map { p in defer { free(p) }; return String(cString: p) })
+        let root = tmp + "/sayso-writable-\(UUID().uuidString)"
+        let dirs: [(String, mode_t)] = [
+            ("safe", 0o755), ("safe/bin", 0o755), ("safe/lib", 0o755), ("open", 0o777), ("open/deep", 0o755),
+            ("sticky", 0o1777), ("group", 0o775),
+        ]
+        defer {
+            for (d, _) in dirs { chmod(root + "/" + d, 0o755) }
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        for (d, _) in dirs { try FileManager.default.createDirectory(atPath: root + "/" + d, withIntermediateDirectories: true) }
+        for (f, mode) in [
+            ("safe/codex", 0o755), ("safe/lib/codex.js", 0o755), ("safe/all", 0o757), ("open/codex", 0o755),
+            ("open/deep/codex", 0o755), ("sticky/codex", 0o755), ("group/codex", 0o775),
+        ] as [(String, mode_t)] {
+            XCTAssert(FileManager.default.createFile(atPath: root + "/" + f, contents: Data("#!/bin/sh\n".utf8)))
+            XCTAssertEqual(chmod(root + "/" + f, mode), 0)
+        }
+        for (l, target) in [
+            ("safe/bin/codex", "../lib/codex.js"), ("safe/to-open", "../open/codex"), ("open/to-safe", "../safe/codex"),
+            ("safe/loop", "loop"), ("safe/abs", root + "/safe/lib/codex.js"),
+        ] {
+            try FileManager.default.createSymbolicLink(atPath: root + "/" + l, withDestinationPath: target)
+        }
+        for (d, mode) in dirs { XCTAssertEqual(chmod(root + "/" + d, mode), 0) }
+        for (path, want) in [
+            ("safe/codex", false), ("safe/bin/codex", false), ("safe/abs", false), ("sticky/codex", false),
+            ("group/codex", false), ("safe/all", true), ("open/codex", true), ("open/deep/codex", true),
+            ("open/to-safe", true), ("safe/to-open", true), ("safe/loop", true), ("safe/missing", true), ("safe", true),
+        ] {
+            XCTAssertEqual(CodexExecutable.changeableByOthers(root + "/" + path), want, path)
+        }
+        XCTAssertEqual(
+            CodexExecutable.resolve(explicit: nil, path: root + "/open:" + root + "/safe", candidates: []),
+            root + "/safe/codex")
+        XCTAssertNil(CodexExecutable.resolve(explicit: root + "/open/codex", path: "", candidates: []))
+    }
+
     /// Callers that refused a token while a refresh ran take its result, even when Codex returned the same bearer.
     func testRefusalsShareARefreshThatReturnedTheSameBearer() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

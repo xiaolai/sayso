@@ -57,16 +57,60 @@ public enum CodexExecutable {
         return nil
     }
 
-    /// The absolute, lexically cleaned form of `p` when it is a regular file this process may execute: an execute
-    /// bit for another user only would stop the search at a file that cannot start. A NUL, which the system would
-    /// read as the end of the path, matches nothing.
+    /// The absolute, lexically cleaned form of `p` when it is a regular file this process may execute (an execute
+    /// bit for another user only would stop the search at a file that cannot start) and that not every user can
+    /// change. A NUL, which the system would read as the end of the path, matches nothing.
     private static func executable(_ p: String) -> String? {
         guard !p.utf8.contains(0) else { return nil }
         let abs = clean(p.utf8.first == 0x2F ? p : join(FileManager.default.currentDirectoryPath, p))
         var st = stat()
-        guard stat(abs, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_mode & 0o111 != 0, access(abs, X_OK) == 0
+        guard stat(abs, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_mode & 0o111 != 0, access(abs, X_OK) == 0,
+            !changeableByOthers(abs)
         else { return nil }
         return abs
+    }
+
+    /// Whether every user of the machine could change what the absolute path `p` runs, as in Go: the file it names, or
+    /// a folder whose entries are read on the way to it, is writable by everyone. Links are followed as the system
+    /// follows them, and the folder holding each link counts, since replacing the link changes the file. A sticky
+    /// folder (/tmp) owned by this user or by root does not count, as long as the entry read there is owned by one of
+    /// them too. Anything that cannot be read counts as changeable. Group write, ACLs, owners and the interpreter a
+    /// script names are not judged (spec/credentials.md, executable).
+    static func changeableByOthers(_ p: String) -> Bool {
+        let uid = getuid()
+        func trusted(_ owner: uid_t) -> Bool { owner == uid || owner == 0 }
+        func names(_ path: String) -> [String] {
+            path.utf8.split(separator: 0x2F).map { String(decoding: $0, as: UTF8.self) }.filter { $0 != "." }
+        }
+        var rest = names(p)[...]
+        var dir = "/"
+        var hops = 0
+        while let name = rest.popFirst() {
+            if name == ".." {
+                dir = dirname(dir)  // dir holds no link, so its parent is the one the system walks to
+                continue
+            }
+            var d = stat()
+            guard lstat(dir, &d) == 0 else { return true }
+            let open = d.st_mode & S_IWOTH != 0
+            if open && !(d.st_mode & S_ISVTX != 0 && trusted(d.st_uid)) { return true }
+            let next = join(dir, name)
+            var st = stat()
+            guard lstat(next, &st) == 0, !open || trusted(st.st_uid) else { return true }
+            if st.st_mode & S_IFMT == S_IFLNK {
+                hops += 1
+                var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
+                let n = readlink(next, &buffer, Int(PATH_MAX))
+                guard n > 0, hops <= 40 else { return true }  // 40: the system's own limit (ELOOP)
+                let target = String(decoding: buffer[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                if target.utf8.first == 0x2F { dir = "/" }
+                rest = (names(target) + rest)[...]
+                continue
+            }
+            if rest.isEmpty { return st.st_mode & S_IFMT != S_IFREG || st.st_mode & S_IWOTH != 0 }  // the file itself
+            dir = next
+        }
+        return true  // p names "/", no file
     }
 
     /// Whether dotted numeric version `a` is below `b`. Missing or non-numeric components count as zero; a component
