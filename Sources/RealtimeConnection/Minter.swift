@@ -113,7 +113,8 @@ public struct Minter: SecretSource {
 
     /// Reads the secret from a 2xx mint reply, taking the reply: it holds the secret, so its body is wiped on every
     /// exit. The reply is released before the wipe, since while it shares the body's storage the wipe would copy the
-    /// storage first and clear only the copy.
+    /// storage first and clear only the copy. The body is read where it lies (``WireJSON/Borrowed``), and the value
+    /// is checked there, so the `String` kept is the one copy made of it.
     static func secret(from reply: inout HTTPReply?) throws -> ClientSecret {
         let status = reply?.status ?? 0
         let requestID = reply?.headers["x-request-id"] ?? ""
@@ -124,15 +125,17 @@ public struct Minter: SecretSource {
         func refuse(_ message: String) -> RealtimeError {
             RealtimeError(.protocol, status: status, message: message, requestID: requestID)
         }
-        guard let root = try? WireJSON.parse(body), let fields = try? WireJSON.Object(root) else {
-            throw refuse("mint reply is not valid JSON")
+        return try body.withUnsafeBytes { raw in
+            guard let doc = WireJSON.Borrowed(raw), doc.kind(doc.root) == UInt8(ascii: "{") else {
+                throw refuse("mint reply is not valid JSON")
+            }
+            guard let e = doc.member(doc.root, "expires_at"), let expires = doc.int64(e) else {
+                throw refuse("mint reply lacks an integer expires_at")
+            }
+            guard let v = doc.member(doc.root, "value"), let value = doc.string(v, atMost: Self.maximumSecretBytes),
+                !value.isEmpty
+            else { throw refuse("mint reply value is missing, empty or longer than 4096 bytes") }
+            return ClientSecret(bearer: value, expiresAtUnix: expires)
         }
-        guard let expires = try? fields.int("expires_at") else {
-            throw refuse("mint reply lacks an integer expires_at")
-        }
-        guard let value = try? fields.string("value"), !value.isEmpty, value.utf8.count <= Self.maximumSecretBytes else {
-            throw refuse("mint reply value is missing, empty or longer than 4096 bytes")
-        }
-        return ClientSecret(bearer: value, expiresAtUnix: expires)
     }
 }

@@ -100,11 +100,10 @@ package enum WireJSON {
         /// The value's exact text.
         var raw: String { String(decoding: bytes[range], as: UTF8.self) }
 
-        /// A string node's value.
+        /// A string node's value, decoded straight into the `String`'s storage (``Scanner/string(_:at:atMost:)``).
         func string() throws -> String {
-            guard kind == UInt8(ascii: "\"") else { throw Invalid() }
-            var i = range.lowerBound
-            return String(decoding: Scanner.unescape(bytes, &i), as: UTF8.self)
+            guard kind == UInt8(ascii: "\""), let s = Scanner.string(bytes, at: range.lowerBound) else { throw Invalid() }
+            return s
         }
 
         /// An object's members, keyed by the bytes of their names: a `String` key would merge canonically
@@ -279,21 +278,11 @@ package enum WireJSON {
             kind(v) == UInt8(ascii: "\"") && Scanner.unescapedEquals(b, v.lowerBound, s.utf8)
         }
 
-        /// The string `v` decoded, written straight into the new `String`'s storage; nil for any other value.
-        package func string(_ v: Range<Int>) -> String? {
+        /// The string `v` decoded, written straight into the new `String`'s storage; nil for any other value, and for
+        /// one that decodes to more than `limit` bytes, which is refused before any `String` of it is made.
+        package func string(_ v: Range<Int>, atMost limit: Int = .max) -> String? {
             guard kind(v) == UInt8(ascii: "\"") else { return nil }
-            var count = 0
-            var it = Scanner.Unescaped(b, at: v.lowerBound)
-            while it.next() != nil { count += 1 }
-            return String(unsafeUninitializedCapacity: count) { out in
-                var it = Scanner.Unescaped(b, at: v.lowerBound)
-                var k = 0
-                while let c = it.next() {
-                    out[k] = c
-                    k += 1
-                }
-                return k
-            }
+            return Scanner.string(b, at: v.lowerBound, atMost: limit)
         }
 
         /// A number written as an integer, without fraction or exponent, within `Int64`, as Go decodes one into an
@@ -373,13 +362,41 @@ package enum WireJSON {
             return j + 1
         }
 
-        /// The UTF-8 bytes of the string starting at `i` (its opening quote); `i` ends after the closing quote.
+        /// The UTF-8 bytes of the string starting at `i` (its opening quote); `i` ends after the closing quote. They are
+        /// counted first and written into an array of that size: one grown as it is written frees each outgrown
+        /// buffer as it is.
         static func unescape(_ b: [UInt8], _ i: inout Int) -> [UInt8] {
-            var out: [UInt8] = []
+            var count = 0
             var it = Unescaped(b, at: i)
+            while it.next() != nil { count += 1 }
+            var out: [UInt8] = []
+            out.reserveCapacity(count)
+            it = Unescaped(b, at: i)
             while let c = it.next() { out.append(c) }
             i = it.end
             return out
+        }
+
+        /// The string starting at `quote` decoded, written straight into the new `String`'s storage: its bytes are
+        /// counted first, so no buffer grows and no other copy of the value is made. nil when it decodes to more than
+        /// `limit` bytes, before any `String` is made.
+        static func string<B: RandomAccessCollection>(_ b: B, at quote: Int, atMost limit: Int = .max) -> String?
+        where B.Element == UInt8, B.Index == Int {
+            var count = 0
+            var it = Unescaped(b, at: quote)
+            while it.next() != nil {
+                count += 1
+                if count > limit { return nil }
+            }
+            return String(unsafeUninitializedCapacity: count) { out in
+                var it = Unescaped(b, at: quote)
+                var k = 0
+                while let c = it.next() {
+                    out[k] = c
+                    k += 1
+                }
+                return k
+            }
         }
 
         /// Whether the string starting at `i` (its opening quote) decodes to exactly `other`. Nothing is copied.

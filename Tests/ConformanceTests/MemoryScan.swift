@@ -46,6 +46,16 @@ final class MemoryScan {
         return r
     }
 
+    /// Counts the first `n` bytes of the needle at `r` as a needle of their own, and returns where they are: a buffer
+    /// outgrown part way through a copy holds them without the rest. Every whole copy holds them too.
+    @discardableResult
+    func prefix(_ r: Range<Int>, _ n: Int) -> Range<Int> {
+        precondition(n <= r.count, "a prefix longer than its needle")
+        let p = r.lowerBound..<(r.lowerBound + n)
+        needles.append(p)
+        return p
+    }
+
     /// Rewrites the needle at `r` as digits without a leading zero, so it is a number's text.
     func digits(_ r: Range<Int>) {
         let out = UnsafeMutableRawBufferPointer(rebasing: pages[r])
