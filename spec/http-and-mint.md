@@ -31,7 +31,14 @@ Tests reach a fake server only through an origin injected explicitly as a test o
   token ([credentials](credentials.md)) and retries once. A second `auth-expired` is returned as `auth-expired`,
   with the second refusal's status and provider fields.
 - Timeouts are required arguments (Mochi 45 s request / 90 s resource, Checkmate 20 / 25 s, recite 20 s).
-- Retry policy is not in the contract.
+- **Lost connection once.** A mint whose connection was lost after it was made and before any byte of a reply
+  arrived (the server closed a kept-alive connection as the request reached it) is sent once more, within the same
+  timeout; a second loss is `network`. This is transport recovery, not retry policy: neither Go's `net/http` nor
+  URLSession resends a POST, and a secret minted for the lost request expires unused. Go recognises the loss as a
+  request that got a connection but no first reply byte, its context still live; Swift as
+  `URLError.networkConnectionLost` before the reply's head. A connection the server closes while it is idle needs
+  nothing: both clients notice and dial again. Fixtures `mint-lost-connection-resent`, `mint-lost-connection-twice`.
+- Any other retry policy is not in the contract.
 
 ## Classification (`NET-05`)
 

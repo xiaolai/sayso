@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/xiaolai/sayso/go/internal/bounded"
@@ -134,18 +136,39 @@ func (m *Minter) Secret(ctx context.Context, session any) (secret.ClientSecret, 
 	return sec, err
 }
 
+// send posts the mint body and returns the reply. A request whose connection was lost after it was made and before
+// any byte of a reply arrived is sent once more, within the same ctx (spec/http-and-mint.md, lost connection): the
+// server may have closed a kept-alive connection as the request reached it, and net/http does not resend a POST. A
+// secret minted for the lost request expires unused. A second loss, a refusal and an expired ctx are returned as they
+// are.
+func (m *Minter) send(ctx context.Context, tok secret.Token, body []byte) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(m.BaseURL, "/")+mintPath, bytes.NewReader(body))
+		if err != nil {
+			return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: mint request", Err: err}
+		}
+		req.Header.Set("Authorization", "Bearer "+tok.Bearer())
+		req.Header.Set("Content-Type", "application/json")
+		var connected, answered atomic.Bool
+		req = req.WithContext(httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GotConn:              func(httptrace.GotConnInfo) { connected.Store(true) },
+			GotFirstResponseByte: func() { answered.Store(true) },
+		}))
+		resp, err := m.Client.Do(req)
+		var refused *openaihttp.Error
+		lost := err != nil && connected.Load() && !answered.Load() && ctx.Err() == nil && !errors.As(err, &refused)
+		if !lost || attempt > 0 {
+			return resp, err
+		}
+	}
+}
+
 // post makes one mint request. Neither the request nor the response body is ever logged: both carry or yield
 // secrets.
 func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secret.ClientSecret, error) {
 	ctx, cancel := context.WithTimeout(ctx, m.Timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(m.BaseURL, "/")+mintPath, bytes.NewReader(body))
-	if err != nil {
-		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: mint request", Err: err}
-	}
-	req.Header.Set("Authorization", "Bearer "+tok.Bearer())
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := m.Client.Do(req)
+	resp, err := m.send(ctx, tok, body)
 	if err != nil {
 		var e *openaihttp.Error
 		if !errors.As(err, &e) {

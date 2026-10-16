@@ -41,7 +41,7 @@ enum MintCheck {
         unknown += FakeOpenAI.unknownKeys(
             "setup", setup, ["now", "origin", "session", "lifetimeSeconds", "token", "refreshTo", "replies"])
         for (i, r) in (setup["replies"] as? [[String: Any]] ?? []).enumerated() {
-            unknown += FakeOpenAI.unknownKeys("replies[\(i)]", r, ["status", "headers", "json", "body", "bodyPadTo"])
+            unknown += FakeOpenAI.unknownKeys("replies[\(i)]", r, ["status", "headers", "json", "body", "bodyPadTo", "hangup"])
         }
         unknown += FakeOpenAI.unknownKeys(
             "expect", want,
@@ -65,7 +65,9 @@ enum MintCheck {
             }
             if let pad = r["bodyPadTo"] as? Int, pad > body.count { body.append(Data(repeating: 0x20, count: pad - body.count)) }
             let headers = (r["headers"] as? [String: String] ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-            replies.append(FakeHTTPReply(status: r["status"] as? Int ?? 0, headers: headers, body: body))
+            replies.append(
+                FakeHTTPReply(
+                    status: r["status"] as? Int ?? 0, headers: headers, body: body, hangup: r["hangup"] as? Bool ?? false))
         }
         let server = try FakeHTTPServer(replies: replies)
         let port = try server.start()
@@ -130,8 +132,9 @@ enum MintCheck {
         }
         if let w = want["secondAuthorization"] {
             let expected = "\(w)".replacingOccurrences(of: "$refreshTo", with: refreshTo)
+                .replacingOccurrences(of: "$token", with: token)
             if requests.count < 2 || requests[1].headers["authorization"] != expected {
-                p.append("second request did not carry the refreshed token")
+                p.append("second request did not carry the expected token")
             }
         }
         for s in FakeOpenAI.strings(want["scrubs"]) where Secret.scrub("x \(s) y").contains(s) {

@@ -107,7 +107,8 @@ public struct Minter: SecretSource {
     /// One mint request. Neither the request nor the reply is ever logged: both carry or yield secrets.
     private func post(_ endpoint: URL, _ token: Token, _ body: Data) async throws -> ClientSecret {
         let request = Self.request(endpoint, bearer: token.bearer, body: body)
-        var reply: HTTPReply? = try await client.send(request, timeout: timeout, limit: Self.maximumReply, route: route)
+        var reply: HTTPReply? = try await client.send(
+            request, timeout: timeout, limit: Self.maximumReply, route: route, resendOnLostConnection: true)
         return try Self.secret(from: &reply)
     }
 

@@ -50,7 +50,7 @@ SCHEMA = {
     "mint": {
         "": {"setup", "expect"},
         "setup": {"now", "origin", "session", "lifetimeSeconds", "token", "refreshTo", "replies"},
-        "setup.replies[]": {"status", "headers", "json", "body", "bodyPadTo"},
+        "setup.replies[]": {"status", "headers", "json", "body", "bodyPadTo", "hangup"},
         "expect": {"class", "secret", "expiresAt", "status", "type", "code", "param", "requestId", "requests",
                    "refreshCalls", "tokenCalls", "request", "secondAuthorization", "scrubs", "notInDescription"},
         "expect.request": {"method", "path", "authorization", "contentType", "body"},
