@@ -144,18 +144,29 @@ public final class RealtimeSession: Sendable {
         try await writes.acquire()
         defer { writes.release() }
         if inbox.isClosing { throw Closed() }  // closed while this write waited
-        try Task.checkCancellation()
         let task = self.task
         do {
-            try await withTaskCancellationHandler {
-                try await task.send(.string(String(decoding: event, as: UTF8.self)))
-            } onCancel: {
+            try await Self.admitted { try await task.send(.string(String(decoding: event, as: UTF8.self))) } end: {
                 task.cancel(with: .goingAway, reason: nil)
             }
         } catch {
             if inbox.isClosing { throw Closed() }
-            if Task.isCancelled { throw CancellationError() }
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
             throw transportError(error, "realtime send")
+        }
+    }
+
+    /// Runs `write` unless the calling task is cancelled first, and calls `end` when it is cancelled once `write` has
+    /// started. Cancellation and the start are settled under one lock (``WriteAdmission``), so a cancellation that
+    /// comes first, even one that lands as the handler is installed, never touches the transport.
+    static func admitted(_ write: () async throws -> Void, end: @escaping @Sendable () -> Void) async throws {
+        let admission = WriteAdmission()
+        try await withTaskCancellationHandler {
+            guard admission.start() else { throw CancellationError() }
+            defer { admission.finish() }
+            try await write()
+        } onCancel: {
+            if admission.cancel() { end() }
         }
     }
 
@@ -350,6 +361,35 @@ final class WriteGate: @unchecked Sendable {
         }
         lock.unlock()
         for w in pending { w.resume(throwing: RealtimeSession.Closed()) }
+    }
+}
+
+/// Settles a write's start against its cancellation: whichever comes first under the lock decides whether the
+/// transport is touched.
+final class WriteAdmission: @unchecked Sendable {
+    private enum State { case waiting, writing, settled }
+    private let lock = NSLock()
+    private var state = State.waiting
+
+    /// True when the write may start: no cancellation came first.
+    func start() -> Bool {
+        lock.withLock {
+            guard state == .waiting else { return false }
+            state = .writing
+            return true
+        }
+    }
+
+    /// The write has returned; a later cancellation touches nothing.
+    func finish() { lock.withLock { state = .settled } }
+
+    /// True when a write is in flight and must be ended; otherwise no write starts after this.
+    func cancel() -> Bool {
+        lock.withLock {
+            let writing = state == .writing
+            if state == .waiting { state = .settled }
+            return writing
+        }
     }
 }
 

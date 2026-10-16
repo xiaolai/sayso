@@ -18,6 +18,52 @@ final class SessionWriteTests: XCTestCase {
         XCTAssertTrue(condition(), "the condition never held", file: file, line: line)
     }
 
+    // MARK: Admission
+
+    func testAdmissionSettlesCancellationAgainstTheStart() {
+        let first = WriteAdmission()
+        XCTAssertFalse(first.cancel(), "nothing in flight to end")
+        XCTAssertFalse(first.start(), "a write started after its cancellation")
+
+        let inFlight = WriteAdmission()
+        XCTAssertTrue(inFlight.start())
+        XCTAssertTrue(inFlight.cancel(), "a write in flight is ended")
+
+        let done = WriteAdmission()
+        XCTAssertTrue(done.start())
+        done.finish()
+        XCTAssertFalse(done.cancel(), "a finished write's transport is left alone")
+    }
+
+    /// A task cancelled before the handler is installed, the window between a cancellation check and the write,
+    /// neither writes nor ends the transport.
+    func testCancelledBeforeTheWriteTouchesNothing() async {
+        let log = Log()
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await RealtimeSession.admitted { log.add("write") } end: { log.add("end") }
+        }
+        do {
+            try await task.value
+            XCTFail("a cancelled write ran")
+        } catch is CancellationError {} catch { XCTFail("\(error)") }
+        XCTAssertEqual(log.values, [])
+    }
+
+    func testCancellingAWriteInFlightEndsIt() async throws {
+        let log = Log()
+        let task = Task {
+            try await RealtimeSession.admitted {
+                log.add("write")
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            } end: { log.add("end") }
+        }
+        try await waitUntil { log.values == ["write"] }
+        task.cancel()
+        _ = try? await task.value
+        XCTAssertEqual(log.values, ["write", "end"])
+    }
+
     // MARK: The write queue
 
     func testCloseReleasesEveryQueuedWriter() async throws {
