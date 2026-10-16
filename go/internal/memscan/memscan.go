@@ -63,6 +63,15 @@ func (s *Scan) Needle(n int) [2]int {
 	return r
 }
 
+// Prefix counts the first n bytes of the needle at r as a needle of their own, and returns their place: a copy cut
+// short, such as a buffer outgrown when it held only part of the needle, holds them without the whole needle. Every
+// copy of the whole needle holds them too.
+func (s *Scan) Prefix(r [2]int, n int) [2]int {
+	p := [2]int{r[0], r[0] + n}
+	s.needles = append(s.needles, p)
+	return p
+}
+
 // Digits rewrites the needle at r as digits without a leading zero, a number's text.
 func (s *Scan) Digits(r [2]int) {
 	for i := r[0]; i < r[1]; i++ {
