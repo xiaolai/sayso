@@ -103,7 +103,8 @@ final class AppServerLifecycleTests: XCTestCase {
         var c: AppServerClient? = try start(script, timeout: 5) { _ in ignoring.signal() }
         XCTAssertEqual(ignoring.wait(timeout: .now() + 5), .success, "the child did not start ignoring SIGTERM")
         let pid = try XCTUnwrap(c).pid
-        weak let released = c
+        weak var released: AppServerClient?  // assigned apart: `weak let` needs Swift 6.2, which CI's compiler predates
+        released = c
         let start = Date()
         c = nil
         let took = Date().timeIntervalSince(start)
