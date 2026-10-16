@@ -8,10 +8,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -85,6 +89,13 @@ func Load(component string) ([]Case, error) {
 			if _, ok := want[head.ID]; !ok {
 				return nil, fmt.Errorf("fixture %s is not in the manifest", head.ID)
 			}
+			if names := repeatable[component]; len(names) > 0 {
+				expanded, err := expandRepeats(raw, names)
+				if err != nil {
+					return nil, fmt.Errorf("fixture %s: %w", head.ID, err)
+				}
+				raw = expanded
+			}
 			got[head.ID] = Case{ID: head.ID, Component: head.Component, Requires: head.Requires, Raw: raw}
 		}
 	}
@@ -117,6 +128,81 @@ func read(path string) ([]json.RawMessage, error) {
 	}
 	var out []json.RawMessage
 	return out, json.Unmarshal(data, &out)
+}
+
+// repeatable lists, per component, the members a case may write as a repeat (spec/fixtures.md).
+var repeatable = map[string][]string{"said-guard": {"script", "transcript"}}
+
+// maxRepeatBytes bounds the text a repeat stands for: 16 times the said guard's cap, room for a case past it.
+const maxRepeatBytes = 1 << 20
+
+// expandRepeats replaces each named member of a case written as a repeat by the string it stands for. A case with no
+// repeat is returned as read.
+func expandRepeats(raw json.RawMessage, names []string) (json.RawMessage, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, err
+	}
+	changed := false
+	for _, name := range names {
+		v := bytes.TrimSpace(members[name])
+		if len(v) == 0 || v[0] != '{' {
+			continue
+		}
+		text, err := repeatText(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if members[name], err = json.Marshal(text); err != nil {
+			return nil, err
+		}
+		changed = true
+	}
+	if !changed {
+		return raw, nil
+	}
+	return json.Marshal(members)
+}
+
+// repeatText is the text {"repeat", "times", "prefix", "suffix"} stands for: prefix, repeat written times times, then
+// suffix. It refuses any other member, a missing, null or mistyped one, an empty repeat, times below 1, and a text over
+// maxRepeatBytes, so a mistyped case fails its suite rather than testing a different input.
+func repeatText(spec json.RawMessage) (string, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(spec, &m); err != nil {
+		return "", fmt.Errorf("repeat: %w", err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(m)) {
+		if name != "repeat" && name != "times" && name != "prefix" && name != "suffix" {
+			return "", fmt.Errorf("repeat: unknown member %q", name)
+		}
+	}
+	member := func(name string, dst any) error {
+		v, ok := m[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			return fmt.Errorf("repeat: %s is missing", name)
+		}
+		if err := json.Unmarshal(v, dst); err != nil { // an int64 refuses a fraction, an exponent and a bool
+			return fmt.Errorf("repeat: %s: %w", name, err)
+		}
+		return nil
+	}
+	var unit, prefix, suffix string
+	var times int64
+	if err := errors.Join(member("repeat", &unit), member("times", &times), member("prefix", &prefix), member("suffix", &suffix)); err != nil {
+		return "", err
+	}
+	if unit == "" {
+		return "", errors.New("repeat: repeat is empty")
+	}
+	if times < 1 {
+		return "", fmt.Errorf("repeat: times %d is below 1", times)
+	}
+	// unit is not empty, so a times over the cap is over it in bytes too; checking it first keeps the product in range.
+	if times > maxRepeatBytes || int64(len(prefix))+int64(len(unit))*times+int64(len(suffix)) > maxRepeatBytes {
+		return "", fmt.Errorf("repeat: the text is over %d bytes", maxRepeatBytes)
+	}
+	return prefix + strings.Repeat(unit, int(times)) + suffix, nil
 }
 
 // JWT builds the unsigned token a {"$jwt": claims} placeholder stands for (spec/fixtures.md).
