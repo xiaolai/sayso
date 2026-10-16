@@ -184,15 +184,19 @@ extension FakeOpenAI {
         var value: Bool { lock.withLock { on } }
     }
 
-    /// Runs async work from a synchronous fixture check, on the cooperative pool, and waits for it.
+    /// Runs async work from a synchronous fixture check, on the cooperative pool, and waits for it; work still running
+    /// after ``caseWait`` is cancelled and fails the case.
     static func blocking<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) -> Result<T, Error> {
         let box = ResultBox<T>()
         let done = DispatchSemaphore(value: 0)
-        Task.detached {
+        let task = Task.detached {
             do { box.result = .success(try await operation()) } catch { box.result = .failure(error) }
             done.signal()
         }
-        done.wait()
+        guard done.waited(caseWait) else {
+            task.cancel()  // the box is left to the task: it is read only after the signal
+            return .failure(FixtureError("the case's async work did not finish within \(Int(caseWait)) s"))
+        }
         return box.result ?? .failure(FixtureError("no result"))
     }
 

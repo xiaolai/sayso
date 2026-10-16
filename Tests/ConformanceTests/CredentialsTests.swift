@@ -42,6 +42,7 @@ final class Box<T>: @unchecked Sendable {
 }
 
 /// Runs async work from a synchronous test body; `cancelAfter` cancels the work that many seconds after it starts.
+/// Work still running after ``caseWait`` is cancelled and fails the case.
 func blocking<T: Sendable>(
     cancelAfter: TimeInterval? = nil, _ body: @escaping @Sendable () async throws -> T
 ) throws -> T {
@@ -52,7 +53,10 @@ func blocking<T: Sendable>(
         done.signal()
     }
     if let cancelAfter { DispatchQueue.global().asyncAfter(deadline: .now() + cancelAfter) { task.cancel() } }
-    done.wait()
+    guard done.waited(caseWait) else {
+        task.cancel()
+        throw FixtureError("the case's async work did not finish within \(Int(caseWait)) s")
+    }
     return try result.value!.get()
 }
 

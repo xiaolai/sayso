@@ -115,6 +115,18 @@ struct FixtureError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
+/// The longest a test waits for a signal that should come at once: ample for a loaded CI runner, and short enough
+/// that a lost signal fails the test rather than holding the run until the job's timeout.
+let signalWait: TimeInterval = 30
+
+/// The longest a test waits for one fixture case's async work, the slowest of which runs for a few seconds.
+let caseWait: TimeInterval = 60
+
+extension DispatchSemaphore {
+    /// Waits at most `seconds`; false when the signal did not come.
+    func waited(_ seconds: TimeInterval = signalWait) -> Bool { wait(timeout: .now() + seconds) == .success }
+}
+
 /// Outcomes for tools/parity.py, written to results-swift.json when SAYSO_RESULTS names a path.
 final class Results: @unchecked Sendable {
     static let shared = Results()

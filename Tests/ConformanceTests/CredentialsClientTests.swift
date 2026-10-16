@@ -24,7 +24,7 @@ extension CredentialWorld {
         switch s["handler"] as? String ?? "" {
         case "": break
         case "record": config.onEvent = { _, e in events.value.append(e) }
-        case "block": config.onEvent = { _, _ in block.wait() }
+        case "block": config.onEvent = { _, _ in _ = block.waited(caseWait) }  // bounded, should the case never end
         case let other: return ["unknown handler \(other)"]
         }
         let work = root + "/work"
