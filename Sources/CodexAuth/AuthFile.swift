@@ -75,14 +75,14 @@ enum AuthFile {
     static func openResolved(_ path: String) -> Int32? {
         let flags = O_SEARCH | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
         guard path.utf8.first == 0x2F, !path.utf8.contains(0) else { return nil }
-        var fd = open("/", flags)
+        var fd = openRetrying { open("/", flags) }
         guard fd >= 0 else { return nil }
         for part in path.utf8.split(separator: 0x2F).map({ String(decoding: $0, as: UTF8.self) }) {
             guard part != ".", part != ".." else {  // a resolved path has neither; refused rather than walked
                 Darwin.close(fd)
                 return nil
             }
-            let next = openat(fd, part, flags)
+            let next = openRetrying { openat(fd, part, flags) }
             Darwin.close(fd)
             guard next >= 0 else { return nil }
             var st = stat()
@@ -93,6 +93,33 @@ enum AuthFile {
             fd = next
         }
         return fd
+    }
+
+    /// Runs `open` until it is not interrupted: a signal arriving during an open is no reason to refuse the file.
+    /// errno is the call's own when it returns.
+    static func openRetrying(_ open: () -> Int32) -> Int32 {
+        while true {
+            let fd = interruptions.take() ? { errno = EINTR; return -1 }() : open()
+            if fd >= 0 || errno != EINTR { return fd }
+        }
+    }
+
+    /// For tests: how many opens still fail with EINTR before the real call runs.
+    static let interruptions = Interruptions()
+
+    final class Interruptions: @unchecked Sendable {
+        private let lock = NSLock()
+        private var left = 0
+
+        func set(_ n: Int) { lock.withLock { left = n } }
+
+        func take() -> Bool {
+            lock.withLock {
+                guard left > 0 else { return false }
+                left -= 1
+                return true
+            }
+        }
     }
 
     private static func realPath(_ p: String) -> String? {
@@ -118,7 +145,7 @@ enum AuthFile {
             throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: "the path holds a NUL")
         }
         let flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
-        let fd = loc.dir >= 0 ? openat(loc.dir, fileName, flags) : open(loc.path, flags)
+        let fd = openRetrying { loc.dir >= 0 ? openat(loc.dir, fileName, flags) : open(loc.path, flags) }
         if fd < 0 {
             if errno == ENOENT { throw CodexAuthError(.noSignInFile, message: "auth.json does not exist") }
             throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: String(cString: strerror(errno)))

@@ -35,5 +35,24 @@ final class CredentialsRound5Tests: XCTestCase {
         defer { loc.close() }
         XCTAssertEqual(try AuthFile.read(loc, onRetry: nil).bearer, "searched-token")
     }
+
+    /// An open interrupted by a signal is retried, for each folder of the walk and for the file, instead of turning
+    /// a usable file into codex-error.
+    func testInterruptedOpensAreRetried() throws {
+        let home = try tempBase() + "/sayso-eintr-\(UUID().uuidString)"
+        let codexHome = home + "/codex"
+        try FileManager.default.createDirectory(atPath: codexHome, withIntermediateDirectories: true)
+        defer {
+            AuthFile.interruptions.set(0)
+            try? FileManager.default.removeItem(atPath: home)
+        }
+        writeAuth(codexHome, #"{"tokens":{"access_token":"eintr-token"}}"#)
+        AuthFile.interruptions.set(5)
+        let loc = try AuthFile.location(codexHome: codexHome, home: home, confine: home)
+        defer { loc.close() }
+        AuthFile.interruptions.set(3)
+        XCTAssertEqual(try AuthFile.read(loc, onRetry: nil).bearer, "eintr-token")
+        XCTAssertFalse(AuthFile.interruptions.take(), "not every injected interruption was met")
+    }
 }
 #endif
