@@ -174,13 +174,8 @@ enum AuthFile {
         guard used < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
         var data = Data(buf[0..<used])
         defer { data.resetBytes(in: 0..<data.count) }
-        // NSDictionary, not [String: Any]: NSString keys compare literally, while a Swift String key compares
-        // canonically equivalent spellings equal ("OPENAI_API_\u{212A}EY", with a Kelvin sign, is OPENAI_API_KEY to
-        // Swift) and bridging merges them. Go and Codex read keys as bytes.
-        guard isPlainJSON(data),
-            let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? NSDictionary
-        else { return nil }
-        return try decode(doc)
+        guard isPlainJSON(data) else { return nil }
+        return try decode(data)
     }
 
     /// The auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey. Compared as bytes.
@@ -188,30 +183,56 @@ enum AuthFile {
         "chatgptAuthTokens", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
     ]
 
-    /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token. An
-    /// unknown auth_mode makes the file unreadable to Codex itself, so it is codex-error.
-    static func decode(_ doc: NSDictionary) throws -> Token {
-        func present(_ key: String) -> Bool { doc.object(forKey: key).map { !($0 is NSNull) } ?? false }
+    /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token; nil
+    /// when `data`, already validated as plain JSON, is not one object. An unknown auth_mode makes the file
+    /// unreadable to Codex itself, so it is codex-error.
+    ///
+    /// Only the members needed are read, as the bytes the file holds, and member names match as bytes, as in Go and
+    /// Codex (a Swift `String` key would take "OPENAI_API_\u{212A}EY", with a Kelvin sign, for OPENAI_API_KEY). No
+    /// other value, such as a refresh token or an API key, ever becomes a `String`, which could not be wiped; each
+    /// copy of a member's bytes is wiped once read. Only the mode and the access token are decoded.
+    static func decode(_ data: Data) throws -> Token? {
+        do { _ = try WireJSON.memberBytes(data, "auth_mode") } catch { return nil }  // not an object
+        func present(_ key: String) throws -> Bool { try withMember(data, key) { $0.map { !isNull($0) } ?? false } }
         var mode = modeChatGPT
-        if present("auth_mode") {
-            guard let m = doc.object(forKey: "auth_mode") as? String,
-                let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { $0.utf8.elementsEqual(m.utf8) })
+        if try present("auth_mode") {
+            let m = try withMember(data, "auth_mode") { $0.flatMap(stringValue) }
+            guard let m, let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { $0.utf8.elementsEqual(m.utf8) })
             else { throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode") }
             mode = known
-        } else if present("personal_access_token") {
+        } else if try present("personal_access_token") {
             mode = "personalAccessToken"
-        } else if present("bedrock_api_key") {
+        } else if try present("bedrock_api_key") {
             mode = "bedrockApiKey"
-        } else if present("bedrock_access_keys") {
+        } else if try present("bedrock_access_keys") {
             mode = "bedrockAccessKeys"
-        } else if present("OPENAI_API_KEY") {
+        } else if try present("OPENAI_API_KEY") {
             mode = modeAPIKey
         }
         if let e = classifyMode(mode) { throw e }
-        guard let tokens = doc.object(forKey: "tokens") as? NSDictionary,
-            let access = tokens.object(forKey: "access_token") as? String, !access.isEmpty
-        else { throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token") }
+        let access = try withMember(data, "tokens") { tokens -> String? in
+            guard let tokens, !isNull(tokens) else { return nil }
+            // A tokens value that is not an object holds no access token.
+            return (try? withMember(tokens, "access_token") { $0.flatMap(stringValue) }) ?? nil
+        }
+        guard let access, !access.isEmpty else {
+            throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token")
+        }
         return makeToken(access, source: "file")
+    }
+
+    /// The bytes of the member `name` of the object `data`, nil when absent, handed to `body` and wiped after it.
+    private static func withMember<T>(_ data: Data, _ name: String, _ body: (Data?) throws -> T) throws -> T {
+        var raw = try WireJSON.memberBytes(data, name)
+        defer { if let n = raw?.count { raw?.resetBytes(in: 0..<n) } }
+        return try body(raw)
+    }
+
+    private static func isNull(_ raw: Data) -> Bool { raw.elementsEqual("null".utf8) }
+
+    /// A JSON string's value; nil for any other value.
+    private static func stringValue(_ raw: Data) -> String? {
+        (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])) as? String
     }
 }
 

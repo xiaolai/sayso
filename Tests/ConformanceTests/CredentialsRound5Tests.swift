@@ -54,5 +54,36 @@ final class CredentialsRound5Tests: XCTestCase {
         XCTAssertEqual(try AuthFile.read(loc, onRetry: nil).bearer, "eintr-token")
         XCTAssertFalse(AuthFile.interruptions.take(), "not every injected interruption was met")
     }
+
+    /// Only the members the file source needs are read: a value it never uses cannot make the file unreadable, the
+    /// mode keys still decide, and a tokens value that is not an object holds no access token.
+    func testOnlyTheNeededMembersAreDecoded() throws {
+        // A token read is registered with the process-wide scrubber, so it is unique and long: "t" would then be
+        // removed from every later message in the run.
+        let access = "member-only-token-\(UUID().uuidString)"
+        func decode(_ json: String) throws -> Token? {
+            try AuthFile.decode(Data(json.replacingOccurrences(of: "\"TOKEN\"", with: "\"\(access)\"").utf8))
+        }
+        XCTAssertEqual(
+            try decode(#"{"tokens":{"access_token":"TOKEN","refresh_token":"r","id_token":{"x":[1,2]}},"last_refresh":7}"#)?
+                .bearer, access)
+        XCTAssertNil(try decode(#"["not","an","object"]"#), "a document that is no object is not a sign-in file")
+        for (json, state) in [
+            (#"{"OPENAI_API_KEY":"sk-x","tokens":{"access_token":"TOKEN"}}"#, CodexAuthState.apiKey),
+            (#"{"OPENAI_API_KEY":null,"tokens":{"access_token":"TOKEN"}}"#, .ready),
+            (#"{"auth_mode":"headers","tokens":{"access_token":"TOKEN"}}"#, .unsupportedAuth),
+            (#"{"auth_mode":7,"tokens":{"access_token":"TOKEN"}}"#, .codexError),
+            (#"{"tokens":"TOKEN"}"#, .codexError),
+            (#"{"tokens":{"access_token":""}}"#, .codexError),
+            (#"{"OPENAI_API_KEY":"sk-x","tokens":{"access_token":"TOKEN"}}"#, .ready),  // a Kelvin sign: names match as bytes
+        ] {
+            do {
+                _ = try decode(json)
+                XCTAssertEqual(state, .ready, json)
+            } catch let e as CodexAuthError {
+                XCTAssertEqual(e.state, state, json)
+            }
+        }
+    }
 }
 #endif
