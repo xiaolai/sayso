@@ -1,5 +1,5 @@
 {
- "count": 976,
+ "count": 977,
  "fixtures": [
   {
    "id": "app-ready",
@@ -158,7 +158,13 @@
    "requires": []
   },
   {
-   "id": "app-oversize-line",
+   "id": "app-line-at-limit",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-line-over-limit",
    "file": "app-server/app-server.jsonl",
    "component": "credentials",
    "requires": []

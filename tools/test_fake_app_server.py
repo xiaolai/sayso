@@ -117,9 +117,18 @@ class Fake(unittest.TestCase):
         self.assertEqual((p.returncode, out), (1, []))
         self.assertIn("spawn", rec[0])
 
-    def test_raw_line_bytes(self):
-        _, _, stdout, _ = converse({"methods": {"m": [{"rawLineBytes": 1000}]}}, [{"id": 1, "method": "m"}])
-        self.assertEqual(len(stdout.split("\n")[0]), 1000)
+    def test_pad_line_to(self):
+        _, out, stdout, _ = converse({"methods": {"m": [{"result": {"a": 1}, "padLineTo": 1000}, {"error": {"code": 1, "message": "e"}, "padLineTo": 999}]}},
+                                     [{"id": 1, "method": "m"}, {"id": 2, "method": "m"}])
+        first, second = stdout.split("\n")[:2]
+        self.assertEqual((len(first), len(second)), (1000, 999))
+        self.assertEqual((first.rstrip(" "), second.rstrip(" ")), ('{"id": 1, "result": {"a": 1}}', '{"id": 2, "error": {"code": 1, "message": "e"}}'))
+        self.assertEqual(out[0]["result"], {"a": 1})
+
+    def test_pad_line_to_refuses_a_longer_reply(self):
+        p, _, stdout, _ = converse({"methods": {"m": [{"result": {"a": 1}, "padLineTo": 5}]}}, [{"id": 1, "method": "m"}])
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(stdout, "")
 
     def test_raw_then_exit(self):
         p, _, stdout, _ = converse({"methods": {"m": [{"rawThenExit": '{"id":1,"result":{}}'}]}}, [{"id": 1, "method": "m"}, {"id": 2, "method": "m"}])

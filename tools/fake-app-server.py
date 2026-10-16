@@ -24,9 +24,9 @@ Scenario keys (all optional):
                        counted across starts that share SAYSO_FAKE_RECORD, because a client starts one child per
                        fetch or refresh. A step is
                        {"result": ...} | {"error": {"code", "message"}} | {"raw": "line"} | {"exit": code} |
-                       {"rawLineBytes": n} (one line of n bytes, then a newline) |
                        {"rawThenExit": "text"} (the text with no newline, then exit 0: a last line ended by EOF),
-                       optionally with "delayMs", "notify" (messages sent before the reply), "awaitLines": n (after
+                       optionally with "padLineTo": n (a result or error reply padded with trailing spaces, JSON's own
+                       whitespace, to exactly n bytes before its newline), "delayMs", "notify" (messages sent before the reply), "awaitLines": n (after
                        the notify messages, read and record n more lines of input before going on: a barrier that
                        proves the client wrote them while this call waits) and "notifyAfter" (sent after it). A message is {"method", "params"} (a notification) or carries an "id" too (a server
                        request); "repeat": n sends it n times with "$i" in a params string value replaced by the index
@@ -102,8 +102,11 @@ def step_key(msg: dict, methods: dict, by_params: dict):
     return methods.get(method), method
 
 
-def send(message: dict) -> None:
-    sys.stdout.write(json.dumps(substitute(message)) + "\n")
+def send(message: dict, pad_to: int = 0) -> None:
+    line = json.dumps(substitute(message))  # ASCII only, so its length is its size in bytes
+    if len(line) > pad_to > 0:
+        sys.exit(f"fake-app-server: a reply of {len(line)} bytes cannot be padded to {pad_to}")
+    sys.stdout.write(line.ljust(pad_to) + "\n")
     sys.stdout.flush()
 
 
@@ -205,16 +208,13 @@ def main() -> int:
             sys.stdout.write(step["rawThenExit"])
             sys.stdout.flush()
             return 0
-        if "rawLineBytes" in step:
-            sys.stdout.write("x" * int(step["rawLineBytes"]) + "\n")
-            sys.stdout.flush()
-        elif "raw" in step:
+        if "raw" in step:
             sys.stdout.write(step["raw"] + "\n")
             sys.stdout.flush()
         elif "error" in step:
-            send({"id": msg["id"], "error": step["error"]})
+            send({"id": msg["id"], "error": step["error"]}, int(step.get("padLineTo", 0)))
         else:
-            send({"id": msg["id"], "result": step.get("result", {})})
+            send({"id": msg["id"], "result": step.get("result", {})}, int(step.get("padLineTo", 0)))
         notify(step.get("notifyAfter", []))
     if scenario.get("holdAfterEOF"):
         time.sleep(30)
