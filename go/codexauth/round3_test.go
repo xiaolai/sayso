@@ -91,8 +91,8 @@ func TestNewCopiesTheCallersSlices(t *testing.T) {
 		t.Fatal(err)
 	}
 	env[1], cands[0] = "X=2", "/b"
-	if c.cfg.Env[1] != "X=1" || c.cfg.Candidates[0] != "/a" {
-		t.Errorf("New kept the caller's slices: %q %q", c.cfg.Env, c.cfg.Candidates)
+	if c.env()[1] != "X=1" || c.cfg.Candidates[0] != "/a" {
+		t.Errorf("New kept the caller's slices: %q %q", c.env(), c.cfg.Candidates)
 	}
 }
 
