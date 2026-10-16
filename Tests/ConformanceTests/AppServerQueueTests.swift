@@ -214,6 +214,56 @@ final class AppServerQueueTests: XCTestCase {
         XCTAssertEqual((reply as? [String: Any])?["order"] as? [String], ["srv-1", "call"])
     }
 
+    /// A request admitted before a server request is read is written before that request's answer, even while it is
+    /// still waiting to be written: call A fills the pipe and holds the writer, call B waits behind it unwritten, and
+    /// only then does the child send srv-1. The child reads A, B, then the answer to srv-1.
+    func testLaterAnswerDoesNotOvertakeAQueuedRequest() throws {
+        let flag = NSTemporaryDirectory() + "sayso-flag-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: flag) }
+        let (script, cleanup) = try fakeCodex(
+            "import os\n"
+                + "while not os.path.exists('\(flag)'): time.sleep(0.005)\n"
+                + "print(json.dumps({'id': 'srv-1', 'method': 'approve'}), flush=True)\n"
+                + "order = []\ncalls = []\n"
+                + "for line in sys.stdin:\n"
+                + "    m = json.loads(line)\n"
+                + "    if 'error' in m:\n"
+                + "        order.append(str(m['id']))\n"
+                + "    else:\n"
+                + "        order.append(m['method'])\n"
+                + "        calls.append(m)\n"
+                + "    if len(order) == 3:\n"
+                + "        for c in calls: print(json.dumps({'id': c['id'], 'result': {'order': order}}), flush=True)\n"
+                + "time.sleep(30)\n")
+        defer { cleanup() }
+        let c = try start(script, timeout: 20, nil)
+        defer { c.close() }
+        c.setTestSeams(recordAdmissions: true)
+        let group = DispatchGroup()
+        let lock = NSLock()
+        nonisolated(unsafe) var replies: [String: [String]] = [:]
+        // A's 1 MiB line is far beyond the pipe buffer, and the child reads nothing until the flag exists.
+        for (method, params) in [("A", ["pad": String(repeating: "x", count: 1 << 20)]), ("B", [:])] {
+            group.enter()
+            Thread {
+                defer { group.leave() }
+                let r = (try? c.call(method, params: params)) as? [String: Any]
+                lock.withLock { replies[method] = r?["order"] as? [String] }
+            }.start()
+            // B is admitted after A.
+            let deadline = Date().addingTimeInterval(5)
+            while c.admittedMessages.count < (method == "A" ? 1 : 2) && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        }
+        XCTAssertEqual(c.admittedMessages.count, 2, "both calls were not admitted")
+        XCTAssertEqual(c.held.outbound, 1, "B is not waiting unwritten behind A")
+        FileManager.default.createFile(atPath: flag, contents: Data())
+        XCTAssertEqual(group.wait(timeout: .now() + 20), .success, "a call did not return")
+        XCTAssertEqual(lock.withLock { replies["A"] }, ["A", "B", "srv-1"])
+        XCTAssertEqual(lock.withLock { replies["B"] }, ["A", "B", "srv-1"])
+    }
+
     /// After an overflow, the events held before it are delivered once the handler is released, before close; the
     /// event that overflowed and everything after it are not.
     func testEventsHeldAtAnOverflowAreDelivered() throws {
