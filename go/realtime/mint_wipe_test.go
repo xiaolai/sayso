@@ -16,6 +16,7 @@ import (
 	"unsafe"
 
 	"github.com/xiaolai/sayso/go/internal/memscan"
+	"github.com/xiaolai/sayso/go/internal/prereq"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/realtime"
 	"github.com/xiaolai/sayso/go/secret"
@@ -94,7 +95,7 @@ func (m *mintScan) check(t *testing.T) {
 	t.Helper()
 	found, err := m.s.Occurrences()
 	if errors.Is(err, memscan.ErrUnsupported) {
-		t.Skip(err)
+		prereq.Missing(t, err.Error())
 	}
 	if err != nil {
 		t.Fatal(err)
