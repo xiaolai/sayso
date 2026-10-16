@@ -4907,5 +4907,248 @@
   "language": "zh",
   "expect": false,
   "note": "Accepted false mismatch: zh has no spell-out, so the sign is not read as 负."
+ },
+ {
+  "id": "r11-expr-han-dropped",
+  "component": "said-guard",
+  "script": "甲 - 乙 = 丙",
+  "transcript": "甲 乙 = 丙",
+  "language": "zh",
+  "expect": false,
+  "note": "Unspaced characters are operands of an expression too, so its spaced dash is a minus, never silent."
+ },
+ {
+  "id": "r11-expr-han-identity",
+  "component": "said-guard",
+  "script": "甲 - 乙 = 丙",
+  "transcript": "甲 - 乙 = 丙",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity for an expression of unspaced characters."
+ },
+ {
+  "id": "r11-expr-kana-dropped",
+  "component": "said-guard",
+  "script": "あ - い = う",
+  "transcript": "あ い = う",
+  "language": "ja",
+  "expect": false,
+  "note": "The same for kana."
+ },
+ {
+  "id": "r11-expr-thai-dropped",
+  "component": "said-guard",
+  "script": "ก - ข = ค",
+  "transcript": "ก ข = ค",
+  "language": "th",
+  "expect": false,
+  "note": "The same for Thai."
+ },
+ {
+  "id": "r11-expr-han-numeral-ja",
+  "component": "said-guard",
+  "script": "五-二=三",
+  "transcript": "五二=三",
+  "language": "ja",
+  "expect": false,
+  "note": "Han numerals outside zh are unspaced characters, yet still operands: the tight dash of an expression is not silent."
+ },
+ {
+  "id": "r11-expr-han-numeral-ja-identity",
+  "component": "said-guard",
+  "script": "五-二=三",
+  "transcript": "五-二=三",
+  "language": "ja",
+  "expect": true,
+  "note": "Identity for a Han-numeral expression in ja."
+ },
+ {
+  "id": "r11-dash-han-silent",
+  "component": "said-guard",
+  "script": "甲 - 乙",
+  "transcript": "甲 乙",
+  "language": "zh",
+  "expect": true,
+  "note": "Outside an expression a spaced dash between unspaced characters may be unspoken, as between words."
+ },
+ {
+  "id": "r11-expr-hangul-dropped",
+  "component": "said-guard",
+  "script": "가 - 나 = 다",
+  "transcript": "가 나 = 다",
+  "language": "ko",
+  "expect": false,
+  "note": "Hangul is spaced and lexed as words: the same rule."
+ },
+ {
+  "id": "r11-mark-han-number-dropped",
+  "component": "said-guard",
+  "script": "五’",
+  "transcript": "五",
+  "language": "zh",
+  "expect": false,
+  "note": "An apostrophe after a Han numeral that is no quotation mark is a symbol, as after digits."
+ },
+ {
+  "id": "r11-mark-han-number-kept",
+  "component": "said-guard",
+  "script": "五’",
+  "transcript": "五'",
+  "language": "zh",
+  "expect": true,
+  "note": "The mark after a Han numeral, however written, matches itself."
+ },
+ {
+  "id": "r11-mark-han-char-dropped",
+  "component": "said-guard",
+  "script": "好’",
+  "transcript": "好",
+  "language": "zh",
+  "expect": false,
+  "note": "An apostrophe after any unspaced character that is no quotation mark is kept, as after a letter."
+ },
+ {
+  "id": "r11-mark-kana-dropped",
+  "component": "said-guard",
+  "script": "ね’",
+  "transcript": "ね",
+  "language": "ja",
+  "expect": false,
+  "note": "The same for kana."
+ },
+ {
+  "id": "r11-mark-han-inner-dropped",
+  "component": "said-guard",
+  "script": "甲’乙",
+  "transcript": "甲乙",
+  "language": "zh",
+  "expect": false,
+  "note": "A lone mark between unspaced characters is no quotation mark and is kept."
+ },
+ {
+  "id": "r11-quote-han",
+  "component": "said-guard",
+  "script": "他说‘好’。",
+  "transcript": "他说好。",
+  "language": "zh",
+  "expect": true,
+  "note": "Quotation marks around unspaced characters pair: an unspaced character is a word boundary for an opener and a closer."
+ },
+ {
+  "id": "r11-quote-han-identity",
+  "component": "said-guard",
+  "script": "他说‘好’。",
+  "transcript": "他说‘好’。",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity for quoted unspaced characters."
+ },
+ {
+  "id": "r11-quote-han-close-only",
+  "component": "said-guard",
+  "script": "他说‘好’。",
+  "transcript": "他说好’。",
+  "language": "zh",
+  "expect": false,
+  "note": "A closing mark the transcript keeps without its opener is a symbol the script's quotation lacks."
+ },
+ {
+  "id": "r11-quote-kana",
+  "component": "said-guard",
+  "script": "彼は‘はい’と言った。",
+  "transcript": "彼ははいと言った。",
+  "language": "ja",
+  "expect": true,
+  "note": "The same pairing in Japanese."
+ },
+ {
+  "id": "r11-quote-han-latin",
+  "component": "said-guard",
+  "script": "他说‘hello’吗",
+  "transcript": "他说hello吗",
+  "language": "zh",
+  "expect": true,
+  "note": "An opener after an unspaced character and a closer before one pair around a Latin word."
+ },
+ {
+  "id": "r11-mark-before-han-dropped",
+  "component": "said-guard",
+  "script": "他说’好",
+  "transcript": "他说好",
+  "language": "zh",
+  "expect": false,
+  "note": "A kept mark before an unspaced character is a symbol, as a leading mark stays in a word ('’tis')."
+ },
+ {
+  "id": "r11-mark-before-han-kept",
+  "component": "said-guard",
+  "script": "他说’好",
+  "transcript": "他说'好",
+  "language": "zh",
+  "expect": true,
+  "note": "The mark before an unspaced character matches itself."
+ },
+ {
+  "id": "r11-dash-han-joined-silent",
+  "component": "said-guard",
+  "script": "北京-上海",
+  "transcript": "北京上海",
+  "language": "zh",
+  "expect": true,
+  "note": "A dash between two unspaced characters joins two words and may be unspoken, as a hyphen joins x-y."
+ },
+ {
+  "id": "r11-dash-han-joined-identity",
+  "component": "said-guard",
+  "script": "北京-上海",
+  "transcript": "北京-上海",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity for the joining dash."
+ },
+ {
+  "id": "r11-dash-han-sign-after-char",
+  "component": "said-guard",
+  "script": "气温-五度",
+  "transcript": "气温五度",
+  "language": "zh",
+  "expect": false,
+  "note": "Before a Han numeral a dash after an unspaced character is a sign, as before a digit: it may not be dropped."
+ },
+ {
+  "id": "r11-dash-han-sign-after-char-digits",
+  "component": "said-guard",
+  "script": "气温-五度",
+  "transcript": "气温-5度",
+  "language": "zh",
+  "expect": true,
+  "note": "That sign read with the number in digits."
+ },
+ {
+  "id": "r11-dash-digit-sign-after-char",
+  "component": "said-guard",
+  "script": "气温-5度",
+  "transcript": "气温5度",
+  "language": "zh",
+  "expect": false,
+  "note": "The same sign before a digit."
+ },
+ {
+  "id": "r11-dash-han-sign-word-start",
+  "component": "said-guard",
+  "script": "甲 -乙",
+  "transcript": "甲 乙",
+  "language": "zh",
+  "expect": false,
+  "note": "After a space a dash before an unspaced character is a sign."
+ },
+ {
+  "id": "r11-dash-latin-sign-after-han",
+  "component": "said-guard",
+  "script": "说-x",
+  "transcript": "说x",
+  "language": "zh",
+  "expect": true,
+  "note": "After an unspaced character a dash before a Latin word joins words, so it may be unspoken."
  }
 ]

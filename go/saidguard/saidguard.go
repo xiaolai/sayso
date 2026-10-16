@@ -30,7 +30,7 @@ type svUnit []svSeq // the alternative readings of one script unit
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
 // reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
-const Version = 10
+const Version = 11
 
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
@@ -312,10 +312,11 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			}
 			emit(svSymbol, i, i+1, dash)
 			i++
-		case isApostrophe(r) && prevEnd == i && svAfterNumber(out, 1) && !(i+1 < len(rs) && svLetter(rs[i+1])):
-			// A mark right after a number that svUnquote kept, or after one such mark, is no quotation mark but feet
-			// or minutes ("5'", "5’10", "21st’"), or with the second inches or seconds ("5''"): a spoken symbol on
-			// both sides, so a transcript cannot drop it.
+		case isApostrophe(r) && !(i+1 < len(rs) && svLetter(rs[i+1])) && (prevEnd == i && svAfterToken(out, 1) || i+1 < len(rs) && isUnspaced(rs[i+1])):
+			// A mark right after a number or an unspaced character that svUnquote kept, or after one such mark, is
+			// no quotation mark: feet or minutes ("5'", "5’10", "21st’"), with the second inches or seconds ("5''"),
+			// or a mark of unspaced text on either side ("五’", "好’", "’好"), kept as a word keeps its own ("’tis").
+			// A spoken symbol on both sides, so a transcript cannot drop it.
 			emit(svSymbol, i, i+1, svDashNone)
 			i++
 		case r == '"' && !dropped[i] && prevEnd == i && svFeetAndNumber(out):
@@ -434,14 +435,19 @@ func svUnquote(rs []rune) ([]rune, []bool) {
 		for k >= 0 && svInnerPunct(rs[k]) {
 			k--
 		}
-		closer := k >= 0 && (svLetter(rs[k]) || unicode.IsMark(rs[k]) || svDigit(rs[k])) &&
-			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
-		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && (svLetter(rs[i+1]) || svDigit(rs[i+1])) &&
-			!svElisionAt(rs, i+1)
+		// An unspaced character is a word of its own, so it is a word boundary on either side, as a space is.
+		closer := k >= 0 && (svLetter(rs[k]) || unicode.IsMark(rs[k]) || svDigit(rs[k]) || isUnspaced(rs[k])) &&
+			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || isUnspaced(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
+		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || isUnspaced(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) &&
+			(svLetter(rs[i+1]) || svDigit(rs[i+1]) || isUnspaced(rs[i+1])) && !svElisionAt(rs, i+1)
+		// Between two unspaced characters a mark may open or close ("说‘好’"): it is a candidate for both.
 		if pending == i {
 			pending = -1
 			if closer {
 				closers = append(closers, i)
+				if opener {
+					openers = append(openers, i)
+				}
 				if pending = markFrom(i + 1); pending < 0 {
 					flush()
 				}
@@ -449,10 +455,10 @@ func svUnquote(rs []rune) ([]rune, []bool) {
 			}
 			flush()
 		}
-		switch {
-		case closer:
+		if closer {
 			closers = append(closers, i)
-		case opener:
+		}
+		if opener {
 			openers = append(openers, i)
 		}
 	}
@@ -471,15 +477,16 @@ func svInnerPunct(r rune) bool {
 	return strings.ContainsRune(svUnspokenPunct, r) && !isApostrophe(r)
 }
 
-// svAfterNumber reports whether the raws so far end in a number, or in a number and up to marks measurement marks
-// (svMeasureMark), all touching.
-func svAfterNumber(out []svRaw, marks int) bool {
+// svAfterToken reports whether the raws so far end in a number or an unspaced character (a Han run on the script
+// side, a character on the transcript side), or in one and up to marks measurement marks (svMeasureMark), all
+// touching.
+func svAfterToken(out []svRaw, marks int) bool {
 	k, seen := len(out)-1, 0
 	for k >= 0 && seen < marks && out[k].kind == svSymbol && out[k].text == "'" && out[k].gap == "" {
 		k--
 		seen++
 	}
-	return k >= 0 && out[k].kind == svNumber
+	return k >= 0 && (out[k].kind == svNumber || out[k].kind == svHanRun || out[k].kind == svUnspacedChar)
 }
 
 // svFeetAndNumber reports whether the raws so far are a number, a feet mark and a number, all touching ("5'10",
@@ -507,11 +514,21 @@ func svFreeDash(rs []rune, i int) bool {
 	return !glued
 }
 
-// svFreeSign: a free dash that is a sign, after a space, punctuation or the start, and against a word, a number or an
-// unspaced character ("-x", "-五"). Read only as written or "minus", never silent.
+// svFreeSign: a free dash that is a sign, read only as written or "minus", never silent. Before a number, a Han numeral
+// as a digit, it is one unless a letter, digit or mark comes before it, as svSignAt has it ("-五", "气温-五度"). Before
+// a word or any other unspaced character it is one only at a word start, after a space, punctuation or the start
+// ("-x"): an unspaced character is a word of its own, so a dash after one joins two words ("北京-上海"), as a hyphen
+// joins "x-y".
 func svFreeSign(rs []rune, i int) bool {
-	after := i > 0 && (svLetter(rs[i-1]) || svDigit(rs[i-1]) || unicode.IsMark(rs[i-1]))
-	return !after && i+1 < len(rs) && (svLetter(rs[i+1]) || svDigit(rs[i+1]) || isUnspaced(rs[i+1]))
+	if i+1 >= len(rs) {
+		return false
+	}
+	n := rs[i+1]
+	afterWord := i > 0 && (svLetter(rs[i-1]) || svDigit(rs[i-1]) || unicode.IsMark(rs[i-1]))
+	if svDigit(n) || isHanNumeral(n) {
+		return !afterWord
+	}
+	return !afterWord && !(i > 0 && isUnspaced(rs[i-1])) && (svLetter(n) || isUnspaced(n))
 }
 
 var svDotAbbreviations = map[string]bool{"mr": true, "mrs": true, "ms": true, "dr": true, "st": true, "jr": true, "sr": true, "vs": true}
@@ -1819,7 +1836,15 @@ var svMathOperators = map[string]bool{"=": true, "+": true, "−": true, "×": t
 func svExpressions(raws []svRaw, withWords bool) []bool {
 	in := make([]bool, len(raws))
 	part := func(k int) bool {
-		return raws[k].kind == svNumber || raws[k].kind == svHanRun || raws[k].kind == svSymbol || withWords && raws[k].kind == svWord
+		switch raws[k].kind {
+		case svNumber, svHanRun, svSymbol:
+			return true
+		case svWord:
+			return withWords
+		case svUnspacedChar: // a word of its own, and a Han numeral outside zh still a number ("五-二=三" in ja)
+			return withWords || isHanNumeral([]rune(raws[k].text)[0])
+		}
+		return false
 	}
 	op := func(k int) bool {
 		if raws[k].kind != svSymbol {

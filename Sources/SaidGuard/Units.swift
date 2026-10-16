@@ -411,7 +411,8 @@ func svExpressions(_ raws: [SvRaw], withWords: Bool) -> [Bool] {
         switch raws[j].kind {
         case .number, .hanRun, .symbol: return true
         case .word: return withWords
-        case .unspacedChar: return false
+        // An unspaced character is a word of its own, and a Han numeral outside zh still a number ("五-二=三" in ja).
+        case .unspacedChar: return withWords || raws[j].text.unicodeScalars.first.map(isHanNumeral) == true
         }
     }
     func op(_ j: Int) -> Bool {
