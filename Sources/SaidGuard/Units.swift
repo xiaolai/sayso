@@ -140,27 +140,19 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             j += 1
         }
         if labels.count >= 2 {  // "one.Next" has no second lowercase label: a number word and a word
-            var parts: [String] = []
-            var dotted: [String] = []
-            var joined: [String] = []
-            var joinedDotted: [String] = []
-            var hyphen = false
+            // One unit a label and one a dot, so each choice is independent and the readings stay linear in the
+            // labels: a hyphenated label split or joined on its own ("e-mail.long-term.com" = "email dot long term
+            // dot com"), and "dot" said or not at each dot. A dot written by the transcript is unspoken, so
+            // "www.example dot com" already reads as "www example dot com": a per-dot choice accepts no reading the
+            // written dots did not.
             for (i, l) in labels.enumerated() {
-                if i > 0 {
-                    dotted.append("dot")
-                    joinedDotted.append("dot")
+                if i > 0 { units.append([lit("dot"), []]) }
+                var unit: SvUnit = [lit(partsOf[l])]
+                if partsOf[l].count > 1 {  // "e-mail.com" = "email dot com", as a hyphenated word may be joined
+                    unit.append(lit(partsOf[l].joined()))
                 }
-                hyphen = hyphen || partsOf[l].count > 1
-                parts += partsOf[l]
-                dotted += partsOf[l]
-                joined.append(partsOf[l].joined())
-                joinedDotted.append(partsOf[l].joined())
+                units.append(unit)
             }
-            var unit: SvUnit = [lit(parts), lit(dotted)]
-            if hyphen {  // "e-mail.com" = "email dot com", as a hyphenated word may be joined
-                unit += [lit(joined), lit(joinedDotted)]
-            }
-            units.append(unit)
             k = j - 1
             continue
         }

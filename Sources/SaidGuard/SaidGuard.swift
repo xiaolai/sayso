@@ -22,7 +22,7 @@ public let saidGuardMaxBytes = 64 << 10
 /// The said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a reading it
 /// accepted. A cache of audio accepted by the guard keys on it, so audio accepted by an older, looser guard is not
 /// reused. 5: minus signs and operators kept in more contexts, paired quotation marks, the a/I rule in every language.
-public let saidGuardVersion = 5
+public let saidGuardVersion = 6
 
 /// The base languages whose numbers also have the locale's spell-out as a reading (the `spellout:<lang>`
 /// capabilities of spec/parity.md). `en` and `zh` use the guard's own tables.

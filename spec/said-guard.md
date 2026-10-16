@@ -3,7 +3,7 @@
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
 tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
-revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 5), raised whenever a change makes the guard refuse a
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 6), raised whenever a change makes the guard refuse a
 reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
@@ -30,7 +30,9 @@ the results was tried and abandoned: every rewrite rule could map two different 
 1. **Both sides** get only normalisation: NFKC and width folding; `\p{Cf}` deleted except U+200B, which is a space;
    `\p{Me}` and variation selectors deleted; Unicode decimal digits to ASCII at scalar level; lower case by the
    language's rules (`tr`, `az`); apostrophes unified and **kept**, except a pair of single quotation marks around
-   words (`Say ‘hello’.`, `'yes'`), which is unspoken; an unpaired mark is an apostrophe (`’tis`, `students’`). **Only unspoken punctuation is deleted**, and that
+   words (`Say ‘hello’.`, `'yes'`), which is unspoken; an unpaired mark is an apostrophe (`’tis`, `students’`), and so is
+   a mark before a leading elision, which never opens a pair (`svElisions`, a closed list: `’tis`, `’twas`, `’em`, `’n’`,
+   `’cause`, …), so `’Tis the students’ books` keeps both. **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`
@@ -81,7 +83,7 @@ the results was tried and abandoned: every rewrite rule could map two different 
    | `vs`, `etc`, `e.g.`, `i.e.`, `en` | expanded only in lower case after the first letter (`VS Code`, `E.G. White` are not); `for example`, `et cetera`, `that is` also abbreviated |
    | spoken symbol, `en` | as written, or its names (`svSymbolNames`: `percent`, `plus`, `equals`, `minus`/`to`, `times`, `divided by`, `less than`, `not equal to`, `number`, `star`, `prime`, `to the power of`, `squared`/`cubed` for `^2`/`^3`, which may also be read `to the power of` with the exponent in words or digits, …); unnamed symbols (currency) and other languages as written |
    | hyphenated word | split, or joined (`e-mail` = `email`) |
-   | lowercase `a.b.c` | as written, or with "dot" between every part (`www dot example dot com`); a capital (`Dr.Smith`, `end.Next`) is not a domain. Recognised before number words (`one.com`); a label may be one letter (`x.com`), and a hyphenated label is cut as the transcript cuts it (`e-mail.com`). A run of single letters (`a.b.c`) is a spelled code instead |
+   | lowercase `a.b.c` | as written, or with "dot" at any of its dots (`www dot example dot com`; a transcript that writes a dot, `www dot example.com`, already reads as no "dot" there, so a per-dot choice accepts nothing the written form did not); a capital (`Dr.Smith`, `end.Next`) is not a domain. Recognised before number words (`one.com`); a label may be one letter (`x.com`), and each hyphenated label is split or joined on its own (`e-mail.long-term.com` = `email dot long term dot com`). One unit a label and one a dot, so the readings are linear in the labels. A run of single letters (`a.b.c`) is a spelled code instead |
    | any other word or character | as written |
 
 3. **Match** iff the script has at least one unit and the transcript's tokens are one reading per unit, in order. A

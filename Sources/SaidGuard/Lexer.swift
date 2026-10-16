@@ -176,10 +176,32 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
 private let svQuoteOpeners = Set("([{\"“«".unicodeScalars)
 private let svSentenceEndScalars = Set(".!?。".unicodeScalars)
 
+/// The English words written with a leading apostrophe for dropped letters ("’tis", "’em", "’n’"). A mark before one
+/// is an apostrophe, never an opening quotation mark: a closed list, as the guard's other word lists.
+let svElisions: Set<String> = [
+    "tis", "twas", "twere", "twill", "twould", "em", "n", "cause", "cos", "til", "bout", "cept", "neath", "gainst",
+    "tween", "twixt", "scuse", "nuff",
+]
+
+/// Whether the letters starting at rs[i], in any case, are a whole word of ``svElisions``.
+func svElisionAt(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
+    var b = ""
+    var i = start
+    while i < rs.count && svLetter(rs[i]) {
+        var v = rs[i].value
+        if v >= 0x41 && v <= 0x5A { v += 0x20 }
+        if v < 0x61 || v > 0x7A || b.utf8.count == 6 { return false }
+        b.unicodeScalars.append(Unicode.Scalar(v)!)
+        i += 1
+    }
+    return (i == rs.count || !isMark(rs[i])) && svElisions.contains(b)
+}
+
 /// Replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"', so the words
 /// inside are not read as elisions or possessives. An opener stands at a word start after a space, an opening bracket
-/// or the start; a closer at a word end before a space, punctuation or the end; a pair stays within a sentence. An
-/// unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n roll").
+/// or the start, and never before a leading elision (``svElisions``: "’Tis the students’ books" holds two apostrophes,
+/// not a quotation); a closer at a word end before a space, punctuation or the end; a pair stays within a sentence. An
+/// unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n’ roll").
 func svUnquote(_ input: [Unicode.Scalar]) -> [Unicode.Scalar] {
     var rs = input
     var open = -1
@@ -190,7 +212,7 @@ func svUnquote(_ input: [Unicode.Scalar]) -> [Unicode.Scalar] {
             continue
         }
         let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
-            && svLetter(rs[i + 1])
+            && svLetter(rs[i + 1]) && !svElisionAt(rs, i + 1)
         let closer = i > 0 && (svLetter(rs[i - 1]) || isMark(rs[i - 1]) || svDigit(rs[i - 1]))
             && (i + 1 == rs.count || isSpace(rs[i + 1])
                 || (svUnspokenPunct.contains(rs[i + 1]) && !isApostrophe(rs[i + 1])))

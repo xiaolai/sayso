@@ -29,7 +29,7 @@ type svUnit []svSeq // the alternative readings of one script unit
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
 // reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
-const Version = 5
+const Version = 6
 
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
@@ -336,8 +336,9 @@ func svLex(s string, hanNumbers bool) []svRaw {
 
 // svUnquote replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"',
 // so the words inside are not read as elisions or possessives. An opener stands at a word start after a space, an
-// opening bracket or the start; a closer at a word end before a space, punctuation or the end; a pair stays within
-// a sentence. An unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n roll").
+// opening bracket or the start, and never before a leading elision (svElisions: "’Tis the students’ books" holds two
+// apostrophes, not a quotation); a closer at a word end before a space, punctuation or the end; a pair stays within
+// a sentence. An unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n’ roll").
 func svUnquote(rs []rune) []rune {
 	open := -1
 	for i, r := range rs {
@@ -347,7 +348,8 @@ func svUnquote(rs []rune) []rune {
 			}
 			continue
 		}
-		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1])
+		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1]) &&
+			!svElisionAt(rs, i+1)
 		closer := i > 0 && (svLetter(rs[i-1]) || unicode.IsMark(rs[i-1]) || svDigit(rs[i-1])) &&
 			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
 		switch {
@@ -359,6 +361,30 @@ func svUnquote(rs []rune) []rune {
 		}
 	}
 	return rs
+}
+
+// svElisions are the English words written with a leading apostrophe for dropped letters ("’tis", "’em", "’n’"). A
+// mark before one is an apostrophe, never an opening quotation mark: a closed list, as the guard's other word lists.
+var svElisions = map[string]bool{
+	"tis": true, "twas": true, "twere": true, "twill": true, "twould": true, "em": true, "n": true, "cause": true,
+	"cos": true, "til": true, "bout": true, "cept": true, "neath": true, "gainst": true, "tween": true, "twixt": true,
+	"scuse": true, "nuff": true,
+}
+
+// svElisionAt reports whether the letters starting at rs[i], in any case, are a whole word of svElisions.
+func svElisionAt(rs []rune, i int) bool {
+	var b []byte
+	for ; i < len(rs) && svLetter(rs[i]); i++ {
+		r := rs[i]
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		if r < 'a' || r > 'z' || len(b) == 6 {
+			return false
+		}
+		b = append(b, byte(r))
+	}
+	return (i == len(rs) || !unicode.IsMark(rs[i])) && svElisions[string(b)]
 }
 
 func svNormApostrophes(s string) string {
@@ -1281,22 +1307,22 @@ func svScriptUnits(s, language string) []svUnit {
 			j++
 		}
 		if len(labels) >= 2 { // "one.Next" has no second lowercase label: a number word and a word
-			var parts, dotted, joined, joinedDotted []string
-			hyphen := false
+			// One unit a label and one a dot, so each choice is independent and the readings stay linear in the
+			// labels: a hyphenated label split or joined on its own ("e-mail.long-term.com" = "email dot long term
+			// dot com"), and "dot" said or not at each dot. A dot written by the transcript is unspoken, so
+			// "www.example dot com" already reads as "www example dot com": a per-dot choice accepts no reading the
+			// written dots did not.
 			for i, l := range labels {
 				if i > 0 {
-					dotted, joinedDotted = append(dotted, "dot"), append(joinedDotted, "dot")
+					units = append(units, svUnit{lit("dot"), lit()})
 				}
 				ws := strings.FieldsFunc(l, svJoiner)
-				hyphen = hyphen || len(ws) > 1
-				parts, dotted = append(parts, ws...), append(dotted, ws...)
-				joined, joinedDotted = append(joined, strings.Join(ws, "")), append(joinedDotted, strings.Join(ws, ""))
+				unit := svUnit{lit(ws...)}
+				if len(ws) > 1 { // "e-mail.com" = "email dot com", as a hyphenated word may be joined
+					unit = append(unit, lit(strings.Join(ws, "")))
+				}
+				units = append(units, unit)
 			}
-			unit := svUnit{lit(parts...), lit(dotted...)}
-			if hyphen { // "e-mail.com" = "email dot com", as a hyphenated word may be joined
-				unit = append(unit, lit(joined...), lit(joinedDotted...))
-			}
-			units = append(units, unit)
 			k = j - 1
 			continue
 		}

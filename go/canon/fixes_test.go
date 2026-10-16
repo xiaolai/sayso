@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The strict Han parser: a run that is not a well-formed numeral stays as written; the colloquial dropped unit reads.
@@ -161,5 +162,83 @@ func TestRoundThree(t *testing.T) {
 				t.Errorf("Canon(%q) = %q, then %q", s, once, twice)
 			}
 		}
+	}
+}
+
+// Each compound and each year pair is decided on its own, however many there are, and a year pair may follow a number
+// across punctuation but never continues one.
+func TestIndependentChoices(t *testing.T) {
+	five := strings.Repeat("e-mail ", 5)
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{five, "email e mail e mail e mail e mail", true},
+		{five, "e mail email e mail email e mail", true},
+		{five, "email e mail e mail e mail", false},
+		{"e-mail long-term well-known part-time full-time x-ray", "email long term wellknown part time fulltime x ray", true},
+		{"e-mail long-term well-known part-time full-time x-ray", "email long term wellknown part time fulltime x rays", false},
+		{"e-mail, long-term; well-known part-time. Full-time", "e mail longterm well known parttime full time", true},
+		{"1999; 2010", "nineteen ninety nine; twenty ten", true},
+		{"nineteen ninety nine, twenty ten", "1999 2010", true},
+		{"1999 2010", "nineteen ninety nine twenty ten", false}, // no punctuation: "nine twenty ten" continues a number
+		{"2010, 20 people", "2000, 1020 people", false},
+		{"2010, 20 people; nineteen ninety nine", "twenty ten, 20 people; 1999", true},
+		{"nineteen twenty people, twenty ten", "19 20 people, 2010", true},
+		{"nineteen ninety-nine", "1999", true},
+		{"x-ray a-b o-k e-mail u-turn i-pod", "xray ab ok email uturn ipod", true},
+	} {
+		if got := Equivalent(c.a, c.b); got != c.want {
+			t.Errorf("Equivalent(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+		if got := Equivalent(c.b, c.a); got != c.want {
+			t.Errorf("Equivalent(%q, %q) = %v, want %v", c.b, c.a, got, c.want)
+		}
+	}
+}
+
+// The cuts canonicalise to the text's tokens one after the other, also beside the words a neighbour rule reads: the
+// check in pieces is a safety net, not what makes these hold.
+func TestPiecesCompose(t *testing.T) {
+	for _, s := range []string{
+		"e-mail e-mail e-mail", "St. Louis e-mail", "Main St. e-mail", "x-ray X J", "a hundred e-mail and five",
+		"one hundred and e-mail five", "oh e-mail seven", "Mr Smith e-mail", "e.g. e-mail", "nineteen e-mail ninety",
+		"café-au-lait au-pair", "’Tis the students’ e-mail", "e-mail, long-term. Well-known!", "二十 e-mail 一",
+	} {
+		ps := cuts([]rune(s))
+		var got []string
+		for _, p := range ps {
+			got = append(got, Canon(p)...)
+		}
+		if !slices.Equal(got, Canon(s)) {
+			t.Errorf("cuts(%q) = %q: %q, want %q", s, ps, got, Canon(s))
+		}
+	}
+	if ps := cuts([]rune("e-mail e-mail e-mail")); len(ps) != 3 {
+		t.Errorf("cuts = %q, want three pieces", ps)
+	}
+}
+
+// A long text of compounds and years stays linear: listing every combination of 1,000 compounds is 2^1000 readings.
+// The bound is loose on purpose (the race detector slows this tenfold); enumeration would not finish.
+func TestEquivalentScales(t *testing.T) {
+	var a, b strings.Builder
+	for i := 0; i < 500; i++ {
+		a.WriteString("e-mail long-term 1999; ")
+		if i%2 == 0 {
+			b.WriteString("email long term nineteen ninety nine; ")
+		} else {
+			b.WriteString("e mail longterm one thousand nine hundred ninety nine, ")
+		}
+	}
+	start := time.Now()
+	if !Equivalent(a.String(), b.String()) {
+		t.Error("Equivalent = false, want true")
+	}
+	if Equivalent(a.String(), b.String()+" more") {
+		t.Error("Equivalent with an added word = true, want false")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("took %v", d)
 	}
 }
