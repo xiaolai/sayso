@@ -27,8 +27,8 @@ func Login(cfg Config, deviceAuth bool, s Streams) error {
 			return fmt.Errorf("codexapp: start refused: %w", err)
 		}
 	}
-	env := cfg.Env
-	if env == nil {
+	env := cfg.Env.List()
+	if cfg.Env.IsZero() {
 		env = os.Environ()
 	}
 	args := []string{"login"}

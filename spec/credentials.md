@@ -53,9 +53,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   child. The child starts in its own process group. Close: stdin closed, `SIGTERM` to the group, a 2 s grace,
   `SIGKILL` to the group unless the child was reaped and no other member of its group remains; close returns within
   grace + 1 s even when a descendant outside the group still holds the pipes (our ends are closed and the readers
-  abandoned). A client released without a close ends its child the same way. On macOS a child that exits stays
-  unreaped until close, so its process-group ID cannot be reused by another process while close may still signal
-  it; close reaps it last.
+  abandoned). A client released without a close ends its child the same way. On macOS and Linux a child that
+  exits stays unreaped until close, so its process-group ID cannot be reused by another process while close may still
+  signal it; close reaps it last.
 - **Messages.** Newline-delimited JSON-RPC, UTF-8 without a byte-order mark; a last line ended by end of file rather
   than a newline is still a line. Only JSON's own whitespace (space, tab, line feed, carriage return) is trimmed
   around a line. A line longer than 4 MiB, or a line that is not strict JSON (one value, valid UTF-8, no duplicate
@@ -65,7 +65,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   field of the wrong type is `codex-error` (an error `code` is a signed 64-bit integer). A message is classified
   before its reply fields are read: one without `id` is a notification and is ignored whatever else it holds; one
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
-  JSON-RPC error and never acted on; any other is a reply, matched to a call by its integer `id`. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+  JSON-RPC error and never acted on. The answers are queued and written in order by a writer of their own, so the
+  reader never waits on the child's input; answers still queued beyond 8 MiB (a child sending requests without
+  reading the answers) are `codex-error`; any other is a reply, matched to a call by its integer `id`. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.

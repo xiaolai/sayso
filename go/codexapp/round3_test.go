@@ -31,7 +31,7 @@ func TestChildStaysUnreapedUntilClose(t *testing.T) {
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Start(t.Context(), Config{Bin: script, Env: []string{"PATH=/usr/bin:/bin"}, Timeout: 3 * time.Second})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestChildStaysUnreapedUntilClose(t *testing.T) {
 // token is behind a pointer there, so only an address appears.
 func TestAuthStatusNestedFormatting(t *testing.T) {
 	secret.Register("opaque-canary-nested-1")
-	st := AuthStatus{Method: "chatgpt", HasMethod: true, token: &sealedToken{"opaque-canary-nested-1"}}
+	st := AuthStatus{Method: "chatgpt", HasMethod: true, token: sealed("opaque-canary-nested-1")}
 	type holder struct{ status AuthStatus }
 	for _, verb := range []string{"%v", "%+v", "%#v"} {
 		if s := fmt.Sprintf(verb, holder{st}); strings.Contains(s, "canary") {

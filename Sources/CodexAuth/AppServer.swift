@@ -268,6 +268,13 @@ final class AppServerCore: @unchecked Sendable {
     private var closed = false
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
+    /// The encoded answers to server requests, written in order by ``refuseLoop()`` so the reader never waits on the
+    /// child's input; `refusalBytes` counts them until written, at most `refusalCap`. Guarded by `lock`.
+    private var refusals: [Data] = []
+    private var refusalBytes = 0
+    private let refusalWake = DispatchSemaphore(value: 0)
+    /// Bounds the refusals queued for a child that sends server requests without reading the answers.
+    private static let refusalCap = 2 * AppServerClient.maxLine
     private let exited = DispatchSemaphore(value: 0)
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
@@ -335,6 +342,7 @@ final class AppServerCore: @unchecked Sendable {
 
         let out = outPipe[0], err = errPipe[0]
         Self.thread { [self] in readLoop(out) }
+        Self.thread { [self] in refuseLoop() }
         Self.thread { [self] in
             stderrLoop(err)
             stderrDone.signal()
@@ -470,15 +478,25 @@ final class AppServerCore: @unchecked Sendable {
     // MARK: - Wire
 
     /// Writes one message, giving up at `deadline`, so a child that stops reading cannot hold a call, or the
-    /// reader refusing a server request, past its timeout; ``close()`` ends the wait too.
+    /// writer of refusals, past its timeout; ``close()`` ends the wait too.
     /// Waiting for another writer counts against the deadline. A write cut off after part of the message was sent
     /// leaves the stream unusable, so the client is failed. A message JSONSerialization cannot encode (a Date, NaN)
     /// is refused before it reaches the encoder, which would raise an Objective-C exception no `try` can catch.
     private func write(_ message: [String: Any], deadline: DispatchTime) throws {
-        guard Self.encodable(message),
+        try write(Self.encode(message), deadline: deadline)
+    }
+
+    /// `message` as one line, or a throw when JSONSerialization cannot encode it.
+    private static func encode(_ message: [String: Any]) throws -> Data {
+        guard encodable(message),
             var data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])
         else { throw AppServerError("a request could not be encoded") }
         data.append(0x0A)
+        return data
+    }
+
+    /// Writes one encoded line, as the overload taking a message describes.
+    private func write(_ data: Data, deadline: DispatchTime) throws {
         let refused = AppServerError("Codex app-server is not accepting requests")
         let timedOut = AppServerError("Codex app-server did not accept a request within \(timeout) s")
         func stopped() -> AppServerError? { lock.withLock { closed ? refused : failure } }
@@ -614,11 +632,7 @@ final class AppServerCore: @unchecked Sendable {
             hasMethod = true
         }
         if hasMethod {
-            try? write(
-                [
-                    "id": id,
-                    "error": ["code": AppServerError.methodNotFound, "message": "server requests are not supported"],
-                ], deadline: .now() + timeout)
+            refuse(id)
             return true
         }
         let result: Result<Any, AppServerError>
@@ -670,6 +684,53 @@ final class AppServerCore: @unchecked Sendable {
                 p.done.signal()
             }
             pending.removeAll()
+        }
+        refusalWake.signal()  // the refusal writer ends
+    }
+
+    /// Queues the answer to a server request (an approval, for instance): an error, written by ``refuseLoop()``. The
+    /// reader never writes, so a child that blocks on its full output while we wait to write its input cannot stall
+    /// it. Refusals beyond `refusalCap`, from a child that sends requests without reading the answers, fail the client.
+    private func refuse(_ id: Any) {
+        let message: [String: Any] = [
+            "id": id, "error": ["code": AppServerError.methodNotFound, "message": "server requests are not supported"],
+        ]
+        guard let data = try? Self.encode(message) else {  // id is a parsed JSON value, so this cannot happen
+            fail(AppServerError("Codex app-server sent a server request that could not be answered"))
+            return
+        }
+        let over = lock.withLock { () -> Bool in
+            guard refusalBytes + data.count <= Self.refusalCap else { return true }
+            refusals.append(data)
+            refusalBytes += data.count
+            return false
+        }
+        if over {
+            fail(AppServerError("Codex app-server sent server requests without reading the answers"))
+        } else {
+            refusalWake.signal()
+        }
+    }
+
+    /// Writes the queued refusals in order, each with the per-call deadline, until the client fails. A refusal that
+    /// misses its deadline is dropped: the child stopped reading, and the calls waiting on it time out on their own.
+    private func refuseLoop() {
+        while true {
+            refusalWake.wait()
+            let batch = lock.withLock { () -> [Data]? in
+                guard failure == nil else { return nil }
+                defer { refusals = [] }
+                return refusals
+            }
+            guard let batch else { return }
+            for data in batch {
+                try? write(data, deadline: .now() + timeout)
+                let failed = lock.withLock { () -> Bool in
+                    refusalBytes -= data.count
+                    return failure != nil
+                }
+                if failed { return }
+            }
         }
     }
 

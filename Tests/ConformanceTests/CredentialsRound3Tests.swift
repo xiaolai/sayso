@@ -107,6 +107,52 @@ final class CredentialsRound3Tests: XCTestCase {
         XCTAssertEqual(errno, ESRCH, "close left the child unreaped")
     }
 
+    /// A child that sends many server requests without reading the answers, then answers a call, gets that answer
+    /// through: the reader never waits on the child's input, so the child never blocks on its full output.
+    func testServerRequestsDoNotStallTheReader() throws {
+        // 3000 requests make ~250 KiB of refusals and ~400 KiB of requests, both far beyond a pipe buffer.
+        let (script, cleanup) = try fakeCodex(
+            "sys.stdin.readline()\ncall = json.loads(sys.stdin.readline())\n"
+                + "for i in range(3000):\n"
+                + "    sys.stdout.write(json.dumps({'id': 'srv-%d' % i, 'method': 'item/approve', 'params': {'pad': 'x' * 100}}) + '\\n')\n"
+                + "sys.stdout.write(json.dumps({'id': call['id'], 'result': {'ok': True}}) + '\\n')\n"
+                + "sys.stdout.flush()\nn = 0\n"
+                + "for line in sys.stdin:\n"
+                + "    if json.loads(line).get('error', {}).get('code') == -32601: n += 1\n"
+                + "    if n == 3000: break\n"
+                + "sys.stderr.write('refusals %d\\n' % n)\nsys.stderr.flush()\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let c = try AppServerClient.start(
+            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 8))
+        defer { c.close() }
+        let t0 = Date()
+        let result = try c.call("echo")
+        XCTAssertEqual((result as? [String: Any])?["ok"] as? Bool, true)
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 4, "the call waited behind the refusals")
+        let deadline = Date().addingTimeInterval(8)
+        while !c.stderr.contains("refusals 3000") && Date() < deadline { usleep(20_000) }
+        XCTAssertTrue(c.stderr.contains("refusals 3000"), "the child did not read every refusal")
+    }
+
+    /// A child that sends server requests without ever reading the answers fails the client once the queued refusals
+    /// pass their bound, instead of growing without limit.
+    func testUnreadRefusalsAreBounded() throws {
+        // Each id is 1 MiB, so 12 requests queue about 12 MiB of refusals beyond what the pipe holds.
+        let (script, cleanup) = try fakeCodex(
+            "sys.stdin.readline()\nsys.stdin.readline()\n"
+                + "for i in range(12):\n"
+                + "    sys.stdout.write(json.dumps({'id': 'x' * (1 << 20) + str(i), 'method': 'item/approve'}) + '\\n')\n"
+                + "sys.stdout.flush()\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let c = try AppServerClient.start(
+            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
+        defer { c.close() }
+        // The failure names the overflow, not the timeout; reading 12 MiB takes a few seconds in a debug build.
+        XCTAssertThrowsError(try c.call("echo")) { error in
+            XCTAssertTrue("\(error)".contains("without reading the answers"), "\(error)")
+        }
+    }
+
     /// A second close waits for the first, as Go's sync.Once makes it.
     func testConcurrentCloseWaitsForTheFirst() throws {
         let (script, cleanup) = try fakeCodex("signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n")

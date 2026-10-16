@@ -37,6 +37,8 @@ const (
 	maxLine = 4 << 20
 	// stderrDrain is how long Close waits, once the child is gone, for its last stderr bytes.
 	stderrDrain = 100 * time.Millisecond
+	// refusalCap bounds the refusals queued for a child that sends server requests without reading the answers.
+	refusalCap = 2 * maxLine
 )
 
 // Args are the child's arguments. The provider override makes Codex answer for its OpenAI sign-in even when the
@@ -47,7 +49,7 @@ var Args = []string{"-c", `model_provider="openai"`, "app-server", "--listen", "
 type Config struct {
 	Bin       string        // absolute path, from Resolve
 	CodexHome string        // passed as CODEX_HOME when non-empty
-	Env       []string      // the inherited environment; nil means os.Environ()
+	Env       Env           // the child's environment, from EnvOf; the zero Env inherits os.Environ()
 	Timeout   time.Duration // per call; required
 	Logger    *slog.Logger  // nil discards
 	// ClientName is sent as clientInfo.name; "" means "sayso".
@@ -57,7 +59,7 @@ type Config struct {
 	Guard func(bin string) error
 }
 
-// String names the executable only: Env holds the inherited environment, which may hold credentials.
+// String names the executable only: Env may hold credentials.
 func (cfg Config) String() string { return "codexapp.Config{" + cfg.Bin + "}" }
 
 // GoString redacts like String.
@@ -120,14 +122,20 @@ type core struct {
 	agent   string // initialize userAgent, scrubbed
 
 	// writeSem admits one writer at a time; a channel, so a waiting writer observes its deadline and cancellation.
-	writeSem   chan struct{}
+	writeSem chan struct{}
+	// refusals are the encoded answers to server requests, written in order by refuseLoop so the reader never waits
+	// on the child's input; refusalBytes is their total size, at most refusalCap. Guarded by mu.
+	refusals     [][]byte
+	refusalBytes int
+	refusalWake  chan struct{} // one pending wake-up for refuseLoop
+
 	stderrDone chan struct{} // closed when the stderr copy ends
 	mu         sync.Mutex
 	nextID     int64
 	pending    map[string]chan response
 	failure    error         // set once the child is unusable
 	dead       chan struct{} // closed when the reader stops
-	exited     chan struct{} // closed when the child has exited (on darwin it stays unreaped until Close)
+	exited     chan struct{} // closed when the child has exited (on macOS and Linux it stays unreaped until Close)
 	closeMu    sync.Once
 }
 
@@ -155,18 +163,19 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 			return nil, fmt.Errorf("codexapp: start refused: %w", err)
 		}
 	}
-	env := cfg.Env
-	if env == nil {
+	env := cfg.Env.List()
+	if cfg.Env.IsZero() {
 		env = os.Environ()
 	}
 	k := &core{
-		timeout:    cfg.Timeout,
-		logger:     cfg.Logger,
-		pending:    map[string]chan response{},
-		dead:       make(chan struct{}),
-		exited:     make(chan struct{}),
-		writeSem:   make(chan struct{}, 1),
-		stderrDone: make(chan struct{}),
+		timeout:     cfg.Timeout,
+		logger:      cfg.Logger,
+		pending:     map[string]chan response{},
+		dead:        make(chan struct{}),
+		exited:      make(chan struct{}),
+		writeSem:    make(chan struct{}, 1),
+		stderrDone:  make(chan struct{}),
+		refusalWake: make(chan struct{}, 1),
 	}
 	c := &Client{k: k}
 	if k.logger == nil {
@@ -202,6 +211,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 
 	// The goroutines hold the core only, so an unclosed Client can be collected, and its cleanup ends the child.
 	go k.readLoop(outR)
+	go k.refuseLoop()
 	go func() {
 		_, _ = io.Copy(&k.stderr, errR)
 		close(k.stderrDone)
@@ -343,12 +353,59 @@ func (k *core) handle(line []byte) bool {
 	return true
 }
 
-// refuse answers a server request (an approval, for instance) with an error, before the reader reads on, so the
-// answer precedes anything that follows. The write has the per-call deadline: a child that stops reading its input
-// while sending requests (filling the 64 KiB pipe takes hundreds of them) costs at most that wait, then codex-error.
+// refuse queues the answer to a server request (an approval, for instance): an error, written by refuseLoop. The
+// reader never writes, so a child that blocks on its full output while we wait to write its input cannot stall it.
+// Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the client.
 func (k *core) refuse(id wire.Node) {
 	msg := map[string]any{"id": json.RawMessage(id.Raw()), "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}}
-	_ = k.write(context.Background(), msg, time.Now().Add(k.timeout))
+	b, err := json.Marshal(msg)
+	if err != nil { // id is a parsed JSON value, so this cannot happen
+		k.fail(codexError("Codex app-server sent a server request that could not be answered", nil))
+		return
+	}
+	b = append(b, '\n')
+	k.mu.Lock()
+	over := k.refusalBytes+len(b) > refusalCap
+	if !over {
+		k.refusals = append(k.refusals, b)
+		k.refusalBytes += len(b)
+	}
+	k.mu.Unlock()
+	if over {
+		k.fail(codexError("Codex app-server sent server requests without reading the answers", nil))
+		return
+	}
+	select {
+	case k.refusalWake <- struct{}{}:
+	default: // a wake-up is already pending
+	}
+}
+
+// refuseLoop writes the queued refusals in order, each with the per-call deadline, until the client fails. A refusal
+// that misses its deadline is dropped: the child stopped reading, and the calls waiting on it time out on their own.
+func (k *core) refuseLoop() {
+	for {
+		select {
+		case <-k.refusalWake:
+		case <-k.dead:
+			return
+		}
+		for {
+			k.mu.Lock()
+			if len(k.refusals) == 0 {
+				k.mu.Unlock()
+				break
+			}
+			b := k.refusals[0]
+			k.refusals[0] = nil
+			k.refusals = k.refusals[1:]
+			k.refusalBytes -= len(b)
+			k.mu.Unlock()
+			if err := k.writeBytes(context.Background(), b, time.Now().Add(k.timeout)); err != nil && k.failed() != nil {
+				return
+			}
+		}
+	}
 }
 
 func (k *core) deliver(id string, resp response) {
@@ -378,15 +435,19 @@ func (k *core) failed() error {
 }
 
 // write sends one message, giving up at deadline and when ctx ends: a child that stops reading cannot hold a call,
-// or the reader that refuses a server request, past its timeout. Waiting for another writer counts against the
-// deadline too. A write cut off after part of the message was sent leaves the stream unusable, so the client is
-// failed. Close interrupts a write in progress.
+// or the writer of refusals, past its timeout. Waiting for another writer counts against the deadline too. A write
+// cut off after part of the message was sent leaves the stream unusable, so the client is failed. Close interrupts a
+// write in progress.
 func (k *core) write(ctx context.Context, v any, deadline time.Time) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("codexapp: encode: %w", err)
 	}
-	b = append(b, '\n')
+	return k.writeBytes(ctx, append(b, '\n'), deadline)
+}
+
+// writeBytes writes one encoded message, ended by a newline, as write describes.
+func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) error {
 	timedOut := codexError("Codex app-server did not accept a request within "+k.timeout.String(), nil)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -518,8 +579,9 @@ func (k *core) close() error {
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
-		// Once the child has exited and its group is empty nothing is signalled. On darwin the child is not reaped
-		// until the end of Close, so its group ID cannot name another group meanwhile; elsewhere it may, once reaped.
+		// Once the child has exited and its group is empty nothing is signalled. On macOS and Linux the child is not
+		// reaped until the end of Close, so its group ID cannot name another group meanwhile; elsewhere it may, once
+		// reaped.
 		if !k.gone(pid) {
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
 		}

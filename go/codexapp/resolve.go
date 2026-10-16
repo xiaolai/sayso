@@ -67,13 +67,12 @@ func Resolve(explicit, path string, candidates []string) (string, error) {
 			if p, ok := executable(explicit); ok {
 				return p, nil
 			}
-			// The caller's text is quoted, so it is scrubbed (spec/credentials.md, hygiene).
-			return "", fmt.Errorf("%w: %q is not an executable file", ErrNotFound, secret.Scrub(explicit))
+			return "", &resolveError{explicit: sealed(explicit), reason: "is not an executable file"}
 		}
 		if p, ok := lookIn(filepath.SplitList(path), explicit); ok {
 			return p, nil
 		}
-		return "", fmt.Errorf("%w: %q is not on PATH", ErrNotFound, secret.Scrub(explicit))
+		return "", &resolveError{explicit: sealed(explicit), reason: "is not on PATH"}
 	}
 	if p, ok := lookIn(filepath.SplitList(path), "codex"); ok {
 		return p, nil
@@ -83,6 +82,32 @@ func Resolve(explicit, path string, candidates []string) (string, error) {
 	}
 	return "", ErrNotFound
 }
+
+// resolveError is an explicit choice that did not resolve. It quotes the caller's text, which may hold a secret
+// registered later (spec/credentials.md, hygiene), so the text is scrubbed whenever the error is formatted, not when
+// it is built, and is held in a closure that neither nested formatting nor reflection can read. It is ErrNotFound
+// for errors.Is.
+type resolveError struct {
+	explicit func() string // nil for ""
+	reason   string
+}
+
+func (e *resolveError) Error() string {
+	text := ""
+	if e.explicit != nil {
+		text = e.explicit()
+	}
+	// Scrubbed before quoting, whose escapes would hide a secret holding a quote or a control character, and after.
+	return secret.Scrub(fmt.Sprintf("%s: %q %s", ErrNotFound, secret.Scrub(text), e.reason))
+}
+
+func (e *resolveError) Unwrap() error { return ErrNotFound }
+
+// GoString redacts like Error.
+func (e *resolveError) GoString() string { return e.Error() }
+
+// Format prints Error for every verb.
+func (e *resolveError) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(e.Error())) }
 
 func lookIn(dirs []string, name string) (string, bool) {
 	if strings.ContainsRune(name, 0) {

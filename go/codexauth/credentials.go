@@ -344,7 +344,7 @@ func (c *Credentials) fallbackState(e *Error, fallback bool) *Error {
 
 func (c *Credentials) start(ctx context.Context, bin string) (*codexapp.Client, *Error) {
 	cl, err := codexapp.Start(ctx, codexapp.Config{
-		Bin: bin, CodexHome: c.cfg.CodexHome, Env: c.cfg.Env, Timeout: c.cfg.Timeout, Logger: c.cfg.Logger,
+		Bin: bin, CodexHome: c.cfg.CodexHome, Env: codexapp.EnvOf(c.cfg.Env), Timeout: c.cfg.Timeout, Logger: c.cfg.Logger,
 		ClientName: c.cfg.ClientName, Guard: c.cfg.Guard,
 	})
 	if err != nil {

@@ -47,7 +47,7 @@ func TestNULIsRefusedBeforeJoining(t *testing.T) {
 
 func TestAuthStatusEncodingRedacts(t *testing.T) {
 	secret.Register("opaque-canary-status-1")
-	st := AuthStatus{Method: "opaque-canary-status-1", HasMethod: true, token: &sealedToken{"opaque-canary-status-1"}}
+	st := AuthStatus{Method: "opaque-canary-status-1", HasMethod: true, token: sealed("opaque-canary-status-1")}
 	b, err := json.Marshal(st)
 	if err != nil || strings.Contains(string(b), "canary") {
 		t.Fatalf("json: %s %v", b, err)
@@ -106,7 +106,7 @@ func stalled(t *testing.T, timeout time.Duration) *Client {
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Start(t.Context(), Config{Bin: script, Env: []string{"PATH=/usr/bin:/bin"}, Timeout: timeout})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: timeout})
 	if err != nil {
 		t.Fatal(err)
 	}
