@@ -40,7 +40,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
 ## The app-server source (`AUTH-01`, `AUTH-03`)
 
 - **Child.** `<codex> -c model_provider="openai" app-server --listen stdio://`. The provider override makes Codex
-  answer for its OpenAI sign-in even when the user's configured provider needs none.
+  answer for its OpenAI sign-in even when the user's configured provider needs none. It starts in the caller's
+  working directory unless the caller names another, which must be an absolute path to an existing folder; any other
+  is refused before anything starts, with an error that does not quote the path.
 - **Environment.** Inherited, minus these names compared case-insensitively: `OPENAI_API_KEY`, `CODEX_API_KEY`,
   `CODEX_ACCESS_TOKEN`, `CODEX_APP_SERVER_LOGIN_CLIENT_ID`, `CODEX_REFRESH_TOKEN_URL_OVERRIDE`,
   `CODEX_REVOKE_TOKEN_URL_OVERRIDE`. `CODEX_HOME` is set when the caller configured one (an empty choice is no
@@ -68,12 +70,26 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
   JSON-RPC error and never acted on. The answers are queued and written in order by a writer of their own, so the
   reader never waits on the child's input; answers still queued beyond 8 MiB (a child sending requests without
-  reading the answers) are `codex-error`; any other is a reply, matched to a call by its integer `id`. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+  reading the answers) are `codex-error`. A request the client sends waits, within its timeout, until the answers
+  queued before it have been written (never the ones queued later), so the child reads each answer before any
+  request sent after the server request arrived; close waits up to 100 ms for the queued answers before it closes
+  the child's input, so a request sent before close is answered. Any other message is a reply, matched to a call by
+  its integer `id`.
+- **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
+  a string, and every server request after its refusal was queued, as an event: the method, the `params` member as
+  JSON (absent when the message had none; `null` when it was null) and whether it was a server request. Events are
+  delivered one at a time, in the order the child wrote them, from a thread or goroutine of the client's own, so the
+  reader never waits for the handler; a reply may reach its caller before the handler has seen the events written
+  before it. Events still queued beyond 8 MiB (a handler that does not keep up) are `codex-error`, which fails the
+  client. Once the client has failed nothing more is queued, but what was queued is still delivered; after close
+  begins, no event that has not started is delivered. Formatting an event shows its kind, its scrubbed method and the
+  size of its params, never the params. Without a handler, notifications are ignored as before. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.
 - **Sequence.**
-  1. `initialize` with `clientInfo`; the version is the number after the first `/` in `userAgent`. A version below
+  1. `initialize` with `clientInfo` and `capabilities`, which is empty unless the caller asks for the experimental
+     API (`{"experimentalApi": true}`); the version is the number after the first `/` in `userAgent`. A version below
      `0.161.0` is `codex-too-old`. No parsable version proceeds. The minimum is the oldest release measured: on
      2026-10-16, 0.161.0 answered every method this contract calls, with the same reply shapes as 0.162.1.
   2. `initialized` (a notification).

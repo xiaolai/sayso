@@ -17,7 +17,10 @@ final class CredentialsTests: XCTestCase {
             let world = try CredentialWorld(c.object["setup"] as? [String: Any] ?? [:], python: python, fake: fake)
             defer { world.cleanUp() }
             let problems: [String]
-            if let steps = c.object["steps"] as? [[String: Any]] {
+            let setup = c.object["setup"] as? [String: Any] ?? [:]
+            if let client = setup["client"] as? [String: Any] {
+                problems = try world.client(client, want: c.object["expect"] as? [String: Any] ?? [:])
+            } else if let steps = c.object["steps"] as? [[String: Any]] {
                 problems = try world.timeline(steps)
             } else {
                 problems = try world.probe(c.object["expect"] as? [String: Any] ?? [:])
@@ -273,7 +276,7 @@ final class CredentialWorld {
             .replacingOccurrences(of: "$binDir", with: binDir)
     }
 
-    private func check(
+    func check(
         _ want: [String: Any], state: String, token: Token?, mode: String, info: CodexAuthInfo, elapsed: TimeInterval,
         description: String
     ) throws -> [String] {

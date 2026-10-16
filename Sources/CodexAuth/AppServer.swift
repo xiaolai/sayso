@@ -76,6 +76,48 @@ public struct AuthStatus: Sendable, Equatable, CustomStringConvertible, CustomDe
     }
 }
 
+/// A message from the child that is not a reply: a notification, or a server request, which the client has already
+/// answered with an error (``isServerRequest``). Formatting and reflection show the kind, the scrubbed method and the
+/// size of ``params``, never the params themselves: a notification may carry what the user said, or a credential.
+public struct AppServerEvent: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable
+{
+    public let method: String
+    /// The params member as JSON; empty when absent (a `"params": null` is `null`).
+    public let params: Data
+    /// Set for a server request (it had an id), which was refused before the event was queued.
+    public let isServerRequest: Bool
+
+    public init(method: String, params: Data, isServerRequest: Bool) {
+        self.method = method
+        self.params = params
+        self.isServerRequest = isServerRequest
+    }
+
+    /// ``params`` decoded as a JSON object; nil when absent or not an object.
+    public func paramsObject() -> [String: Any]? {
+        guard !params.isEmpty else { return nil }
+        return (try? JSONSerialization.jsonObject(with: params, options: [.fragmentsAllowed])) as? [String: Any]
+    }
+
+    /// By bytes, as Go compares them.
+    public static func == (a: AppServerEvent, b: AppServerEvent) -> Bool {
+        a.method.utf8.elementsEqual(b.method.utf8) && a.params == b.params && a.isServerRequest == b.isServerRequest
+    }
+
+    public var description: String {
+        "AppServerEvent{\(isServerRequest ? "server request" : "notification") \(Secret.scrub(method)), \(params.count) bytes}"
+    }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "method": Secret.scrub(method), "params": "\(params.count) bytes", "isServerRequest": isServerRequest,
+            ], displayStyle: .struct)
+    }
+}
+
 /// One `codex app-server --listen stdio://` child, alive until ``close()`` or until the client is released,
 /// speaking newline-delimited JSON-RPC (spec/credentials.md, the app-server source). Its calls block the calling
 /// thread up to the per-call timeout, so call them off the main thread and off Swift's cooperative pool.
@@ -96,11 +138,22 @@ public final class AppServerClient: @unchecked Sendable {
         public var guardStart: (@Sendable (String) throws -> Void)?
         /// Receives debug lines, which never hold the child's output.
         public var log: (@Sendable (String) -> Void)?
+        /// The child's working directory: an absolute path to an existing folder. nil keeps the caller's.
+        public var workingDirectory: String?
+        /// Sends `capabilities.experimentalApi: true` with initialize.
+        public var experimentalAPI: Bool
+        /// When set, receives every notification and every server request (already refused), in the order the child
+        /// wrote them, one at a time on a thread of its own: the reader never waits for it. A reply may reach its
+        /// caller before the handler has seen the events written before it. Events still queued beyond 8 MiB (a
+        /// handler that does not keep up) fail the client. After a failure the events already queued are still
+        /// delivered; after ``AppServerClient/close()``, none that has not started. nil ignores notifications.
+        public var onEvent: (@Sendable (AppServerEvent) -> Void)?
 
         public init(
             bin: String, codexHome: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment,
             timeout: TimeInterval, clientName: String = "sayso", guardStart: (@Sendable (String) throws -> Void)? = nil,
-            log: (@Sendable (String) -> Void)? = nil
+            log: (@Sendable (String) -> Void)? = nil, workingDirectory: String? = nil, experimentalAPI: Bool = false,
+            onEvent: (@Sendable (AppServerEvent) -> Void)? = nil
         ) {
             self.bin = bin
             self.codexHome = codexHome
@@ -109,6 +162,9 @@ public final class AppServerClient: @unchecked Sendable {
             self.clientName = clientName
             self.guardStart = guardStart
             self.log = log
+            self.workingDirectory = workingDirectory
+            self.experimentalAPI = experimentalAPI
+            self.onEvent = onEvent
         }
 
         public var description: String { "AppServerClient.Configuration{\(bin)}" }
@@ -148,6 +204,13 @@ public final class AppServerClient: @unchecked Sendable {
             throw AppServerError("the Codex executable path is not absolute")
         }
         guard cfg.timeout > 0, cfg.timeout.isFinite else { throw AppServerError("a per-call timeout is required") }
+        if let dir = cfg.workingDirectory {
+            // The path is not quoted: a caller's folder name is not ours to print.
+            var st = stat()
+            guard dir.utf8.first == 0x2F, !dir.utf8.contains(0), stat(dir, &st) == 0,
+                st.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR)
+            else { throw AppServerError("the working directory is not an absolute path to an existing folder") }
+        }
         // A name holding "=" would become another variable in the child ("OPENAI_API_KEY=x" with value "y" is
         // OPENAI_API_KEY=x=y) and slip past the removal list; a NUL would cut the string short. Go cannot be given
         // either: its entries are "name=value" strings, and exec refuses a NUL.
@@ -162,12 +225,17 @@ public final class AppServerClient: @unchecked Sendable {
             }
         }
         let env = CodexExecutable.childEnvironment(cfg.environment, bin: cfg.bin, codexHome: cfg.codexHome)
-        let c = AppServerClient(core: try AppServerCore(bin: cfg.bin, env: env, timeout: cfg.timeout, log: cfg.log))
+        let c = AppServerClient(
+            core: try AppServerCore(
+                bin: cfg.bin, env: env, timeout: cfg.timeout, log: cfg.log, directory: cfg.workingDirectory,
+                onEvent: cfg.onEvent))
         onSpawn?(c)
         do {
+            var capabilities: [String: Any] = [:]
+            if cfg.experimentalAPI { capabilities["experimentalApi"] = true }
             let hello = try c.core.call(
                 "initialize",
-                params: ["clientInfo": ["name": cfg.clientName, "version": "0"], "capabilities": [String: Any]()])
+                params: ["clientInfo": ["name": cfg.clientName, "version": "0"], "capabilities": capabilities])
             // A null result reads as an empty one, as in Go.
             guard let object = object(hello), let agent = optionalString(object["userAgent"]) else {
                 throw AppServerError("Codex app-server sent an unexpected initialize result")
@@ -265,6 +333,8 @@ final class AppServerCore: @unchecked Sendable {
     private var pending: [Int: Pending] = [:]
     private var failure: AppServerError?
     private var stopReaders = false
+    /// Set when close starts; `closed` follows once the queued refusals are written, and then stops every writer.
+    private var closeStarted = false
     private var closed = false
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
@@ -272,9 +342,23 @@ final class AppServerCore: @unchecked Sendable {
     /// child's input; `refusalBytes` counts them until written, at most `refusalCap`. Guarded by `lock`.
     private var refusals: [Data] = []
     private var refusalBytes = 0
+    /// Count the refusals queued and written, so a request waits for the answers queued before it and no later ones.
+    private var refusalsQueued = 0
+    private var refusalsDone = 0
     private let refusalWake = DispatchSemaphore(value: 0)
     /// Bounds the refusals queued for a child that sends server requests without reading the answers.
     private static let refusalCap = 2 * AppServerClient.maxLine
+    /// Bounds how long close waits for queued refusals to be written before it closes stdin.
+    private static let refusalFlush: TimeInterval = 0.1
+
+    /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes` is their size, at most
+    /// `eventCap`. Guarded by `lock`.
+    private let onEvent: (@Sendable (AppServerEvent) -> Void)?
+    private var events: [AppServerEvent] = []
+    private var eventBytes = 0
+    private let eventWake = DispatchSemaphore(value: 0)
+    /// Bounds the events queued for a handler that does not keep up.
+    private static let eventCap = 2 * AppServerClient.maxLine
     private let exited = DispatchSemaphore(value: 0)
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
@@ -284,9 +368,13 @@ final class AppServerCore: @unchecked Sendable {
         var result: Result<Any, AppServerError>?
     }
 
-    init(bin: String, env: [String: String], timeout: TimeInterval, log: (@Sendable (String) -> Void)?) throws {
+    init(
+        bin: String, env: [String: String], timeout: TimeInterval, log: (@Sendable (String) -> Void)?,
+        directory: String?, onEvent: (@Sendable (AppServerEvent) -> Void)?
+    ) throws {
         self.timeout = timeout
         self.log = log
+        self.onEvent = onEvent
         var inPipe: [Int32] = [-1, -1], outPipe: [Int32] = [-1, -1], errPipe: [Int32] = [-1, -1]
         guard pipe(&inPipe) == 0 else { throw AppServerError("Codex app-server could not be started") }
         guard pipe(&outPipe) == 0 else {
@@ -313,6 +401,7 @@ final class AppServerCore: @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, inPipe[0], 0)
         posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
         posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2)
+        if let directory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
         // Its own process group, so close can signal every process the child starts; only fds 0-2 are inherited.
         var defaults = sigset_t()
         sigfillset(&defaults)
@@ -343,6 +432,7 @@ final class AppServerCore: @unchecked Sendable {
         let out = outPipe[0], err = errPipe[0]
         Self.thread { [self] in readLoop(out) }
         Self.thread { [self] in refuseLoop() }
+        if onEvent != nil { Self.thread { [self] in eventLoop() } }
         Self.thread { [self] in
             stderrLoop(err)
             stderrDone.signal()
@@ -370,6 +460,7 @@ final class AppServerCore: @unchecked Sendable {
             return nextID
         }
         defer { _ = lock.withLock { pending.removeValue(forKey: id) } }
+        awaitRefusals(until: deadline)  // the write below fails as the wait did, on the deadline or a failure
         try write(["id": id, "method": method, "params": params], deadline: deadline)
         if p.done.wait(timeout: deadline) == .timedOut {
             throw AppServerError("Codex app-server did not answer \(method) within \(timeout) s")
@@ -393,8 +484,8 @@ final class AppServerCore: @unchecked Sendable {
     /// Concurrent and later calls wait until the first has finished, as Go's sync.Once makes them.
     func close() {
         let first = lock.withLock { () -> Bool in
-            defer { closed = true }
-            return !closed
+            defer { closeStarted = true }
+            return !closeStarted
         }
         guard first else {
             closeDone.wait()
@@ -402,6 +493,8 @@ final class AppServerCore: @unchecked Sendable {
             return
         }
         defer { closeDone.signal() }
+        awaitRefusals(until: .now() + Self.refusalFlush)
+        lock.withLock { closed = true }
         // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
         writeGate.wait()
         if stdinOpen {
@@ -439,6 +532,17 @@ final class AppServerCore: @unchecked Sendable {
             }
         }
         if n > 0 { log?("codex app-server wrote to stderr (\(n) bytes)") }
+    }
+
+    /// Waits until every answer to a server request queued so far has been written, or `deadline` or a failure ends the
+    /// wait. A request waits for them before it is written, so the child reads each answer before any request the
+    /// client sent after the server request arrived, as when the reader wrote the answers itself; close waits for
+    /// them, at most `refusalFlush`, so a request the child sent before close is answered rather than dropped with the
+    /// queue. Answers queued after the wait began are not waited for, so a child that keeps sending requests cannot
+    /// hold a call.
+    private func awaitRefusals(until deadline: DispatchTime) {
+        let target = lock.withLock { refusalsQueued }
+        while lock.withLock({ refusalsDone < target && failure == nil }), DispatchTime.now() < deadline { usleep(1000) }
     }
 
     var hasExited: Bool { reaped(by: .now()) }
@@ -545,7 +649,8 @@ final class AppServerCore: @unchecked Sendable {
     }
 
     /// Matches replies to pending calls until stdout ends or misbehaves. A server request is answered with an error
-    /// and never acted on. A line is never quoted: it may carry a credential.
+    /// and never acted on; it and every notification are queued for `onEvent` when one is set. A line is never
+    /// quoted: it may carry a credential.
     private func readLoop(_ fd: Int32) {
         defer { Darwin.close(fd) }
         var buffer: [UInt8] = []
@@ -615,8 +720,8 @@ final class AppServerCore: @unchecked Sendable {
     }
 
     /// Handles one line (spec/credentials.md, messages); false when it is not JSON-RPC. A message is classified
-    /// before its reply fields are read: a notification (no id) is ignored whatever else it holds, and a message
-    /// with a method, even "", is a server request. Keys are exact.
+    /// before its reply fields are read: a notification (no id) is ignored whatever else it holds, unless `onEvent`
+    /// takes it, and a message with a method, even "", is a server request. Keys are exact.
     private func handle(_ line: ArraySlice<UInt8>) -> Bool {
         let trimmed = line.drop { Self.isSpace($0) }.reversed().drop { Self.isSpace($0) }.reversed()
         if trimmed.isEmpty { return true }
@@ -625,7 +730,10 @@ final class AppServerCore: @unchecked Sendable {
         else { return false }
         if value is NSNull { return true }
         guard let m = value as? [String: Any] else { return false }
-        guard let id = m["id"], !(id is NSNull) else { return true }  // a notification, whatever else it holds
+        guard let id = m["id"], !(id is NSNull) else {
+            queueEvent(m, serverRequest: false)
+            return true  // a notification, whatever else it holds
+        }
         var hasMethod = false
         if let raw = m["method"], !(raw is NSNull) {
             guard raw is String else { return false }
@@ -633,6 +741,7 @@ final class AppServerCore: @unchecked Sendable {
         }
         if hasMethod {
             refuse(id)
+            queueEvent(m, serverRequest: true)
             return true
         }
         let result: Result<Any, AppServerError>
@@ -686,6 +795,63 @@ final class AppServerCore: @unchecked Sendable {
             pending.removeAll()
         }
         refusalWake.signal()  // the refusal writer ends
+        eventWake.signal()  // the event loop delivers what is queued, then ends
+    }
+
+    /// Hands one notification or server request to ``eventLoop()``. Without a handler it does nothing, so a
+    /// notification is ignored as before; a notification whose method is absent or not a string is ignored too.
+    /// Events beyond `eventCap`, from a handler that does not keep up, fail the client.
+    private func queueEvent(_ m: [String: Any], serverRequest: Bool) {
+        guard onEvent != nil, let method = m["method"] as? String else { return }
+        var params = Data()
+        if let p = m["params"] {
+            // A parsed JSON value, so this encodes.
+            params =
+                (try? JSONSerialization.data(withJSONObject: p, options: [.fragmentsAllowed, .withoutEscapingSlashes]))
+                ?? Data()
+        }
+        let event = AppServerEvent(method: method, params: params, isServerRequest: serverRequest)
+        let size = method.utf8.count + params.count
+        let over = lock.withLock { () -> Bool? in
+            guard failure == nil else { return nil }  // the client is done: nothing more is delivered
+            guard eventBytes + size <= Self.eventCap else { return true }
+            events.append(event)
+            eventBytes += size
+            return false
+        }
+        switch over {
+        case true?: fail(AppServerError("Codex app-server sent events faster than the handler took them"))
+        case false?: eventWake.signal()
+        case nil: break
+        }
+    }
+
+    /// Calls the handler with each queued event, one at a time, in the order the child wrote them. After the child
+    /// fails or exits it still delivers what was queued; close stops it before the next event.
+    private func eventLoop() {
+        guard let onEvent else { return }
+        enum Next {
+            case deliver(AppServerEvent)
+            case wait
+            case stop
+        }
+        while true {
+            eventWake.wait()
+            drain: while true {
+                let next = lock.withLock { () -> Next in
+                    if closeStarted { return .stop }
+                    guard !events.isEmpty else { return failure != nil ? .stop : .wait }
+                    let e = events.removeFirst()
+                    eventBytes -= e.method.utf8.count + e.params.count
+                    return .deliver(e)
+                }
+                switch next {
+                case .deliver(let e): onEvent(e)
+                case .wait: break drain
+                case .stop: return
+                }
+            }
+        }
     }
 
     /// Queues the answer to a server request (an approval, for instance): an error, written by ``refuseLoop()``. The
@@ -703,6 +869,7 @@ final class AppServerCore: @unchecked Sendable {
             guard refusalBytes + data.count <= Self.refusalCap else { return true }
             refusals.append(data)
             refusalBytes += data.count
+            refusalsQueued += 1
             return false
         }
         if over {
@@ -727,6 +894,7 @@ final class AppServerCore: @unchecked Sendable {
                 try? write(data, deadline: .now() + timeout)
                 let failed = lock.withLock { () -> Bool in
                     refusalBytes -= data.count
+                    refusalsDone += 1
                     return failure != nil
                 }
                 if failed { return }

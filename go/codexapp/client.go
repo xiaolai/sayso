@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,6 +40,8 @@ const (
 	stderrDrain = 100 * time.Millisecond
 	// refusalCap bounds the refusals queued for a child that sends server requests without reading the answers.
 	refusalCap = 2 * maxLine
+	// refusalFlush bounds how long Close waits for queued refusals to be written before it closes stdin.
+	refusalFlush = 100 * time.Millisecond
 )
 
 // Args are the child's arguments. The provider override makes Codex answer for its OpenAI sign-in even when the
@@ -57,6 +60,16 @@ type Config struct {
 	// Guard, if set, runs before the executable is started; an error refuses the start. A consumer uses it to keep
 	// unit tests away from a real Codex.
 	Guard func(bin string) error
+	// Dir is the child's working directory: an absolute path to an existing folder. "" keeps the caller's.
+	Dir string
+	// ExperimentalAPI sends capabilities.experimentalApi: true with initialize.
+	ExperimentalAPI bool
+	// OnEvent, when set, receives every notification and every server request (already refused), in the order the
+	// child wrote them, one at a time from a goroutine of its own: the reader never waits for it. A reply may reach
+	// its caller before OnEvent has seen the events written before it. Events still queued beyond 8 MiB (a handler
+	// that does not keep up) are a codex-error, which fails the client. After a failure the events already queued
+	// are still delivered; after Close, none that has not started. Unset, notifications are ignored.
+	OnEvent func(Event)
 }
 
 // String names the executable only: Env may hold credentials.
@@ -124,10 +137,21 @@ type core struct {
 	// writeSem admits one writer at a time; a channel, so a waiting writer observes its deadline and cancellation.
 	writeSem chan struct{}
 	// refusals are the encoded answers to server requests, written in order by refuseLoop so the reader never waits
-	// on the child's input; refusalBytes is their total size, at most refusalCap. Guarded by mu.
-	refusals     [][]byte
-	refusalBytes int
-	refusalWake  chan struct{} // one pending wake-up for refuseLoop
+	// on the child's input; refusalBytes is the size of those not yet written (the one being written included), at
+	// most refusalCap. refusalsQueued and refusalsDone count them, so a request waits for the answers queued before
+	// it and no later ones. Guarded by mu.
+	refusals       [][]byte
+	refusalBytes   int
+	refusalsQueued int64
+	refusalsDone   int64
+	refusalWake    chan struct{} // one pending wake-up for refuseLoop
+	// events wait for onEvent, delivered in order by eventLoop; eventBytes is their size, at most eventCap. Guarded by
+	// mu. closing is set by Close, so no event starts after it.
+	onEvent    func(Event)
+	events     []Event
+	eventBytes int
+	eventWake  chan struct{}
+	closing    atomic.Bool
 
 	stderrDone chan struct{} // closed when the stderr copy ends
 	mu         sync.Mutex
@@ -158,6 +182,12 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout <= 0 {
 		return nil, errors.New("codexapp: a per-call Timeout is required")
 	}
+	if cfg.Dir != "" {
+		// The path is not quoted: a caller's folder name is not ours to print.
+		if st, err := os.Stat(cfg.Dir); !filepath.IsAbs(cfg.Dir) || err != nil || !st.IsDir() {
+			return nil, errors.New("codexapp: the working directory is not an absolute path to an existing folder")
+		}
+	}
 	if cfg.Guard != nil {
 		if err := cfg.Guard(cfg.Bin); err != nil {
 			return nil, fmt.Errorf("codexapp: start refused: %w", err)
@@ -176,6 +206,8 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		writeSem:    make(chan struct{}, 1),
 		stderrDone:  make(chan struct{}),
 		refusalWake: make(chan struct{}, 1),
+		onEvent:     cfg.OnEvent,
+		eventWake:   make(chan struct{}, 1),
 	}
 	c := &Client{k: k}
 	if k.logger == nil {
@@ -184,6 +216,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	// No CommandContext: the child must outlive ctx and is reaped only by Close.
 	cmd := exec.Command(cfg.Bin, Args...)
 	cmd.Env = ChildEnv(env, cfg.Bin, cfg.CodexHome)
+	cmd.Dir = cfg.Dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Our own pipes, handed to the child as files: Wait then waits for the process only, never for a descendant
 	// that inherited the write ends, and Close can end our readers by closing the read ends.
@@ -212,6 +245,9 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	// The goroutines hold the core only, so an unclosed Client can be collected, and its cleanup ends the child.
 	go k.readLoop(outR)
 	go k.refuseLoop()
+	if k.onEvent != nil {
+		go k.eventLoop()
+	}
 	go func() {
 		_, _ = io.Copy(&k.stderr, errR)
 		close(k.stderrDone)
@@ -226,9 +262,13 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if name == "" {
 		name = "sayso"
 	}
+	capabilities := map[string]any{}
+	if cfg.ExperimentalAPI {
+		capabilities["experimentalApi"] = true
+	}
 	init := map[string]any{
 		"clientInfo":   map[string]any{"name": name, "version": "0"},
-		"capabilities": map[string]any{},
+		"capabilities": capabilities,
 	}
 	var hello json.RawMessage
 	if err := k.call(ctx, "initialize", init, &hello); err != nil {
@@ -255,7 +295,7 @@ func closeAll(files ...*os.File) {
 }
 
 // readLoop matches replies to pending calls until the child's stdout ends or misbehaves. A server request is
-// answered with an error and never acted on.
+// answered with an error and never acted on; it and every notification are queued for OnEvent when one is set.
 func (k *core) readLoop(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), maxLine+1) // a line of exactly maxLine bytes fits with its newline
@@ -294,8 +334,8 @@ func trimJSONSpace(b []byte) []byte {
 }
 
 // handle reads one line (spec/credentials.md, messages); false when it is not JSON-RPC. A message is classified
-// before its reply fields are read: a notification (no id) is ignored whatever else it holds, and a message with a
-// method, even "", is a server request. Keys are exact.
+// before its reply fields are read: a notification (no id) is ignored whatever else it holds, unless OnEvent takes
+// it, and a message with a method, even "", is a server request. Keys are exact.
 func (k *core) handle(line []byte) bool {
 	if len(line) == 0 {
 		return true
@@ -316,6 +356,7 @@ func (k *core) handle(line []byte) bool {
 	}
 	id, hasID := m.Field("id")
 	if !hasID {
+		k.queueEvent(m, false)
 		return true // a notification, whatever else it holds
 	}
 	_, hasMethod, err := m.String("method")
@@ -324,6 +365,7 @@ func (k *core) handle(line []byte) bool {
 	}
 	if hasMethod {
 		k.refuse(id)
+		k.queueEvent(m, true)
 		return true
 	}
 	var resp response
@@ -369,6 +411,7 @@ func (k *core) refuse(id wire.Node) {
 	if !over {
 		k.refusals = append(k.refusals, b)
 		k.refusalBytes += len(b)
+		k.refusalsQueued++
 	}
 	k.mu.Unlock()
 	if over {
@@ -399,9 +442,13 @@ func (k *core) refuseLoop() {
 			b := k.refusals[0]
 			k.refusals[0] = nil
 			k.refusals = k.refusals[1:]
-			k.refusalBytes -= len(b)
 			k.mu.Unlock()
-			if err := k.writeBytes(context.Background(), b, time.Now().Add(k.timeout)); err != nil && k.failed() != nil {
+			err := k.writeBytes(context.Background(), b, time.Now().Add(k.timeout))
+			k.mu.Lock()
+			k.refusalBytes -= len(b) // written, or given up on
+			k.refusalsDone++
+			k.mu.Unlock()
+			if err != nil && k.failed() != nil {
 				return
 			}
 		}
@@ -535,7 +582,8 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 	if params == nil {
 		params = map[string]any{}
 	}
-	deadline, _ := ctx.Deadline() // set: ctx carries the per-call timeout
+	deadline, _ := ctx.Deadline()  // set: ctx carries the per-call timeout
+	k.awaitRefusals(ctx, deadline) // the write below fails as the wait did, if it ended on the deadline or a failure
 	if err := k.write(ctx, map[string]any{"id": id, "method": method, "params": params}, deadline); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return codexError("Codex app-server did not accept "+method+" within "+k.timeout.String(), nil)
@@ -576,6 +624,8 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 
 func (k *core) close() error {
 	k.closeMu.Do(func() {
+		k.closing.Store(true) // before fail wakes eventLoop, so no further event starts
+		k.awaitRefusals(context.Background(), time.Now().Add(refusalFlush))
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
@@ -613,6 +663,27 @@ func (k *core) close() error {
 		}
 	})
 	return nil
+}
+
+// awaitRefusals waits until every answer to a server request queued so far has been written, or deadline, ctx or a
+// failure ends the wait. A request waits for them before it is written, so the child reads each answer before any
+// request the client sent after the server request arrived, as when the reader wrote the answers itself; Close waits
+// for them, at most refusalFlush, so a request the child sent before Close is answered rather than dropped with the
+// queue. Answers queued after the wait began are not waited for, so a child that keeps sending requests cannot hold
+// a call.
+func (k *core) awaitRefusals(ctx context.Context, deadline time.Time) {
+	k.mu.Lock()
+	target := k.refusalsQueued
+	k.mu.Unlock()
+	for {
+		k.mu.Lock()
+		done, dead := k.refusalsDone >= target, k.failure != nil
+		k.mu.Unlock()
+		if done || dead || ctx.Err() != nil || !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // gone reports whether the child has exited and no live member of its process group remains.

@@ -81,6 +81,16 @@ client starts one child per fetch or refresh. The scenario keys are documented a
 | `refreshCalls` | `getAuthStatus` calls with `refreshToken: true` so far |
 | `notInDescription` | strings that no error description or log line may contain |
 
+A client case has `setup.client` and drives the app-server client itself, started with the fake at
+`$binDir/codex`, the case's environment and timeout: `handler` (`record`: keep every event; `block`: never return
+until the case ends; absent: no handler), `dir` (the working directory: `work`, a new `$work` folder in the case's
+temporary folder; `relative`; `missing`; `file`; absent: none), `experimentalAPI`, and `calls` (`method`, `params`) made
+in order. Its `expect` adds `startFails`, `calls` (`ok` or `error` per call), `events` (exactly these, in order:
+`method`; `params`, compared as JSON, with `$work` and `$callerCwd`, the harness's own working directory, after links
+are followed, replaced; `noParams: true` for none; `serverRequest: true`), `eventCount`, and `eventSequence` (the params
+member that holds each event's index); the other keys above apply too. The harness waits up to 5 s for the expected
+number of events, then 100 ms for any that should not come, before it closes the client.
+
 A timeline case has `steps` instead of `expect`: each runs `op` (`token`, or `refreshAfter` with `stale`: the
 `initial` or the `current` token) at `now + at` seconds on one credentials object.
 
