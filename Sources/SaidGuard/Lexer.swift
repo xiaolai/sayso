@@ -142,12 +142,13 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
         } else if svFreeDash(rs, i) {
             emit(.symbol, i, i + 1, freeDash: svFreeSign(rs, i) ? .sign : .silentable)
             i += 1
-        } else if isApostrophe(r) && prevEnd == i && svAfterNumber(out, marks: 1)
-            && !(i + 1 < rs.count && svLetter(rs[i + 1]))
+        } else if isApostrophe(r) && !(i + 1 < rs.count && svLetter(rs[i + 1]))
+            && ((prevEnd == i && svAfterToken(out, marks: 1)) || (i + 1 < rs.count && isUnspaced(rs[i + 1])))
         {
-            // A mark right after a number that svUnquote(_:) kept, or after one such mark, is no quotation mark but
-            // feet or minutes ("5'", "5’10", "21st’"), or with the second inches or seconds ("5''"): a spoken symbol on
-            // both sides, so a transcript cannot drop it.
+            // A mark right after a number or an unspaced character that svUnquote(_:) kept, or after one such mark,
+            // is no quotation mark: feet or minutes ("5'", "5’10", "21st’"), with the second inches or seconds ("5''"),
+            // or a mark of unspaced text on either side ("五’", "好’", "’好"), kept as a word keeps its own ("’tis"). A
+            // spoken symbol on both sides, so a transcript cannot drop it.
             emit(.symbol, i, i + 1)
             i += 1
         } else if r == "\"" && !dropped[i] && prevEnd == i && svFeetAndNumber(out) {
@@ -207,16 +208,16 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     return out
 }
 
-/// Whether the raws so far end in a number, or in a number and up to `marks` measurement marks (``svMeasureMark(_:)``),
-/// all touching.
-func svAfterNumber(_ out: [SvRaw], marks: Int) -> Bool {
+/// Whether the raws so far end in a number or an unspaced character (a Han run on the script side, a character on the
+/// transcript side), or in one and up to `marks` measurement marks (``svMeasureMark(_:)``), all touching.
+func svAfterToken(_ out: [SvRaw], marks: Int) -> Bool {
     var k = out.count - 1
     var seen = 0
     while k >= 0 && seen < marks && out[k].kind == .symbol && out[k].text == "'" && out[k].gap.isEmpty {
         k -= 1
         seen += 1
     }
-    return k >= 0 && out[k].kind == .number
+    return k >= 0 && [.number, .hanRun, .unspacedChar].contains(out[k].kind)
 }
 
 /// Whether the raws so far are a number, a feet mark and a number, all touching ("5'10", "5′10").
@@ -240,11 +241,17 @@ func svFreeDash(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     return !glued
 }
 
-/// A free dash that is a sign: after a space, punctuation or the start, and against a word, a number or an unspaced
-/// character ("-x", "-五"). Read only as written or "minus", never silent.
+/// A free dash that is a sign, read only as written or "minus", never silent. Before a number, a Han numeral as a
+/// digit, it is one unless a letter, digit or mark comes before it, as ``svSignAt(_:_:)`` has it ("-五", "气温-五度").
+/// Before a word or any other unspaced character it is one only at a word start, after a space, punctuation or the
+/// start ("-x"): an unspaced character is a word of its own, so a dash after one joins two words ("北京-上海"), as
+/// a hyphen joins "x-y".
 func svFreeSign(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
-    let after = i > 0 && (svLetter(rs[i - 1]) || svDigit(rs[i - 1]) || isMark(rs[i - 1]))
-    return !after && i + 1 < rs.count && (svLetter(rs[i + 1]) || svDigit(rs[i + 1]) || isUnspaced(rs[i + 1]))
+    guard i + 1 < rs.count else { return false }
+    let n = rs[i + 1]
+    let afterWord = i > 0 && (svLetter(rs[i - 1]) || svDigit(rs[i - 1]) || isMark(rs[i - 1]))
+    if svDigit(n) || isHanNumeral(n) { return !afterWord }
+    return !afterWord && !(i > 0 && isUnspaced(rs[i - 1])) && (svLetter(n) || isUnspaced(n))
 }
 
 private let svQuoteOpeners = Set("([{\"“«".unicodeScalars)
@@ -347,25 +354,26 @@ func svUnquote(_ input: [Unicode.Scalar]) -> ([Unicode.Scalar], [Bool]) {
         }
         var k = i - 1
         while k >= 0 && svInnerPunct(rs[k]) { k -= 1 }
-        let closer = k >= 0 && (svLetter(rs[k]) || isMark(rs[k]) || svDigit(rs[k]))
-            && (i + 1 == rs.count || isSpace(rs[i + 1])
+        // An unspaced character is a word of its own, so it is a word boundary on either side, as a space is.
+        let closer = k >= 0 && (svLetter(rs[k]) || isMark(rs[k]) || svDigit(rs[k]) || isUnspaced(rs[k]))
+            && (i + 1 == rs.count || isSpace(rs[i + 1]) || isUnspaced(rs[i + 1])
                 || (svUnspokenPunct.contains(rs[i + 1]) && !isApostrophe(rs[i + 1])))
-        let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
-            && (svLetter(rs[i + 1]) || svDigit(rs[i + 1])) && !svElisionAt(rs, i + 1)
+        let opener = (i == 0 || isSpace(rs[i - 1]) || isUnspaced(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1]))
+            && i + 1 < rs.count && (svLetter(rs[i + 1]) || svDigit(rs[i + 1]) || isUnspaced(rs[i + 1]))
+            && !svElisionAt(rs, i + 1)
+        // Between two unspaced characters a mark may open or close ("说‘好’"): it is a candidate for both.
         if pending == i {
             pending = nil
             if closer {
                 closers.append(i)
+                if opener { openers.append(i) }
                 if let m = markFrom(i + 1) { pending = m } else { flush() }
                 continue
             }
             flush()
         }
-        if closer {
-            closers.append(i)
-        } else if opener {
-            openers.append(i)
-        }
+        if closer { closers.append(i) }
+        if opener { openers.append(i) }
     }
     flush()
     for i in rs.indices where dropped[i] { rs[i] = "\"" }

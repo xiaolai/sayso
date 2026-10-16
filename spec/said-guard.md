@@ -3,7 +3,7 @@
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
 tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
-revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 10), raised whenever a change makes the guard refuse a
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 11), raised whenever a change makes the guard refuse a
 reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
@@ -33,7 +33,9 @@ the results was tried and abandoned: every rewrite rule could map two different 
    (`Say ‘hello’.`, `'yes'`), which are unspoken. Which mark closes which is not decided: in `‘the students’ books’`
    the middle mark may be a possessive. An opener stands at a word start; a closer at a word end, possibly after the
    punctuation that ends the quoted words (`‘hello!’`, `‘yes,’`, `‘done.’`); an opener may also stand before a digit
-   (`‘5’`). Within one sentence, which ends at its final punctuation or, where closers follow that, right after them
+   (`‘5’`). An unspaced character is a word of its own, so it is a word boundary on either side, as a space is: an
+   opener may follow one and a closer precede one, a quoted run of them pairs (`他说‘好’。` = `他说好。`), and a mark
+   between two of them may open or close. Within one sentence, which ends at its final punctuation or, where closers follow that, right after them
    (`‘Wait!’ The students’ books.` is two sentences), every opener with a closer after it and every closer with an
    opener before it may be a quotation mark, and each side reads the word beside such a mark both without it and with
    it as an apostrophe; the transcript selects. Each mark is a local choice of its word, so the readings stay linear in
@@ -41,8 +43,9 @@ the results was tried and abandoned: every rewrite rule could map two different 
    a leading elision, which is never an opener (`svElisions`, a closed list: `’tis`, `’twas`, `’em`, `’n’`, `’cause`,
    …), so `’Tis the students’ books` keeps both. An elision is a whole word: `n` in `‘n-gram’` is none. A `.` ends no
    sentence when a letter or digit follows it (`e.g`, `3.5`, `x.com`) or when it closes `Mr Mrs Ms Dr St Jr Sr vs e.g.
-   i.e.` (`Say ‘Dr. Smith’.` is one quotation); `etc.` ends one. An apostrophe after a number that is no quotation mark
-   (`5'`, `5’10`, `21st’`), a second one after it (`5''`), and a `"` after a number that follows such a mark
+   i.e.` (`Say ‘Dr. Smith’.` is one quotation); `etc.` ends one. An apostrophe that is no quotation mark after a number
+   (`5'`, `5’10`, `21st’`, `五’`) or beside an unspaced character (`好’`, `’好`), as a word keeps its own (`’tis`), a
+   second one after a number (`5''`), and a `"` after a number that follows such a mark
    (`5'10"`) are spoken symbols on both sides; any other `"` is an unspoken quotation mark (`"42"`). **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
@@ -54,10 +57,14 @@ the results was tried and abandoned: every rewrite rule could map two different 
    and `3 - 4` may not). An expression is a run of numbers and symbols joined only by spaces that holds another
    operator; punctuation ends it (`1-0. #1` holds none). Any other `-` that is not glued between letters or digits
    (`JIRA-10442` stays silent) is a free dash and a symbol on both sides: a sign before a word, number or Han numeral
-   after a space, punctuation or the start (`-x`, `-五`) is never silent (before a Han numeral it is the number's
-   sign: `-五` = `-5` = `- 5`, and `五` is refused), and any other free dash (`Monday - Friday`,
-   `pre- and post-war`) may be read with no word, except in a run of words, numbers and symbols joined only by spaces
-   that holds an arithmetic operator `= + − × ÷ < > ≠ * ^` (`x - y = z`). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
+   is never silent: before a number or Han numeral unless a letter, digit or mark precedes it, as for a digit (`-五`,
+   `气温-五度`; before a Han numeral it is the number's sign: `-五` = `-5` = `- 5`, and `五` is refused), and before a
+   word or other unspaced character only after a space, punctuation or the start (`-x`; after an unspaced character it
+   joins two words, `北京-上海`). Any other free dash (`Monday - Friday`,
+   `pre- and post-war`, `北京-上海`) may be read with no word, except in a run of words, unspaced characters, numbers
+   and symbols joined only by spaces that holds an arithmetic operator `= + − × ÷ < > ≠ * ^` (`x - y = z`, `甲 - 乙 =
+   丙`). A Han numeral outside `zh`, lexed as an unspaced character, is still a number in a numeric run (`五-二=三` in
+   `ja` keeps its minus). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
    both sides. A number keeps its
    sign (start, after space or punctuation, before `.5` or `,5`, or an exponent `1e-3`), its `. , / :` between digits and an
    ordinal suffix; a leading `,` starts a number only after a space (`,5` is a French decimal, `Yes,3` is a word and a
