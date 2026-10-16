@@ -150,23 +150,25 @@ public final class HTTPClient: Sendable {
                 if let k = k as? String, let v = v as? String { headers[k.lowercased()] = v }
             }
             let ok = (200..<300).contains(http.statusCode)
+            // The body is read into one buffer of the package's own, wiped as it grows and once released: a mint
+            // reply holds the secret, and a refusal may name one. The bytes URLSession hands over are its own.
             guard ok else {
                 // At most 64 KiB, and a body that fails to arrive still leaves the reply classified by its status.
-                var body = Data()
+                var body = BodyBuffer(declared: http.expectedContentLength, limit: Self.maximumErrorBody)
                 do {
                     for try await byte in bytes {
                         body.append(byte)
-                        if body.count == Self.maximumErrorBody { break }
+                        if body.isFull { break }
                     }
                 } catch {}
                 bytes.task.cancel()
-                defer { body.resetBytes(in: 0..<body.count) }
-                throw Self.errorReply(status: http.statusCode, requestID: headers["x-request-id"] ?? "", body: body, route: route)
+                throw Self.errorReply(
+                    status: http.statusCode, requestID: headers["x-request-id"] ?? "", body: body.data, route: route)
             }
-            var body = Data()
+            var body = BodyBuffer(declared: http.expectedContentLength, limit: limit)
             var over = false
             for try await byte in bytes {
-                if body.count == limit {
+                if body.isFull {
                     over = true
                     break
                 }
@@ -174,43 +176,52 @@ public final class HTTPClient: Sendable {
             }
             if over {
                 bytes.task.cancel()
-                body.resetBytes(in: 0..<body.count)
                 throw RealtimeError(
                     .protocol, status: http.statusCode, message: "reply exceeds \(limit) bytes",
                     requestID: headers["x-request-id"] ?? "")
             }
-            return HTTPReply(status: http.statusCode, headers: headers, body: body)
+            return HTTPReply(status: http.statusCode, headers: headers, body: body.data)
         }
     }
 
     /// The classified error for a non-2xx reply: the provider body `{"error": {"message", "type", "code", "param"}}`
     /// is read with the wire rules (spec/session.md, wire JSON) when it has that shape, every string scrubbed; a body
-    /// that is not strict JSON, or has a field of the wrong type, yields no fields.
+    /// that is not strict JSON, or has a field of the wrong type, yields no fields. The body is read where it lies.
     public static func errorReply(status: Int, requestID: String, body: Data, route: String) -> RealtimeError {
-        var type = "", code = "", param = "", message = ""
-        if let root = try? WireJSON.parse(body), let o = try? WireJSON.Object(root),
-            let fields = try? ProviderError(o)
-        {
-            (type, code, param, message) = (fields.type, fields.code, fields.param, fields.message)
-        }
-        let scrubbedCode = Secret.scrub(code)
-        let errorClass = RealtimeError.classify(status: status, code: scrubbedCode)
+        let fields = body.withUnsafeBytes { ProviderError($0) } ?? ProviderError()
+        let errorClass = RealtimeError.classify(status: status, code: fields.code)
         return RealtimeError(
-            errorClass, status: status, type: type, code: scrubbedCode, param: param, message: message,
-            requestID: requestID, route: errorClass == .routeDenied ? route : "")
+            errorClass, status: status, type: fields.type, code: fields.code, param: fields.param,
+            message: fields.message, requestID: requestID, route: errorClass == .routeDenied ? route : "")
     }
 }
 
-/// The provider error object; a field of the wrong type discards the whole body.
+/// The provider error object, read in place (``WireJSON/Borrowed``); a field of the wrong type discards the whole
+/// body. Each field is scrubbed where it lies, a string once decoded into a buffer that is wiped, so only scrubbed
+/// text is made a `String`: a secret the body names leaves no copy behind.
 struct ProviderError {
     var type = "", code = "", param = "", message = ""
 
-    init(_ body: WireJSON.Object) throws {
-        guard let e = try body.object("error") else { return }
-        message = try e.string("message") ?? ""
-        type = try e.string("type") ?? ""
-        param = try e.string("param") ?? ""
-        code = try e.code("code")
+    init() {}
+
+    /// nil when `body` is not one strict JSON object or a field has the wrong type.
+    init?(_ body: UnsafeRawBufferPointer) {
+        guard let doc = WireJSON.Borrowed(body), doc.kind(doc.root) == UInt8(ascii: "{") else { return nil }
+        func field(_ object: Range<Int>, _ name: String) -> Range<Int>? {  // absent or null is no field
+            guard let v = doc.member(object, name), !doc.isNull(v) else { return nil }
+            return v
+        }
+        guard let e = field(doc.root, "error") else { return }
+        guard doc.kind(e) == UInt8(ascii: "{") else { return nil }
+        let m = field(e, "message"), t = field(e, "type"), p = field(e, "param")
+        for v in [m, t, p] { if let v, doc.kind(v) != UInt8(ascii: "\"") { return nil } }
+        func scrubbed(_ v: Range<Int>) -> String {  // a string as itself, any other value as its exact JSON text
+            doc.withString(v) { Secret.scrub(utf8: $0) } ?? Secret.scrub(utf8: doc.bytes(of: v))
+        }
+        message = m.map(scrubbed) ?? ""
+        type = t.map(scrubbed) ?? ""
+        param = p.map(scrubbed) ?? ""
+        code = field(e, "code").map(scrubbed) ?? ""
     }
 }
 

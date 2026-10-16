@@ -285,6 +285,27 @@ package enum WireJSON {
             return Scanner.string(b, at: v.lowerBound, atMost: limit)
         }
 
+        /// The string `v` decoded into memory of its own (``OwnedBytes``), given to `body` and wiped once it returns;
+        /// nil for any other value. For a value read and not kept, such as a message to scrub: nothing of it
+        /// outlives `body`.
+        package func withString<R>(_ v: Range<Int>, _ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R? {
+            guard kind(v) == UInt8(ascii: "\"") else { return nil }
+            var count = 0
+            var it = Scanner.Unescaped(b, at: v.lowerBound)
+            while it.next() != nil { count += 1 }
+            let decoded = OwnedBytes(count: count)
+            it = Scanner.Unescaped(b, at: v.lowerBound)
+            var k = 0
+            while let c = it.next() {
+                decoded.bytes[k] = c
+                k += 1
+            }
+            return try withExtendedLifetime(decoded) { try body(UnsafeRawBufferPointer(decoded.bytes)) }
+        }
+
+        /// The exact bytes of `v`, where they lie.
+        package func bytes(of v: Range<Int>) -> UnsafeRawBufferPointer { UnsafeRawBufferPointer(rebasing: b[v]) }
+
         /// A number written as an integer, without fraction or exponent, within `Int64`, as Go decodes one into an
         /// int64; nil for any other value. Read digit by digit, in place.
         package func int64(_ v: Range<Int>) -> Int64? {

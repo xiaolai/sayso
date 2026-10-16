@@ -35,6 +35,46 @@ final class MintWipeTests: XCTestCase {
         XCTAssertEqual(found, [2, 2], "the name was copied more than once, or a fragment of it was left")
     }
 
+    /// A body read byte by byte, longer than declared or of unknown length, grows into buffers of its own and wipes
+    /// each one it outgrows: only the buffer the `Data` holds keeps a copy, until the `Data` is released.
+    func testABodyWipesWhatItOutgrowsAndWhatItHeld() {
+        for declared: Int64 in [-1, 0, 100, 1 << 20] {
+            let w = WipeScan()
+            let doc = w.emit([.text("{\"v\":\""), .kept, .text(String(repeating: "x", count: 3000) + "\"}")])
+            var data: Data?
+            let found = w.found {
+                var body = BodyBuffer(declared: declared, limit: 1 << 20)
+                for b in doc { body.append(b) }
+                data = body.data
+            }
+            w.check(found)
+            XCTAssertEqual(data?.elementsEqual(doc), true, "declared \(declared): the body is not the bytes read")
+            XCTAssertEqual(w.found { data = nil }, [0, 0], "declared \(declared): the body was released unwiped")
+        }
+    }
+
+    /// A refusal body is read in place and each field scrubbed where it lies: a secret it names, and a value no
+    /// field takes, leave no copy.
+    func testARefusalBodyLeavesNothing() {
+        let w = WipeScan()
+        let doc = w.emit([
+            .text(#"{"error":{"message":"refused "#), .registered, .text(#" there","type":""#), .registered,
+            .text(#"","code":{"k":""#), .registered, .text(#""},"param":""#), .registered, .text(#"","other":""#),
+            .needle, .text(#""},"n":[""#), .escaped, .text(#""]}"#),
+        ])
+        var e: RealtimeError?
+        let found = w.found {
+            let body = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: doc.baseAddress!), count: doc.count,
+                deallocator: .none)
+            e = HTTPClient.errorReply(status: 400, requestID: "", body: body, route: "")
+        }
+        w.check(found)
+        XCTAssertEqual(e?.message, "refused \(Secret.redacted) there")
+        XCTAssertEqual(e?.param, Secret.redacted)
+        XCTAssertEqual(e?.type, Secret.redacted)
+        XCTAssertEqual(e?.code, #"{"k":"\#(Secret.redacted)"}"#)
+    }
+
     /// Reads the mint reply `parts` make, as the client hands it over, and checks what it leaves.
     private func mint(_ parts: [WipeScan.Part], room: Int = 1 << 16, file: StaticString = #filePath, line: UInt = #line)
         -> ClientSecret?
