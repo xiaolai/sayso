@@ -107,8 +107,8 @@ func classifyMode(_ mode: String?) -> CodexAuthError? {
     case modeChatGPT: return nil
     case modeAPIKey: return CodexAuthError(.apiKey, mode: modeAPIKey, message: "Codex is signed in with an API key")
     default:
-        return CodexAuthError(
-            .unsupportedAuth, mode: cleanMode(mode), message: "Codex is signed in with an unsupported mode")
+        // The initialiser makes the mode safe to print.
+        return CodexAuthError(.unsupportedAuth, mode: mode, message: "Codex is signed in with an unsupported mode")
     }
 }
 
