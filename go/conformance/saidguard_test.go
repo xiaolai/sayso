@@ -2,6 +2,8 @@ package conformance
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xiaolai/sayso/go/internal/fixtures"
@@ -29,3 +31,20 @@ func saidGuard(_ *testing.T, c fixtures.Case) (fixtures.Outcome, string) {
 }
 
 func TestSaidGuard(t *testing.T) { run(t, "said-guard", saidGuard) }
+
+// The revision is shared policy (spec/parity.md): Go's constant is the one capabilities.json records, as Swift's is.
+func TestSaidGuardVersion(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir, "capabilities.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var policy struct {
+		SaidGuardVersion *int `json:"saidGuardVersion"`
+	}
+	if err := json.Unmarshal(data, &policy); err != nil {
+		t.Fatal(err)
+	}
+	if policy.SaidGuardVersion == nil || *policy.SaidGuardVersion != saidguard.Version {
+		t.Fatalf("capabilities.json saidGuardVersion %v, saidguard.Version %d", policy.SaidGuardVersion, saidguard.Version)
+	}
+}
