@@ -98,8 +98,12 @@ func svString(_ rs: some Sequence<Unicode.Scalar>) -> String {
     return String(v)
 }
 
-/// NFKC; ASCII is its own normal form, and skipping Foundation for it keeps per-token normalisation cheap.
-func nfkc(_ s: String) -> String { isASCII(s) ? s : s.precomposedStringWithCompatibilityMapping }
+/// NFKC; ASCII is its own normal form, and skipping Foundation for it keeps per-token normalisation cheap. Foundation
+/// composes only what it has decomposed itself: given a precomposed LV syllable and a trailing jamo (가 ᆨ, or 가 ㄳ
+/// after the compatibility mapping) or U+0CCA U+0CD5 it leaves the pair apart, where NFKC composes 각, 갃 and U+0CCB.
+func nfkc(_ s: String) -> String {
+    isASCII(s) ? s : s.decomposedStringWithCompatibilityMapping.precomposedStringWithCompatibilityMapping
+}
 
 func isASCII(_ s: String) -> Bool { s.utf8.allSatisfy { $0 < 0x80 } }
 

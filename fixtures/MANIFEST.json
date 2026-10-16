@@ -1,5 +1,5 @@
 {
- "count": 976,
+ "count": 980,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5675,6 +5675,30 @@
   },
   {
    "id": "r12-marks-number-run-four",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-compat-final",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-compat-final-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-final",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-final-before",
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []

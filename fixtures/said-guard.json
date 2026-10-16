@@ -5501,5 +5501,41 @@
   "language": "en",
   "expect": false,
   "note": "Marks after a number, however many, are each a symbol."
+ },
+ {
+  "id": "r13-nfkc-hangul-compat-final",
+  "component": "said-guard",
+  "script": "가ㄳ3",
+  "transcript": "가 ᆪ 3",
+  "language": "en",
+  "expect": false,
+  "note": "NFKC composes 가 and ㄳ into the one letter 갃, so no 2–3 letters stand against the number to be read one by one."
+ },
+ {
+  "id": "r13-nfkc-hangul-compat-final-identity",
+  "component": "said-guard",
+  "script": "가ㄳ3",
+  "transcript": "갃3",
+  "language": "en",
+  "expect": true,
+  "note": "Identity under NFKC: 가 and ㄳ are the syllable 갃."
+ },
+ {
+  "id": "r13-nfkc-hangul-final",
+  "component": "said-guard",
+  "script": "각3",
+  "transcript": "가 ᆨ 3",
+  "language": "en",
+  "expect": false,
+  "note": "NFKC composes 가 and a final ᆨ into 각, one letter against the number."
+ },
+ {
+  "id": "r13-nfkc-hangul-final-before",
+  "component": "said-guard",
+  "script": "3각",
+  "transcript": "3 가 ᆨ",
+  "language": "en",
+  "expect": false,
+  "note": "The same composed letter after the number."
  }
 ]
