@@ -133,12 +133,18 @@ public final class RealtimeSession: Sendable {
         try await inbox.take()
     }
 
-    /// Writes one client event, an encoded JSON object, as a text message. Writes are serialised, as in Go, and
-    /// ``close()`` releases every write still waiting with ``Closed``. A task cancelled before its write starts, while
-    /// it waits behind another write included, throws `CancellationError`, sends nothing and leaves the session open.
-    /// Cancelling a write in flight ends the session, as in Go: a message partly handed to the transport cannot be
-    /// withdrawn, and a stalled write must not hold the caller.
+    /// Writes one client event, an encoded JSON object in valid UTF-8, as a text message; invalid UTF-8 is
+    /// `internal` and sends nothing. Writes are serialised, as in Go, and ``close()`` releases every write still
+    /// waiting with ``Closed``. A task cancelled before its write starts, while it waits behind another write
+    /// included, throws `CancellationError`, sends nothing and leaves the session open. Cancelling a write in flight
+    /// ends the session, as in Go: a message partly handed to the transport cannot be withdrawn, and a stalled write
+    /// must not hold the caller.
     public func send(_ event: Data) async throws {
+        // A text message is UTF-8: a lenient decoding would replace bad bytes and send a different event.
+        let text = String(decoding: event, as: UTF8.self)
+        guard text.utf8.elementsEqual(event) else {
+            throw RealtimeError(.internal, message: "the event is not valid UTF-8")
+        }
         if inbox.isClosing { throw Closed() }
         try Task.checkCancellation()
         try await writes.acquire()
@@ -146,7 +152,7 @@ public final class RealtimeSession: Sendable {
         if inbox.isClosing { throw Closed() }  // closed while this write waited
         let task = self.task
         do {
-            try await Self.admitted { try await task.send(.string(String(decoding: event, as: UTF8.self))) } end: {
+            try await Self.admitted { try await task.send(.string(text)) } end: {
                 task.cancel(with: .goingAway, reason: nil)
             }
         } catch {

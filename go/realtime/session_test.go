@@ -2,6 +2,7 @@ package realtime_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -524,5 +525,27 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestWebSocketURLTrimsEverySlash(t *testing.T) {
 	if got := realtime.WebSocketURL("https://api.openai.com//", "m"); got != "https://api.openai.com/v1/realtime?model=m" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Invalid UTF-8 is refused before anything is sent, and the session stays open.
+func TestSendRefusesInvalidUTF8(t *testing.T) {
+	got := make(chan string, 1)
+	s := dialHandler(t, func(c *websocket.Conn) {
+		_, b, _ := c.Read(context.Background())
+		got <- string(b)
+	}, nil)
+	for _, bad := range []string{"{\"a\":\"\xff\"}", "{\"a\":\"\xed\xa0\x80\"}", "{\"a\":\"\xc0\xaf\"}"} {
+		err := s.Send(context.Background(), json.RawMessage(bad))
+		wantClass(t, err, openaihttp.ClassInternal)
+		if !strings.Contains(err.Error(), "UTF-8") {
+			t.Fatalf("%q: err = %v", bad, err)
+		}
+	}
+	if err := s.Send(context.Background(), map[string]string{"type": "input_audio_buffer.clear", "é": "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if b := <-got; b != `{"type":"input_audio_buffer.clear","é":"ok"}` {
+		t.Fatalf("the peer read %q", b)
 	}
 }

@@ -119,4 +119,27 @@ final class SessionWriteTests: XCTestCase {
         try await gate.acquire()  // free again: the cancelled ids left nothing holding the turn
         gate.release()
     }
+
+    // MARK: Strict UTF-8
+
+    func testInvalidUTF8IsRefusedAndTheSessionStaysOpen() async throws {
+        let server = try FakeWebSocketServer(message: Data(#"{"type":"session.created"}"#.utf8))
+        defer { server.stop() }
+        let session = try await RealtimeSession.open(
+            client: FakeOpenAI.client(port: server.port),
+            secret: ClientSecret(bearer: "ek_utf8", expiresAt: Date()),
+            configuration: .init(
+                url: RealtimeSession.url(model: "m", base: URL(string: "ws://127.0.0.1:\(server.port)")!),
+                handshakeTimeout: 5, readLimit: 1 << 20))
+        for bad in [[0x7B, 0x22, 0xFF, 0x22, 0x7D], [0x7B, 0x22, 0xED, 0xA0, 0x80, 0x22, 0x7D], [0xC0, 0xAF]] as [[UInt8]] {
+            do {
+                try await session.send(Data(bad))
+                XCTFail("\(bad): invalid UTF-8 was sent")
+            } catch let e as RealtimeError {
+                XCTAssertEqual(e.errorClass, .internal)
+            }
+        }
+        try await session.send(Data(#"{"type":"input_audio_buffer.clear","é":"ok"}"#.utf8))
+        await session.close()
+    }
 }

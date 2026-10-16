@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 
@@ -227,7 +228,9 @@ func (s *Session) Next(ctx context.Context) (Event, error) {
 	}
 }
 
-// Send writes one client event as JSON. Writes are serialised; waiting for an earlier write observes ctx and Close.
+// Send writes one client event as JSON, which must be valid UTF-8: a json.RawMessage is passed through as it is, and
+// invalid UTF-8 is an internal error that sends nothing. Writes are serialised; waiting for an earlier write observes
+// ctx and Close.
 func (s *Session) Send(ctx context.Context, event any) error {
 	if err := ctx.Err(); err != nil {
 		return err // cancelled before the call: nothing is encoded or sent, and the session is untouched
@@ -236,6 +239,10 @@ func (s *Session) Send(ctx context.Context, event any) error {
 	if err != nil {
 		// A fixed message: a custom marshaller's error text could carry anything.
 		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: the event does not encode"}
+	}
+	if !utf8.Valid(b) {
+		// A text message is UTF-8, as in Swift; the peer would refuse the frame, or read a different event.
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: the event is not valid UTF-8"}
 	}
 	select {
 	case <-s.closing:
