@@ -142,4 +142,39 @@ final class SessionWriteTests: XCTestCase {
         try await session.send(Data(#"{"type":"input_audio_buffer.clear","é":"ok"}"#.utf8))
         await session.close()
     }
+
+    // MARK: Checking before the secret
+
+    private final class CountingSource: SecretSource, @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        var calls: Int { lock.withLock { n } }
+        func secret(session: Data) async throws -> ClientSecret {
+            lock.withLock { n += 1 }
+            return ClientSecret(bearer: "ek_counted", expiresAt: Date())
+        }
+    }
+
+    func testConfigurationAndDestinationAreCheckedBeforeTheSecret() async throws {
+        let source = CountingSource()
+        let client = try FakeOpenAI.client(port: 9)
+        let local = RealtimeSession.url(model: "m", base: URL(string: "ws://127.0.0.1:9")!)
+        let cases: [(String, RealtimeSession.Configuration)] = [
+            ("zero read limit", .init(url: local, handshakeTimeout: 5, readLimit: 0)),
+            ("infinite timeout", .init(url: local, handshakeTimeout: .infinity, readLimit: 1 << 20)),
+            ("forbidden origin", .init(
+                url: RealtimeSession.url(model: "m", base: URL(string: "wss://example.invalid")!), handshakeTimeout: 5,
+                readLimit: 1 << 20)),
+        ]
+        for (name, configuration) in cases {
+            do {
+                _ = try await RealtimeSession.open(
+                    client: client, source: source, session: Data("{}".utf8), configuration: configuration)
+                XCTFail("\(name): opened")
+            } catch let e as RealtimeError {
+                XCTAssertEqual(e.errorClass, .internal, name)
+            }
+        }
+        XCTAssertEqual(source.calls, 0, "a secret was fetched for a configuration that cannot open")
+    }
 }

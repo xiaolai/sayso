@@ -549,3 +549,34 @@ func TestSendRefusesInvalidUTF8(t *testing.T) {
 		t.Fatalf("the peer read %q", b)
 	}
 }
+
+type countingSource struct{ calls atomic.Int32 }
+
+func (c *countingSource) Secret(context.Context, any) (secret.ClientSecret, error) {
+	c.calls.Add(1)
+	return secret.NewClientSecret("ek_counted", time.Unix(1800000000, 0)), nil
+}
+
+// Open checks the configuration and the destination before it asks the source for a secret.
+func TestOpenChecksBeforeTheSecret(t *testing.T) {
+	c, base := fakeopenai.Client(t, "http://127.0.0.1:1")
+	src := &countingSource{}
+	for name, edit := range map[string]func(*realtime.DialConfig){
+		"no read limit":    func(cfg *realtime.DialConfig) { cfg.ReadLimit = 0 },
+		"no timeout":       func(cfg *realtime.DialConfig) { cfg.HandshakeTimeout = 0 },
+		"unguarded client": func(cfg *realtime.DialConfig) { cfg.Client = http.DefaultClient },
+		"forbidden origin": func(cfg *realtime.DialConfig) { cfg.URL = realtime.WebSocketURL("https://example.invalid", "m") },
+		"plain scheme":     func(cfg *realtime.DialConfig) { cfg.URL = "ws://api.openai.com/v1/realtime?model=m" },
+	} {
+		cfg := config(c, base)
+		edit(&cfg)
+		_, err := realtime.Open(context.Background(), src, map[string]string{"type": "realtime"}, cfg)
+		var e *openaihttp.Error
+		if !errors.As(err, &e) || e.Class != openaihttp.ClassInternal {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+	if n := src.calls.Load(); n != 0 {
+		t.Fatalf("the source was asked %d times", n)
+	}
+}

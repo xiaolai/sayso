@@ -70,12 +70,32 @@ public final class RealtimeSession: Sendable {
         task.cancel(with: .goingAway, reason: nil)
     }
 
-    /// Obtains a secret for `session` (an encoded JSON object) from `source` and opens the session with it.
+    /// Obtains a secret for `session` (an encoded JSON object) from `source` and opens the session with it. The
+    /// configuration and the destination are checked first, so a programming error never costs a sign-in or a mint.
     public static func open(
         client: HTTPClient, source: any SecretSource, session: Data, configuration: Configuration
     ) async throws -> RealtimeSession {
+        try check(configuration)
+        try client.policy.check(request(configuration, bearer: "ek_unminted"))
         let secret = try await source.secret(session: session)
         return try await open(client: client, secret: secret, configuration: configuration)
+    }
+
+    /// A programming error unless the handshake timeout is positive and finite and the read limit positive.
+    private static func check(_ configuration: Configuration) throws {
+        guard Deadline.nanoseconds(configuration.handshakeTimeout) != nil, configuration.readLimit > 0,
+            configuration.readLimit < Int.max
+        else {
+            throw RealtimeError(
+                .internal, message: "a realtime session needs a positive, finite handshake timeout and a read limit")
+        }
+    }
+
+    private static func request(_ configuration: Configuration, bearer: String) -> URLRequest {
+        var request = URLRequest(url: configuration.url)
+        request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = configuration.handshakeTimeout
+        return request
     }
 
     /// Opens the session with `Authorization: Bearer ek_…` within the handshake timeout. A refused handshake is
@@ -83,15 +103,8 @@ public final class RealtimeSession: Sendable {
     public static func open(client: HTTPClient, secret: ClientSecret, configuration: Configuration) async throws
         -> RealtimeSession
     {
-        guard Deadline.nanoseconds(configuration.handshakeTimeout) != nil, configuration.readLimit > 0,
-            configuration.readLimit < Int.max
-        else {
-            throw RealtimeError(
-                .internal, message: "a realtime session needs a positive, finite handshake timeout and a read limit")
-        }
-        var request = URLRequest(url: configuration.url)
-        request.setValue("Bearer " + secret.bearer, forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = configuration.handshakeTimeout
+        try check(configuration)
+        let request = request(configuration, bearer: secret.bearer)
         try client.policy.check(request)
         let task = client.session.webSocketTask(with: request)
         // One byte over the limit still arrives, so the session tells an oversize message from a broken connection.

@@ -80,8 +80,15 @@ type item struct {
 	err error
 }
 
-// Open obtains a secret for session from src and dials with it; cfg.Secret is ignored.
+// Open obtains a secret for session from src and dials with it; cfg.Secret is ignored. The configuration and the
+// destination are checked first, so a programming error never costs a sign-in or a mint.
 func Open(ctx context.Context, src SecretSource, session any, cfg DialConfig) (*Session, error) {
+	if err := cfg.check(); err != nil {
+		return nil, err
+	}
+	if err := openaihttp.CheckOrigin(cfg.Client, cfg.URL); err != nil {
+		return nil, err
+	}
 	sec, err := src.Secret(ctx, session)
 	if err != nil {
 		return nil, err
@@ -90,15 +97,23 @@ func Open(ctx context.Context, src SecretSource, session any, cfg DialConfig) (*
 	return Dial(ctx, cfg)
 }
 
-// Dial opens the session with `Authorization: Bearer ek_…` within cfg.HandshakeTimeout.
-func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
+// check refuses a configuration no dial can use, a programming error.
+func (cfg DialConfig) check() error {
 	// math.MaxInt64 is refused: the library adds one to the limit, which would wrap and disable it.
 	if !openaihttp.Guarded(cfg.Client) || cfg.HandshakeTimeout <= 0 || cfg.ReadLimit <= 0 || cfg.ReadLimit == math.MaxInt64 {
-		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a client from openaihttp.NewClient, a HandshakeTimeout and a ReadLimit below math.MaxInt64"}
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a client from openaihttp.NewClient, a HandshakeTimeout and a ReadLimit below math.MaxInt64"}
 	}
 	// A scheme the library cannot dial is a configuration error, as in Swift, not a network failure.
 	if u, err := url.Parse(cfg.URL); err != nil || !dialable[u.Scheme] || u.Host == "" {
-		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a ws, wss, http or https URL"}
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a ws, wss, http or https URL"}
+	}
+	return nil
+}
+
+// Dial opens the session with `Authorization: Bearer ek_…` within cfg.HandshakeTimeout.
+func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
+	if err := cfg.check(); err != nil {
+		return nil, err
 	}
 	logger := cfg.Logger
 	if logger == nil {

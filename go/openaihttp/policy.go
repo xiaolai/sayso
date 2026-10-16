@@ -3,6 +3,7 @@ package openaihttp
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 const (
@@ -64,6 +65,30 @@ func (p *originPolicy) check(req *http.Request) error {
 		}
 	}
 	return nil
+}
+
+// CheckOrigin reports whether c's origin policy lets a bearer request to rawURL through, checked as a request
+// through c would be; a ws or wss URL is checked as the http or https request that opens it. It is for a caller that
+// must refuse a forbidden destination before obtaining the bearer. A client not from NewClient is refused.
+func CheckOrigin(c *http.Client, rawURL string) error {
+	if c == nil {
+		return policyError("client without the origin policy")
+	}
+	p, ok := c.Transport.(*originPolicy)
+	if !ok {
+		return policyError("client without the origin policy")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return policyError("unparsable URL")
+	}
+	switch u.Scheme {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	}
+	return p.check(&http.Request{URL: u, Header: http.Header{}})
 }
 
 // policyError is a programming error: a bearer request was built for a forbidden origin.
