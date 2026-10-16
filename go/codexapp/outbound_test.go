@@ -15,11 +15,15 @@ import (
 )
 
 // bareCore is a core with no child: its stdin is a pipe the test reads, and writeLoop starts only when the test says,
-// so the queue's order is fixed before anything is written.
+// so the queue's order is fixed before anything is written. Reads of the pipe end with an error after 10 s, so a
+// line that is never written fails the test rather than hanging it.
 func bareCore(t *testing.T) (*core, *bufio.Reader, func()) {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	k := &core{stdin: w, timeout: 5 * time.Second, logger: slog.New(slog.DiscardHandler),
@@ -91,7 +95,7 @@ func TestCallBetweenEarlierAndLaterRefusals(t *testing.T) {
 	if want := `{"id":"r1","error":{}} {"call":"B"} {"id":"r2","error":{}}`; got != want {
 		t.Errorf("written %s, want %s", got, want)
 	}
-	if err := <-done; err != nil {
+	if err := recv(t, "the send", done); err != nil {
 		t.Errorf("send: %v", err)
 	}
 }
@@ -177,7 +181,7 @@ func TestFailureDropsTheOutboundQueue(t *testing.T) {
 	if held != 0 || bytes != 0 || cap != 0 {
 		t.Errorf("after the failure: %d messages, %d refusal bytes, capacity %d kept", held, bytes, cap)
 	}
-	if err := <-done; err == nil || !strings.Contains(err.Error(), "broken") {
+	if err := recv(t, "the queued send", done); err == nil || !strings.Contains(err.Error(), "broken") {
 		t.Errorf("queued call: %v, want the failure", err)
 	}
 	if k.enqueue(&outbound{b: []byte("late\n")}) {
@@ -194,16 +198,16 @@ func TestAnswerIsAdmittedBeforeItIsEncoded(t *testing.T) {
 	admitted, release := make(chan struct{}), make(chan struct{})
 	k.testRefusalAdmitted = func() { close(admitted); <-release }
 	refused := refuseAsync(t, k, "srv-1")
-	<-admitted
+	recv(t, "the answer's admission", admitted)
 	done := sendAsync(t, k, map[string]string{"call": "B"})
 	close(release)
-	<-refused
+	recv(t, "the answer to be encoded", refused)
 	start()
 	got := readLines(t, r, 2)
 	if !strings.Contains(got[0], `"srv-1"`) || !strings.Contains(got[0], "-32601") || got[1] != `{"call":"B"}` {
 		t.Errorf("written %q; want the answer to srv-1, then the call", got)
 	}
-	if err := <-done; err != nil {
+	if err := recv(t, "the send", done); err != nil {
 		t.Errorf("send: %v", err)
 	}
 }

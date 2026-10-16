@@ -19,7 +19,11 @@ type eventRecorder struct {
 	entered chan struct{} // closed when the first event is being handled
 	release chan struct{} // closed to let the first event's handler return
 	once    sync.Once
+	freed   sync.Once
 }
+
+// free releases the first event's handler; it may be called more than once.
+func (r *eventRecorder) free() { r.freed.Do(func() { close(r.release) }) }
 
 func newRecorder() *eventRecorder {
 	return &eventRecorder{entered: make(chan struct{}), release: make(chan struct{})}
@@ -287,10 +291,11 @@ func TestEventsHeldAtAnOverflowAreDelivered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { r.free(); _ = c.Close() }) // a failed step must not leave the handler blocked or the child running
 	if err := c.Call(t.Context(), "echo", nil, nil); err == nil || !strings.Contains(err.Error(), "faster than the handler") {
 		t.Fatalf("call: %v, want the overflow", err)
 	}
-	close(r.release) // before Close: the held events drain
+	r.free() // before Close: the held events drain
 	waitFor(t, "the held events", func() bool { return len(r.seen()) == maxEvents })
 	_ = c.Close()
 	goleak.VerifyNone(t, baseline) // the event goroutine has ended: the count is final
@@ -308,13 +313,14 @@ func TestEventsHeldAtAnOverflowAreDelivered(t *testing.T) {
 // An event is admitted when the loop takes it from the queue, under the lock Close takes to begin. One taken before
 // Close began is delivered even though Close runs before its handler is called; none queued behind it is.
 func TestEventAdmittedBeforeCloseIsDeliveredAndNoneAfter(t *testing.T) {
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	baseline := goleak.IgnoreCurrent()
 	var mu sync.Mutex
 	var seen []string
 	k := &core{logger: slog.New(slog.DiscardHandler), eventWake: make(chan struct{}, 1), dead: make(chan struct{}),
 		onEvent: func(e Event) { mu.Lock(); seen = append(seen, e.Method()); mu.Unlock() }}
 	admitted, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
+	var once, releaseOnce sync.Once
+	free := func() { releaseOnce.Do(func() { close(release) }) }
 	k.testEventAdmitted = func() { once.Do(func() { close(admitted); <-release }) }
 	for _, m := range []string{"a", "b", "c"} {
 		root, err := wire.Parse([]byte(`{"method":"` + m + `"}`))
@@ -329,10 +335,21 @@ func TestEventAdmittedBeforeCloseIsDeliveredAndNoneAfter(t *testing.T) {
 	}
 	stopped := make(chan struct{})
 	go func() { k.eventLoop(); close(stopped) }()
-	<-admitted // "a" is taken; its handler has not been called
+	// Whatever step fails, the loop is closed and released and has ended before the leak check; both are idempotent.
+	t.Cleanup(func() {
+		k.closeEvents()
+		free()
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+			t.Error("the event goroutine did not end")
+		}
+		goleak.VerifyNone(t, baseline)
+	})
+	recv(t, "the first event's admission", admitted) // "a" is taken; its handler has not been called
 	k.closeEvents()
-	close(release)
-	<-stopped
+	free()
+	recv(t, "the event goroutine to end", stopped)
 	mu.Lock()
 	defer mu.Unlock()
 	if strings.Join(seen, " ") != "a" {
