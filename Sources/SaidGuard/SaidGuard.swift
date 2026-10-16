@@ -21,9 +21,9 @@ public let saidGuardMaxBytes = 64 << 10
 
 /// The said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a reading it
 /// accepted. A cache of audio accepted by the guard keys on it, so audio accepted by an older, looser guard is not
-/// reused. 11: an unspaced character is a word of its own, so a mark beside one is kept, quotation marks pair around
-/// one, and it is an operand of an expression (10: measurement marks; 9: free dashes).
-public let saidGuardVersion = 11
+/// reused. 12: one dash table decides every sign by its operand, past any spaces ("- 5" is "-5"), and every rule reads a
+/// run of marks of any length as one (11: unspaced characters are words; 10: measurement marks; 9: free dashes).
+public let saidGuardVersion = 12
 
 /// The base languages whose numbers also have the locale's spell-out as a reading (the `spellout:<lang>`
 /// capabilities of spec/parity.md). `en` and `zh` use the guard's own tables.

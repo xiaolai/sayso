@@ -5150,5 +5150,356 @@
   "language": "zh",
   "expect": true,
   "note": "After an unspaced character a dash before a Latin word joins words, so it may be unspoken."
+ },
+ {
+  "id": "r12-sign-start-spaced",
+  "component": "said-guard",
+  "script": "- 5",
+  "transcript": "5",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, start before a digit past spaces: a sign, decided by its operand, so the spaces do not make it silent."
+ },
+ {
+  "id": "r12-sign-start-spaced-joined",
+  "component": "said-guard",
+  "script": "- 5",
+  "transcript": "-5",
+  "language": "en",
+  "expect": true,
+  "note": "The spaced sign reads as the signed number."
+ },
+ {
+  "id": "r12-sign-start-spaced-words",
+  "component": "said-guard",
+  "script": "- 5",
+  "transcript": "minus 5",
+  "language": "en",
+  "expect": true,
+  "note": "The spaced sign read as minus."
+ },
+ {
+  "id": "r12-sign-start-spaced-identity",
+  "component": "said-guard",
+  "script": "- 5",
+  "transcript": "- 5",
+  "language": "en",
+  "expect": true,
+  "note": "Identity for the spaced sign."
+ },
+ {
+  "id": "r12-sign-start-tight",
+  "component": "said-guard",
+  "script": "-5 apples",
+  "transcript": "5 apples",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, start before a digit, touching: a sign."
+ },
+ {
+  "id": "r12-sign-punct-spaced",
+  "component": "said-guard",
+  "script": "Temp: - 5",
+  "transcript": "Temp: 5",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, after punctuation before a digit past spaces: a sign."
+ },
+ {
+  "id": "r12-sign-punct-tight",
+  "component": "said-guard",
+  "script": "(-5)",
+  "transcript": "(5)",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, after punctuation before a digit, touching: a sign."
+ },
+ {
+  "id": "r12-sign-space-spaced",
+  "component": "said-guard",
+  "script": "Set it to - 5.",
+  "transcript": "Set it to 5.",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, after a space before a digit past spaces: a sign."
+ },
+ {
+  "id": "r12-sign-space-spaced-minus",
+  "component": "said-guard",
+  "script": "Set it to - 5.",
+  "transcript": "Set it to minus 5.",
+  "language": "en",
+  "expect": true,
+  "note": "That sign read as minus."
+ },
+ {
+  "id": "r12-sign-unspaced-spaced",
+  "component": "said-guard",
+  "script": "气温- 5度",
+  "transcript": "气温5度",
+  "language": "zh",
+  "expect": false,
+  "note": "Dash table, after an unspaced character before a digit past spaces: a sign."
+ },
+ {
+  "id": "r12-sign-unspaced-spaced-joined",
+  "component": "said-guard",
+  "script": "气温- 5度",
+  "transcript": "气温-5度",
+  "language": "zh",
+  "expect": true,
+  "note": "That sign read with its number."
+ },
+ {
+  "id": "r12-dash-letter-digit-glued",
+  "component": "said-guard",
+  "script": "JIRA-10442",
+  "transcript": "JIRA 10442",
+  "language": "en",
+  "expect": true,
+  "note": "Dash table, between a letter and a digit, touching both: a code's joiner, silent."
+ },
+ {
+  "id": "r12-dash-letter-digit-spaced",
+  "component": "said-guard",
+  "script": "x- 5",
+  "transcript": "x 5",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, after a letter before a digit past spaces: no sign, but spoken, never silent."
+ },
+ {
+  "id": "r12-dash-letter-digit-spaced-minus",
+  "component": "said-guard",
+  "script": "x- 5",
+  "transcript": "x minus 5",
+  "language": "en",
+  "expect": true,
+  "note": "That dash read as minus."
+ },
+ {
+  "id": "r12-dash-numbers-tight",
+  "component": "said-guard",
+  "script": "Score 3-4",
+  "transcript": "Score 3 4",
+  "language": "en",
+  "expect": true,
+  "note": "Dash table, between numbers touching both: a range or score, silent outside an expression."
+ },
+ {
+  "id": "r12-dash-numbers-spaced",
+  "component": "said-guard",
+  "script": "Score 3 - 4",
+  "transcript": "Score 3 4",
+  "language": "en",
+  "expect": false,
+  "note": "Dash table, between numbers with spaces: a minus or to, spoken."
+ },
+ {
+  "id": "r12-dash-numbers-spaced-to",
+  "component": "said-guard",
+  "script": "Score 3 - 4",
+  "transcript": "Score 3 to 4",
+  "language": "en",
+  "expect": true,
+  "note": "That dash read as to."
+ },
+ {
+  "id": "r12-sign-han-spaced",
+  "component": "said-guard",
+  "script": "- 五",
+  "transcript": "五",
+  "language": "zh",
+  "expect": false,
+  "note": "Dash table, before a Han numeral past spaces: a sign."
+ },
+ {
+  "id": "r12-sign-han-spaced-digits",
+  "component": "said-guard",
+  "script": "- 五",
+  "transcript": "-5",
+  "language": "zh",
+  "expect": true,
+  "note": "That sign read with the number in digits."
+ },
+ {
+  "id": "r12-sign-han-unicode-minus",
+  "component": "said-guard",
+  "script": "−五",
+  "transcript": "-5",
+  "language": "zh",
+  "expect": true,
+  "note": "A minus sign before a Han numeral is that number's sign too."
+ },
+ {
+  "id": "r12-sign-han-unicode-minus-dropped",
+  "component": "said-guard",
+  "script": "−五",
+  "transcript": "五",
+  "language": "zh",
+  "expect": false,
+  "note": "The minus sign before a Han numeral may not be dropped."
+ },
+ {
+  "id": "r12-dash-letter-han",
+  "component": "said-guard",
+  "script": "A-五",
+  "transcript": "A五",
+  "language": "zh",
+  "expect": false,
+  "note": "Dash table, after a letter before a Han numeral: no sign, but spoken."
+ },
+ {
+  "id": "r12-dash-letter-han-identity",
+  "component": "said-guard",
+  "script": "A-五",
+  "transcript": "A-五",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity for the spoken dash before a Han numeral."
+ },
+ {
+  "id": "r12-sign-letter-negative",
+  "component": "said-guard",
+  "script": "Set it to -x.",
+  "transcript": "Set it to negative x.",
+  "language": "en",
+  "expect": true,
+  "note": "Dash table, at a word start before a letter: a sign, also read negative."
+ },
+ {
+  "id": "r12-sign-letter-not-to",
+  "component": "said-guard",
+  "script": "Set it to -x.",
+  "transcript": "Set it to to x.",
+  "language": "en",
+  "expect": false,
+  "note": "A sign is never read as to."
+ },
+ {
+  "id": "r12-dash-letter-spaced-start",
+  "component": "said-guard",
+  "script": "- item",
+  "transcript": "item",
+  "language": "en",
+  "expect": true,
+  "note": "Dash table, at the start before a letter past spaces: a separator (a list mark), silent."
+ },
+ {
+  "id": "r12-dash-before-end",
+  "component": "said-guard",
+  "script": "Wait -",
+  "transcript": "Wait",
+  "language": "en",
+  "expect": true,
+  "note": "Dash table, before nothing: silent."
+ },
+ {
+  "id": "r12-dash-before-punct",
+  "component": "said-guard",
+  "script": "Wait -.",
+  "transcript": "Wait.",
+  "language": "en",
+  "expect": true,
+  "note": "Dash table, before punctuation: silent."
+ },
+ {
+  "id": "r12-marks-han-run-three",
+  "component": "said-guard",
+  "script": "五’’’",
+  "transcript": "五’’",
+  "language": "zh",
+  "expect": false,
+  "note": "A run of kept marks after a Han numeral of any length: each mark is a symbol, so one cannot be dropped."
+ },
+ {
+  "id": "r12-marks-han-run-three-identity",
+  "component": "said-guard",
+  "script": "五’’’",
+  "transcript": "五’’’",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity for the run."
+ },
+ {
+  "id": "r12-marks-before-han-run",
+  "component": "said-guard",
+  "script": "’’好",
+  "transcript": "’好",
+  "language": "zh",
+  "expect": false,
+  "note": "A run of kept marks before an unspaced character, of any length."
+ },
+ {
+  "id": "r12-marks-before-han-run-identity",
+  "component": "said-guard",
+  "script": "’’好",
+  "transcript": "’’好",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity for the run before an unspaced character."
+ },
+ {
+  "id": "r12-quote-double-marks",
+  "component": "said-guard",
+  "script": "Say ''hello'' now.",
+  "transcript": "Say hello now.",
+  "language": "en",
+  "expect": true,
+  "note": "A run of marks opens or closes as a whole: doubled single quotes are quotation marks."
+ },
+ {
+  "id": "r12-quote-double-marks-kept",
+  "component": "said-guard",
+  "script": "Say ''hello'' now.",
+  "transcript": "Say ''hello now.",
+  "language": "en",
+  "expect": true,
+  "note": "A dropped run beside a word may be read as that many apostrophes."
+ },
+ {
+  "id": "r12-quote-double-marks-wrong-count",
+  "component": "said-guard",
+  "script": "Say ''hello'' now.",
+  "transcript": "Say '''hello now.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different number of marks."
+ },
+ {
+  "id": "r12-quote-double-marks-unpaired",
+  "component": "said-guard",
+  "script": "Say ''hello now.",
+  "transcript": "Say hello now.",
+  "language": "en",
+  "expect": false,
+  "note": "An opening run with no closing run is kept."
+ },
+ {
+  "id": "r12-marks-leading-run",
+  "component": "said-guard",
+  "script": "’’Tis late",
+  "transcript": "’Tis late",
+  "language": "en",
+  "expect": false,
+  "note": "A run of marks before a word stays with the word, all of it."
+ },
+ {
+  "id": "r12-marks-leading-run-identity",
+  "component": "said-guard",
+  "script": "’’Tis late",
+  "transcript": "’’Tis late",
+  "language": "en",
+  "expect": true,
+  "note": "Identity for the leading run."
+ },
+ {
+  "id": "r12-marks-number-run-four",
+  "component": "said-guard",
+  "script": "Hold 30''''",
+  "transcript": "Hold 30'''",
+  "language": "en",
+  "expect": false,
+  "note": "Marks after a number, however many, are each a symbol."
  }
 ]

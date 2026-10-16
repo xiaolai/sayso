@@ -3,7 +3,7 @@
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
 tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
-revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 11), raised whenever a change makes the guard refuse a
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 12), raised whenever a change makes the guard refuse a
 reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
@@ -55,18 +55,13 @@ the results was tried and abandoned: every rewrite rule could map two different 
    touching the right one (`5 -2`), between Han numerals (`五 - 二`), or before a signed or decimal operand (`5 - +2`,
    `5 - ,2`), is a symbol, silent-able only when tight and outside an expression (`3-4`, `1-0` may be read with no word; `5-2=3`
    and `3 - 4` may not). An expression is a run of numbers and symbols joined only by spaces that holds another
-   operator; punctuation ends it (`1-0. #1` holds none). Any other `-` that is not glued between letters or digits
-   (`JIRA-10442` stays silent) is a free dash and a symbol on both sides: a sign before a word, number or Han numeral
-   is never silent: before a number or Han numeral unless a letter, digit or mark precedes it, as for a digit (`-五`,
-   `气温-五度`; before a Han numeral it is the number's sign: `-五` = `-5` = `- 5`, and `五` is refused), and before a
-   word or other unspaced character only after a space, punctuation or the start (`-x`; after an unspaced character it
-   joins two words, `北京-上海`). Any other free dash (`Monday - Friday`,
-   `pre- and post-war`, `北京-上海`) may be read with no word, except in a run of words, unspaced characters, numbers
-   and symbols joined only by spaces that holds an arithmetic operator `= + − × ÷ < > ≠ * ^` (`x - y = z`, `甲 - 乙 =
-   丙`). A Han numeral outside `zh`, lexed as an unspaced character, is still a number in a numeric run (`五-二=三` in
+   operator; punctuation ends it (`1-0. #1` holds none). Every other `-` and `−` takes its role from the dash table
+   below; a free dash is a symbol on both sides, and a silent one may be read with no word except in a run of words,
+   unspaced characters, numbers and symbols joined only by spaces that holds an arithmetic operator `= + − × ÷ < > ≠ *
+   ^` (`x - y = z`, `甲 - 乙 = 丙`). A Han numeral outside `zh`, lexed as an unspaced character, is still a number in a numeric run (`五-二=三` in
    `ja` keeps its minus). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
    both sides. A number keeps its
-   sign (start, after space or punctuation, before `.5` or `,5`, or an exponent `1e-3`), its `. , / :` between digits and an
+   sign (the dash table: `-5`, `- 5`, `-.5`, `-,5`, or an exponent `1e-3`), its `. , / :` between digits and an
    ordinal suffix; a leading `,` starts a number only after a space (`,5` is a French decimal, `Yes,3` is a word and a
    number). Only `- ‐ ‑` join words (`e-mail`); dashes `– —` separate them. A letter next to a digit is a token
    boundary; each character of an unspaced script (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) is a token.
@@ -120,6 +115,28 @@ The transcript is never parsed into numbers or abbreviations, and it deletes no 
 therefore needs either a generated reading that is not a correct reading of the script, or a deleted character that
 was spoken. The table and the separator rule are the whole attack surface.
 
+**The dash table.** One rule decides every `-` and `−` that is not inside a word (`e-mail`). Its *operand* is the
+first character after it past any spaces, so spaces between a sign and its number never decide (`- 5` is `-5`); what
+precedes it is the character right before it. Before a word, though, a spaced dash is prose punctuation (`Monday -
+Friday`, a list mark `- item`), so a sign before a letter must touch it. `−` is spoken in every row.
+
+| Before the dash | Operand (past spaces) | Role | Readings, never silent unless stated |
+|---|---|---|---|
+| a number (digits, `%`, ordinal suffix, Han numeral), spaces allowed | a number, possibly signed | minus between numbers | `-`, `minus`, `to`; silent only touching both numbers outside a numeric expression (`3-4`) |
+| the start, a space, punctuation or an unspaced character | a digit or `.5`/`,5` | sign, part of the number (`-5`, `- 5`, `气温-5度`) | the signed number's readings |
+| the start, a space, punctuation or an unspaced character | a Han numeral | the numeral's sign (`-五`, `- 五`, `−五`) | `-`/`−` then the numeral's readings, or `-5` |
+| a letter, digit or mark, touching | a digit, touching | a code's joiner (`JIRA-10442`) | silent |
+| a letter, digit or mark | a number, not touching on both sides (`x- 5`, `A-五`) | spoken dash | `-`, `minus`, `to` |
+| the start, a space or punctuation | a letter or unspaced character, touching (`-x`) | sign | `-`, `−`, `minus`, `negative`; never `to` |
+| an unspaced character | a letter or unspaced character, touching (`北京-上海`) | joins two words | as written, or silent |
+| a letter, digit or mark | a letter, touching | inside a word (`e-mail`) | the word split or joined |
+| anything | a letter or unspaced character past a space, nothing, or punctuation (`Monday - Friday`, `- item`, `Wait -`) | separator | as written, `minus`, `to`, or silent |
+
+**Runs of marks.** Every rule that looks at marks reads a run of consecutive apostrophes of any length as one, found
+in one reverse pass as row 1's punctuation is: a run opens or closes a quotation as a whole (`''yes''` = `yes`), a
+dropped run beside a word may be read as that many apostrophes, a run before a letter stays with the word (`’’tis`),
+and every kept mark of a run after a number or beside an unspaced character is a symbol (`五’’’` ≠ `五’’`).
+
 Accepted false mismatches (each a regeneration, never a false acceptance): `사과3개` ≠ `사과삼개`, `21` ≠ `ein und
 zwanzig`, `1.000` ≠ `tausend`, `1/2` ≠ `one half`, a script number word read back as digits in a language without
 spell-out, a reverse year (`nineteen ninety-nine` ≠ `1999`), `Lakers VS Celtics` ≠ `versus` (capitals read as a code),
@@ -128,7 +145,7 @@ seventh`, currency in words (`$5` ≠ `five dollars`: the reading reorders, defe
 token, so an omitted currency is detected), `pages 3 - 4` ≠ `pages 3 4` (a spaced dash is spoken), a two-digit Han
 string (`一二` ≠ `12`), a Japanese numeral in kanji read back as digits (`四十二` ≠ `42`: Japanese numerals also
 spell words, `一緒`, `七夕`, so a run is not read as a value), a free dash the transcript adds (`Monday, Friday` ≠
-`Monday - Friday`), a measurement mark in another language's words (`5'` ≠ `5 pieds` in `fr`: symbol names are English only), a sign
+`Monday - Friday`), a list mark before a number (`- 5 apples` ≠ `5 apples`: the dash table reads it as a sign), a measurement mark in another language's words (`5'` ≠ `5 pieds` in `fr`: symbol names are English only), a sign
 before a Han numeral read as `负` (`-五` ≠ `负五`: `zh` has no spell-out), a number's mark kept by the transcript where the script's
 was a quotation mark (`‘42’` ≠ `42’`), and a character newer than the platform's Unicode tables (a Unicode 16 digit on macOS 14 reads as a symbol in Swift; the same table difference can only refuse, since
 an unknown character is a token that matches only itself). An emphasised short word missing from `svCapsWords` is the opposite case: it is accepted letter

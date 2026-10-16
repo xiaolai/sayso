@@ -75,13 +75,15 @@ func newSvMasks(_ toks: [SvTok]) -> [String: [SvMask]] {
     return m
 }
 
-/// `s`, then `s` with each mark a dropped quotation mark may have been, as an apostrophe: before it (`lead`), after it
-/// (`trail`), or both. At most four readings, so the work stays linear in the marks.
-func svMarkReadings(_ s: String, lead: Bool, trail: Bool) -> [String] {
+/// `s`, then `s` with the runs of marks dropped quotation marks may have been, as apostrophes: the `lead` marks before
+/// it, the `trail` marks after it, or both. At most four readings, so the work stays linear in the marks.
+func svMarkReadings(_ s: String, lead: Int, trail: Int) -> [String] {
+    let before = String(repeating: "'", count: lead)
+    let after = String(repeating: "'", count: trail)
     var out = [s]
-    if lead { out.append("'" + s) }
-    if trail { out.append(s + "'") }
-    if lead && trail { out.append("'" + s + "'") }
+    if lead > 0 { out.append(before + s) }
+    if trail > 0 { out.append(s + after) }
+    if lead > 0 && trail > 0 { out.append(before + s + after) }
     return out
 }
 
