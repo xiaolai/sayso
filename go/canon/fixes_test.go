@@ -1,10 +1,12 @@
 package canon
 
 import (
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 // The strict Han parser: a run that is not a well-formed numeral stays as written; the colloquial dropped unit reads.
@@ -240,5 +242,125 @@ func TestEquivalentScales(t *testing.T) {
 	}
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("took %v", d)
+	}
+}
+
+// Every cut is sound for every reading, not only the written one: for random texts of compounds and the words a
+// neighbour rule reads (number, scale and zero words, "and", "a", "point", single letters, abbreviations), each
+// combination of compound choices canonicalises, piece by piece, to the whole text's tokens with the same choices.
+func TestCutsHoldForEveryReading(t *testing.T) {
+	vocab := []string{
+		"o-ring", "oh-well", "oh-five", "o-seven", "x-ray", "a-list", "and-or", "point-blank", "one-way", "twenty-one", "nineteen-ninety",
+		"e-mail", "well-known", "t-shirt", "o", "oh", "a", "and", "point", "x", "b", "Dr", "St.", "Mr", "hundred",
+		"five", "nineteen", "ninety", "zero", "ring", "list", "way", "blank", "seven", "ten", "twenty",
+	}
+	rng := rand.New(rand.NewPCG(105, 94))
+	for range 4000 {
+		words := make([]string, 2+rng.IntN(4))
+		for i := range words {
+			words[i] = vocab[rng.IntN(len(vocab))]
+		}
+		s := strings.Join(words, " ")
+		ps := cuts([]rune(s))
+		// The hyphens of each piece, in order, so one mask chooses them all across the pieces and the whole.
+		var hy []int
+		rs := []rune(s)
+		for i := 1; i+1 < len(rs); i++ {
+			if isHyphen(rs[i]) && unicode.IsLetter(rs[i-1]) && unicode.IsLetter(rs[i+1]) {
+				hy = append(hy, i)
+			}
+		}
+		for m := 0; m < 1<<len(hy); m++ {
+			drop := map[int]bool{}
+			for k, at := range hy {
+				if m&(1<<k) != 0 {
+					drop[at] = true
+				}
+			}
+			read := func(from, to int) string { // rs[from:to] with this reading's hyphens dropped
+				var b strings.Builder
+				for i := from; i < to; i++ {
+					if !drop[i] {
+						b.WriteRune(rs[i])
+					}
+				}
+				return b.String()
+			}
+			var got []string
+			at := 0 // the pieces are separated by one space
+			for _, p := range ps {
+				n := len([]rune(p))
+				got = append(got, Canon(read(at, at+n))...)
+				at += n + 1
+			}
+			if want := Canon(read(0, len(rs))); !slices.Equal(got, want) {
+				t.Fatalf("%q read as %q: pieces %q give %q, want %q", s, read(0, len(rs)), ps, got, want)
+			}
+		}
+	}
+}
+
+// Five, eight and thirty o-rings, each written joined or split on its own, are one reading: "o" stands beside
+// "ring" or "oring" only, so no zero rule reads across a space.
+func TestManyORings(t *testing.T) {
+	for _, n := range []int{5, 8, 30} {
+		a := strings.TrimSpace(strings.Repeat("o-ring ", n))
+		var mixed, wrong []string
+		for i := range n {
+			if i%3 == 0 {
+				mixed = append(mixed, "oring")
+			} else {
+				mixed = append(mixed, "o ring")
+			}
+			wrong = append(wrong, "o ring")
+		}
+		wrong[n-1] = "o rings"
+		if !Equivalent(a, strings.Join(mixed, " ")) || !Equivalent(strings.Join(mixed, " "), a) {
+			t.Errorf("%d o-rings: mixed joined and split readings refused", n)
+		}
+		if Equivalent(a, strings.Join(wrong, " ")) {
+			t.Errorf("%d o-rings: a different last word accepted", n)
+		}
+		if Equivalent(a, strings.Join(mixed[1:], " ")) {
+			t.Errorf("%d o-rings: a missing compound accepted", n)
+		}
+	}
+	// Active words on both sides of a space still read each other: "oh five" is a zero, "a hundred" one hundred.
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"oh-well five", "zero well five", false},
+		{"twenty o-five", "twenty zero five", true},
+		{"a-list hundred", "a list hundred", true},
+	} {
+		if got := Equivalent(c.a, c.b); got != c.want {
+			t.Errorf("Equivalent(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+	start := time.Now()
+	long := strings.TrimSpace(strings.Repeat("o-ring a-list oh-well and-or ", 300))
+	if !Equivalent(long, strings.ReplaceAll(long, "-", "")) || time.Since(start) > 10*time.Second {
+		t.Errorf("1,200 compounds with active edges: took %v", time.Since(start))
+	}
+}
+
+// Words that read each other ("one twenty") keep a piece whole; up to maxCompounds of its compounds are still chosen
+// one by one. Past that bound a piece is read all joined or all split, in time linear in its length.
+func TestInteractingCompounds(t *testing.T) {
+	five := "twenty-one twenty-one twenty-one twenty-one twenty-one"
+	if !Equivalent(five, "twentyone twenty one twentyone twenty one twentyone") {
+		t.Error("five number compounds in one piece: a mixed reading refused")
+	}
+	if Equivalent(five, "twentyone twenty one twentyone twenty one") {
+		t.Error("five number compounds: a missing one accepted")
+	}
+	long := strings.TrimSpace(strings.Repeat("twenty-one ", 400))
+	start := time.Now()
+	if !Equivalent(long, strings.ReplaceAll(long, "-", "")) || !Equivalent(long, strings.ReplaceAll(long, "-", " ")) {
+		t.Error("400 number compounds: the all-joined or all-split reading refused")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("400 number compounds took %v", d)
 	}
 }

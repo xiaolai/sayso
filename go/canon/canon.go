@@ -20,7 +20,7 @@ import (
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
 // to Canon's output or to Equivalent's verdicts: cache keys and verification provenance record it.
-const CanonVersion = 13 // 13: Equivalent decides each compound and each year pair on its own, and a pair may follow a number across punctuation
+const CanonVersion = 14 // 14: Equivalent cuts beside a number, zero, "and", "a" or "point" word when the other word is inert, and lists 2^8 combinations of a piece
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -38,13 +38,16 @@ func Canon(s string) []string { return texts(canon(s)) }
 // or after punctuation: "1999; twenty ten" holds two years, "2010, 20" no pair
 // "ten twenty". Each side is a graph of its readings, linear in its length, and
 // the two are walked together, so no combination of choices is listed.
-// Compounds beyond maxCompounds with no word between them that Canon reads on
-// its own ("x-ray o-ring ...") are joined or split together.
+// Only a piece of more than maxCompounds compounds in which every space stands
+// between two words that read each other ("twenty-one twenty-one ...": number
+// words, single letters, abbreviations, words that are not letters) is read
+// with its compounds joined or split together.
 func Equivalent(a, b string) bool { return readings(a).meets(readings(b)) }
 
-// maxCompounds bounds the compounds of one piece of text whose combinations are listed: 2^4 readings. A piece beyond
-// it is read with every compound joined or every one split.
-const maxCompounds = 4
+// maxCompounds bounds the compounds of one piece of text whose combinations are listed: 2^8 readings. Pieces are cut
+// at every space Canon reads the same either way, so a piece holds only words that read each other and stays short;
+// a piece beyond the bound is read with every compound joined or every one split.
+const maxCompounds = 8
 
 // tok is a Canon token, and whether punctuation stood before it in the text: Equivalent reads a year pair after a
 // number only across punctuation.
@@ -229,11 +232,13 @@ func cuts(rs []rune) []string {
 }
 
 // separable reports whether Canon reads the words left and right, written with a space between them, as it reads
-// each alone. Every token rule that looks at a neighbour (a run of single letters, "oh" beside a number, "and" in a
-// number, "a" before a scale word, a year pair, a title before a name) needs a token the words cannot make: each is
-// letters, marks, hyphens and apostrophes, after closing punctuation on the left one and opening punctuation on the
-// right one, and no form the word ends (left) or starts (right) with, split or joined, is a number, a scale or zero
-// word, "and", "a", "point" or an abbreviation; and they are not both single letters at the space.
+// each alone. Every token rule that looks at a neighbour needs an active token on both sides of the space: a zero
+// word ("oh", "o") beside a number word, "point" or a single letter; "and" between a scale and a number word; "a"
+// before a scale word; a year pair, two number words; a run of single letters. Abbreviations and titles read a
+// neighbour too. So each word is letters, marks, hyphens and apostrophes, after closing punctuation on the left one
+// and opening punctuation on the right one; every form the word ends (left) or starts (right) with, split or joined,
+// is one Canon token and no abbreviation; when a form on one side is active (edge), every form on the other is inert
+// and no single letter; and the two are not both single letters at the space.
 func separable(left, right string) bool {
 	left = strings.TrimRightFunc(left, func(r rune) bool { return strings.ContainsRune(".,;:!?)]}\"”»…", r) })
 	right = strings.TrimLeftFunc(right, func(r rune) bool { return strings.ContainsRune("([{\"“«¿¡", r) })
@@ -241,18 +246,36 @@ func separable(left, right string) bool {
 	if len(lp) == 0 || len(rp) == 0 || !wordShaped(left) || !wordShaped(right) {
 		return false
 	}
+	var lf, rf []string // the forms at the space
 	for i := range lp {
-		if !inert(strings.Join(lp[i:], "")) {
-			return false
-		}
+		lf = append(lf, strings.Join(lp[i:], ""))
 	}
 	for i := range rp {
-		if !inert(strings.Join(rp[:i+1], "")) {
-			return false
-		}
+		rf = append(rf, strings.Join(rp[:i+1], ""))
 	}
-	single := func(w string) bool { t := canon(w); return len(t) == 1 && len(t[0].text) == 1 }
-	return !single(lp[len(lp)-1]) || !single(rp[0])
+	side := func(forms []string) (ok, active, letter bool) {
+		for _, f := range forms {
+			k, one := edge(f)
+			switch k {
+			case edgeNone:
+				return false, false, false
+			case edgeActive:
+				active = true
+			}
+			letter = letter || one
+		}
+		return true, active, letter
+	}
+	lok, lact, llet := side(lf)
+	rok, ract, rlet := side(rf)
+	switch {
+	case !lok || !rok, lact && (ract || rlet), ract && llet:
+		return false
+	}
+	// The forms nearest the space are the last part of left and the first of right.
+	_, lone := edge(lf[len(lf)-1])
+	_, rone := edge(rf[0])
+	return !lone || !rone
 }
 
 func wordShaped(w string) bool {
@@ -264,20 +287,29 @@ func wordShaped(w string) bool {
 	return true
 }
 
-// inert reports whether the word w is one Canon token that no neighbour rule reads.
-func inert(w string) bool {
+// How a word at a space can take part in a neighbour rule (separable).
+const (
+	edgeNone   = iota // not one Canon token, or an abbreviation: never cut beside it
+	edgeActive        // a number, scale or zero word, "and", "a" or "point": cut only beside an inert word
+	edgeInert         // read the same beside any word
+)
+
+// edge is how w takes part in a neighbour rule, and whether it is a single letter.
+func edge(w string) (kind int, letter bool) {
 	if IsAbbreviation(w) {
-		return false
+		return edgeNone, false
 	}
 	t := canon(w)
 	if len(t) != 1 {
-		return false
+		return edgeNone, false
 	}
-	switch x := t[0].text; {
+	x := t[0].text
+	letter = len(x) == 1
+	switch {
 	case isNumberWord(x), isScale(x), x == "oh", x == "o", x == "and", x == "a", x == "point":
-		return false
+		return edgeActive, letter
 	}
-	return true
+	return edgeInert, letter
 }
 
 // compoundVariants is s with each hyphen between two letters kept or removed, every combination up to maxCompounds,
