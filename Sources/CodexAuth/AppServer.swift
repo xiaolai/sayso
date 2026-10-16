@@ -140,6 +140,8 @@ public final class AppServerClient: @unchecked Sendable {
         public var log: (@Sendable (String) -> Void)?
         /// The child's working directory: an absolute path to an existing folder. nil keeps the caller's.
         public var workingDirectory: String?
+        /// Sends `capabilities.experimentalApi: true` with initialize.
+        public var experimentalAPI: Bool
         /// When set, receives every notification and every server request (already refused), in the order the child
         /// wrote them, one at a time on a thread of its own: the reader never waits for it. A reply may reach its
         /// caller before the handler has seen the events written before it. Events still queued beyond 8 MiB (a
@@ -150,7 +152,7 @@ public final class AppServerClient: @unchecked Sendable {
         public init(
             bin: String, codexHome: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment,
             timeout: TimeInterval, clientName: String = "sayso", guardStart: (@Sendable (String) throws -> Void)? = nil,
-            log: (@Sendable (String) -> Void)? = nil, workingDirectory: String? = nil,
+            log: (@Sendable (String) -> Void)? = nil, workingDirectory: String? = nil, experimentalAPI: Bool = false,
             onEvent: (@Sendable (AppServerEvent) -> Void)? = nil
         ) {
             self.bin = bin
@@ -161,6 +163,7 @@ public final class AppServerClient: @unchecked Sendable {
             self.guardStart = guardStart
             self.log = log
             self.workingDirectory = workingDirectory
+            self.experimentalAPI = experimentalAPI
             self.onEvent = onEvent
         }
 
@@ -228,9 +231,11 @@ public final class AppServerClient: @unchecked Sendable {
                 onEvent: cfg.onEvent))
         onSpawn?(c)
         do {
+            var capabilities: [String: Any] = [:]
+            if cfg.experimentalAPI { capabilities["experimentalApi"] = true }
             let hello = try c.core.call(
                 "initialize",
-                params: ["clientInfo": ["name": cfg.clientName, "version": "0"], "capabilities": [String: Any]()])
+                params: ["clientInfo": ["name": cfg.clientName, "version": "0"], "capabilities": capabilities])
             // A null result reads as an empty one, as in Go.
             guard let object = object(hello), let agent = optionalString(object["userAgent"]) else {
                 throw AppServerError("Codex app-server sent an unexpected initialize result")

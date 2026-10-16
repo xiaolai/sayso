@@ -84,7 +84,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.
 - **Sequence.**
-  1. `initialize` with `clientInfo`; the version is the number after the first `/` in `userAgent`. A version below
+  1. `initialize` with `clientInfo` and `capabilities`, which is empty unless the caller asks for the experimental
+     API (`{"experimentalApi": true}`); the version is the number after the first `/` in `userAgent`. A version below
      `0.162.0` is `codex-too-old`. No parsable version proceeds.
   2. `initialized` (a notification).
   3. `getAuthStatus {includeToken: false, refreshToken: false}`. `requiresOpenaiAuth: false` is

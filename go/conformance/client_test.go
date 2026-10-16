@@ -19,9 +19,10 @@ import (
 
 // clientSetup drives the app-server client itself rather than a credentials object (spec/fixtures.md).
 type clientSetup struct {
-	Handler string `json:"handler"` // "" (none), "record", or "block" (never returns until the case ends)
-	Dir     string `json:"dir"`     // "" (none), "work", "relative", "missing" or "file"
-	Calls   []struct {
+	Handler         string `json:"handler"` // "" (none), "record", or "block" (never returns until the case ends)
+	Dir             string `json:"dir"`     // "" (none), "work", "relative", "missing" or "file"
+	ExperimentalAPI bool   `json:"experimentalAPI"`
+	Calls           []struct {
 		Method string         `json:"method"`
 		Params map[string]any `json:"params"`
 	} `json:"calls"`
@@ -38,7 +39,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	block := make(chan struct{})
 	t.Cleanup(func() { close(block) })
 	cfg := codexapp.Config{Bin: filepath.Join(w.binDir, "codex"), Env: w.cfg.Env, Timeout: w.cfg.Timeout,
-		Logger: w.cfg.Logger, Guard: w.cfg.Guard}
+		Logger: w.cfg.Logger, Guard: w.cfg.Guard, ExperimentalAPI: s.ExperimentalAPI}
 	switch s.Handler {
 	case "":
 	case "record":

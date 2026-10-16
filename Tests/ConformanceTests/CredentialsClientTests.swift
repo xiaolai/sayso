@@ -18,7 +18,7 @@ extension CredentialWorld {
             bin: binDir + "/codex", environment: self.cfg.environment ?? [:], timeout: self.cfg.timeout,
             guardStart: { [root] p in
                 guard p.hasPrefix(root + "/") else { throw FixtureError("a path outside the case's temporary folder") }
-            })
+            }, experimentalAPI: s["experimentalAPI"] as? Bool ?? false)
         switch s["handler"] as? String ?? "" {
         case "": break
         case "record": config.onEvent = { e in events.value.append(e) }

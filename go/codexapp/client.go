@@ -60,6 +60,8 @@ type Config struct {
 	Guard func(bin string) error
 	// Dir is the child's working directory: an absolute path to an existing folder. "" keeps the caller's.
 	Dir string
+	// ExperimentalAPI sends capabilities.experimentalApi: true with initialize.
+	ExperimentalAPI bool
 	// OnEvent, when set, receives every notification and every server request (already refused), in the order the
 	// child wrote them, one at a time from a goroutine of its own: the reader never waits for it. A reply may reach
 	// its caller before OnEvent has seen the events written before it. Events still queued beyond 8 MiB (a handler
@@ -254,9 +256,13 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if name == "" {
 		name = "sayso"
 	}
+	capabilities := map[string]any{}
+	if cfg.ExperimentalAPI {
+		capabilities["experimentalApi"] = true
+	}
 	init := map[string]any{
 		"clientInfo":   map[string]any{"name": name, "version": "0"},
-		"capabilities": map[string]any{},
+		"capabilities": capabilities,
 	}
 	var hello json.RawMessage
 	if err := k.call(ctx, "initialize", init, &hello); err != nil {

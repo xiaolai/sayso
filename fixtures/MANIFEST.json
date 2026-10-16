@@ -1,5 +1,5 @@
 {
- "count": 788,
+ "count": 790,
  "fixtures": [
   {
    "id": "app-ready",
@@ -489,6 +489,18 @@
   },
   {
    "id": "app-client-working-directory-file",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-experimental-api",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-default-capabilities",
    "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []
