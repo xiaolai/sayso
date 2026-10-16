@@ -491,7 +491,9 @@ func (k *core) writeLoop() {
 			case o.refusal:
 				err := k.writeBytes(context.Background(), o.b, time.Now().Add(k.timeout))
 				k.mu.Lock()
-				k.refusalBytes -= len(o.b)
+				if k.failure == nil { // a failure released the counts with the queue
+					k.refusalBytes -= len(o.b)
+				}
 				k.mu.Unlock()
 				if err != nil {
 					k.fail(codexError("Codex app-server did not read the answer to a server request", nil))
@@ -520,13 +522,17 @@ func (k *core) deliver(id string, resp response) {
 	}
 }
 
-// fail marks the client unusable and releases every pending call.
+// fail marks the client unusable and releases every pending call. The outbound queue is dropped with it: nothing is
+// written after a failure, so a failed or closed client keeps none of the encoded messages, and each caller still
+// queued sees dead and returns the failure.
 func (k *core) fail(err error) {
 	k.mu.Lock()
 	if k.failure == nil {
 		k.failure = err
 		close(k.dead)
 	}
+	clear(k.out)
+	k.out, k.refusalBytes = nil, 0
 	k.mu.Unlock()
 }
 

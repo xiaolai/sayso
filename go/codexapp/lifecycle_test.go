@@ -77,7 +77,7 @@ func TestEventsQueuedBeforeAFailureAreDelivered(t *testing.T) {
 // Once Close has begun no queued event is admitted, the queue and its counts are released, and Close does not wait
 // for the handler already running.
 func TestCloseAdmitsNoFurtherEvent(t *testing.T) {
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	baseline := goleak.IgnoreCurrent()
 	script := fakeCodex(t, "for m in ['first', 'second', 'third']:\n"+
 		"    print(json.dumps({'method': m, 'params': {'pad': 'x' * 1000}}), flush=True)\n"+
 		"time.sleep(30)\n")
@@ -106,7 +106,9 @@ func TestCloseAdmitsNoFurtherEvent(t *testing.T) {
 		t.Errorf("after Close: %d events, %d bytes, count %d still held", held, bytes, count)
 	}
 	close(r.release)
-	time.Sleep(50 * time.Millisecond) // a second event would be admitted at once; none may be
+	// The barrier is the event goroutine's exit: once it has ended, nothing more can be delivered, so what it
+	// delivered is final. A second event would have been admitted before it ended; none may be.
+	goleak.VerifyNone(t, baseline)
 	if got := strings.Join(r.seen(), ","); got != "first" {
 		t.Errorf("delivered %s, want first only", got)
 	}
@@ -230,5 +232,55 @@ func TestUnwritableRefusalFailsTheClient(t *testing.T) {
 	start := time.Now()
 	if err := c.Call(t.Context(), "echo", nil, nil); err == nil || time.Since(start) > 100*time.Millisecond {
 		t.Errorf("a call after the failure: %v after %v", err, time.Since(start))
+	}
+}
+
+// A client closed as soon as it starts ends at once and keeps nothing queued.
+func TestImmediateClose(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	script := fakeCodex(t, "for line in sys.stdin:\n    pass\n")
+	r := newRecorder()
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second, OnEvent: r.handle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c.k.mu.Lock()
+	out, events := len(c.k.out), len(c.k.events)
+	c.k.mu.Unlock()
+	if out != 0 || events != 0 {
+		t.Errorf("after Close: %d messages and %d events kept", out, events)
+	}
+	if err := c.Call(t.Context(), "echo", nil, nil); err == nil {
+		t.Error("a call after Close succeeded")
+	}
+}
+
+// After an overflow, the events held before it are still delivered once the handler is released, before Close; the
+// event that overflowed and everything after it are not.
+func TestEventsHeldAtAnOverflowAreDelivered(t *testing.T) {
+	baseline := goleak.IgnoreCurrent()
+	script := fakeCodex(t, "call = json.loads(sys.stdin.readline())\n"+
+		"sys.stdout.write(''.join(json.dumps({'method': 'e%d' % i}) + '\\n' for i in range("+strconv.Itoa(maxEvents+10)+")))\n"+
+		"sys.stdout.write(json.dumps({'id': call['id'], 'result': {}}) + '\\n')\n"+
+		"sys.stdout.flush()\n"+
+		"time.sleep(30)\n")
+	r := newRecorder()
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 8 * time.Second, OnEvent: r.handle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Call(t.Context(), "echo", nil, nil); err == nil || !strings.Contains(err.Error(), "faster than the handler") {
+		t.Fatalf("call: %v, want the overflow", err)
+	}
+	close(r.release) // before Close: the held events drain
+	waitFor(t, "the held events", func() bool { return len(r.seen()) == maxEvents })
+	_ = c.Close()
+	goleak.VerifyNone(t, baseline) // the event goroutine has ended: the count is final
+	seen := r.seen()
+	if len(seen) != maxEvents || seen[0] != "e0" || seen[maxEvents-1] != "e"+strconv.Itoa(maxEvents-1) {
+		t.Errorf("delivered %d events (first %q, last %q), want e0..e%d", len(seen), seen[0], seen[len(seen)-1], maxEvents-1)
 	}
 }

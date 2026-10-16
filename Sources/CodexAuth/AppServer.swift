@@ -351,6 +351,10 @@ public final class AppServerClient: @unchecked Sendable {
 
     /// Whether the child has been reaped.
     var hasExited: Bool { core.hasExited }
+
+    /// What the client still holds, for tests: the messages waiting to be written, the refusal bytes charged, and the
+    /// events waiting for the handler with their charge.
+    var held: (outbound: Int, refusalBytes: Int, events: Int, eventBytes: Int) { core.held }
 }
 
 /// The child's process, pipes, readers and pending calls.
@@ -378,12 +382,11 @@ final class AppServerCore: @unchecked Sendable {
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
     /// Every message waiting to be written, requests and answers to server requests alike, in the order they were
-    /// queued, from `outHead` on; ``writeLoop()`` alone writes, so the reader never waits on the child's input and a
+    /// queued; ``writeLoop()`` alone writes, so the reader never waits on the child's input and a
     /// request is written after every answer queued before it and before every answer queued after. `refusalBytes`
     /// is the size of the answers not yet written (the one being written included), at most `refusalCap`. Guarded
     /// by `lock`.
-    private var out: [Outbound] = []
-    private var outHead = 0
+    private var out = FIFO<Outbound>()
     private var refusalBytes = 0
     private let outWake = DispatchSemaphore(value: 0)
     /// Bounds the refusals queued for a child that sends server requests without reading the answers.
@@ -392,12 +395,11 @@ final class AppServerCore: @unchecked Sendable {
     /// closes stdin.
     private static let closeFlush: TimeInterval = 0.1
 
-    /// The events waiting for `onEvent`, from `eventHead` on, delivered in order by ``eventLoop()``; `eventBytes`
+    /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes`
     /// and `eventCount` are what they are charged, the one being delivered included, at most `eventCap` and
     /// `maxEvents`. Guarded by `lock`.
     private let onEvent: (@Sendable (AppServerEvent) -> Void)?
-    private var events: [AppServerEvent] = []
-    private var eventHead = 0
+    private var events = FIFO<AppServerEvent>()
     private var eventBytes = 0
     private var eventCount = 0
     private let eventWake = DispatchSemaphore(value: 0)
@@ -556,8 +558,7 @@ final class AppServerCore: @unchecked Sendable {
         let first = lock.withLock { () -> Bool in
             defer {
                 closeStarted = true
-                events = []
-                eventHead = 0
+                events.removeAll()
                 eventBytes = 0
                 eventCount = 0
             }
@@ -622,6 +623,10 @@ final class AppServerCore: @unchecked Sendable {
     }
 
     var hasExited: Bool { reaped(by: .now()) }
+
+    var held: (outbound: Int, refusalBytes: Int, events: Int, eventBytes: Int) {
+        lock.withLock { (out.count, refusalBytes, events.count, eventBytes) }
+    }
 
     /// Whether the child has exited by `deadline` (it stays unreaped until close); the semaphore keeps its signal for
     /// the next look.
@@ -696,13 +701,7 @@ final class AppServerCore: @unchecked Sendable {
                 }
                 let next = lock.withLock { () -> Next in
                     if failure != nil { return .stop }
-                    while outHead < out.count {
-                        let o = out[outHead]
-                        outHead += 1
-                        if outHead > 1024 && outHead * 2 > out.count {  // released in O(1) amortised
-                            out.removeFirst(outHead)
-                            outHead = 0
-                        }
+                    while let o = out.popFirst() {
                         if o.state == .abandoned { continue }
                         o.state = .started
                         return .write(o)
@@ -717,7 +716,9 @@ final class AppServerCore: @unchecked Sendable {
                     o.done.signal()
                 } else if o.isRefusal {
                     let ok = (try? write(o.data, deadline: .now() + timeout)) != nil
-                    lock.withLock { refusalBytes -= o.data.count }
+                    lock.withLock {
+                        if failure == nil { refusalBytes -= o.data.count }  // a failure released the counts with the queue
+                    }
                     if !ok {
                         fail(AppServerError("Codex app-server did not read the answer to a server request"))
                         return
@@ -935,7 +936,8 @@ final class AppServerCore: @unchecked Sendable {
         return n.int64Value
     }
 
-    /// Marks the client unusable and releases every pending call.
+    /// Marks the client unusable and releases every pending call. The outbound queue is dropped with it: nothing is
+    /// written after a failure, so a failed or closed client keeps none of the encoded messages.
     func fail(_ e: AppServerError) {
         lock.withLock {
             if failure == nil { failure = e }
@@ -946,11 +948,13 @@ final class AppServerCore: @unchecked Sendable {
             }
             pending.removeAll()
             // Every caller still waiting for its turn to write is released with the failure.
-            for o in out[outHead...] where o.state == .queued && !o.isRefusal {
+            while let o = out.popFirst() {
+                guard o.state == .queued, !o.isRefusal else { continue }  // a refusal has no caller
                 o.state = .abandoned
                 o.error = failure
                 o.done.signal()
             }
+            refusalBytes = 0
         }
         outWake.signal()  // the writer ends
         eventWake.signal()  // the event loop delivers what is queued, then ends
@@ -1002,13 +1006,7 @@ final class AppServerCore: @unchecked Sendable {
             drain: while true {
                 let next = lock.withLock { () -> Next in
                     if closeStarted { return .stop }
-                    guard eventHead < events.count else { return failure != nil ? .stop : .wait }
-                    let e = events[eventHead]
-                    eventHead += 1
-                    if eventHead > 1024 && eventHead * 2 > events.count {  // released in O(1) amortised
-                        events.removeFirst(eventHead)
-                        eventHead = 0
-                    }
+                    guard let e = events.popFirst() else { return failure != nil ? .stop : .wait }
                     return .deliver(e)
                 }
                 switch next {
@@ -1148,3 +1146,35 @@ private func bool(_ v: Any) -> Bool? {
     return n.boolValue
 }
 #endif
+
+/// A first-in, first-out queue that lets go of each element as it is taken, so what it holds is only what it still
+/// queues: a consumed slot is emptied at once, and the emptied front is cut off once it is most of the storage, which
+/// keeps taking O(1) amortised.
+struct FIFO<Element> {
+    private var slots: [Element?] = []
+    private var head = 0
+
+    var count: Int { slots.count - head }
+
+    mutating func append(_ e: Element) { slots.append(e) }
+
+    mutating func popFirst() -> Element? {
+        guard head < slots.count else { return nil }
+        let e = slots[head]
+        slots[head] = nil
+        head += 1
+        if head == slots.count {
+            slots = []
+            head = 0
+        } else if head > 1024 && head * 2 > slots.count {
+            slots.removeFirst(head)
+            head = 0
+        }
+        return e
+    }
+
+    mutating func removeAll() {
+        slots = []
+        head = 0
+    }
+}
