@@ -230,9 +230,37 @@ enum AuthFile {
 
     private static func isNull(_ raw: Data) -> Bool { raw.elementsEqual("null".utf8) }
 
-    /// A JSON string's value; nil for any other value.
+    /// A JSON string's value; nil for any other value, told from its first byte: an object or array is never decoded,
+    /// so a credential nested in one never becomes a Foundation string. Only a string reaches the decoder.
     private static func stringValue(_ raw: Data) -> String? {
-        (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])) as? String
+        guard raw.first == UInt8(ascii: "\"") else { return nil }
+        decoded.saw(raw)
+        return (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])) as? String
+    }
+
+    /// For tests: whether a value holding the watched bytes was handed to the Foundation decoder.
+    static let decoded = DecodeWatch()
+
+    final class DecodeWatch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var watched: [UInt8] = []
+        private var seen = false
+
+        func watch(_ s: String) { lock.withLock { (watched, seen) = (Array(s.utf8), false) } }
+
+        func saw(_ raw: Data) {
+            lock.withLock {
+                guard !watched.isEmpty, !seen else { return }
+                seen = raw.withUnsafeBytes { b in
+                    b.count >= watched.count && (0...(b.count - watched.count)).contains { i in
+                        watched.indices.allSatisfy { b[i + $0] == watched[$0] }
+                    }
+                }
+            }
+        }
+
+        /// Whether the watched bytes were seen since `watch`; stops watching.
+        func take() -> Bool { lock.withLock { defer { (watched, seen) = ([], false) }; return seen } }
     }
 }
 
