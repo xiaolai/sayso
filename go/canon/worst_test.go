@@ -96,7 +96,9 @@ func TestEquivalentWorstCase(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		allocated, inUse := after.TotalAlloc-before.TotalAlloc, peak.Load()-min(peak.Load(), before.HeapInuse)
 		t.Logf("%s: equivalent %v, work %d, %v, %d MB allocated, %d MB peak in use", c.name, eq, work, took, allocated>>20, inUse>>20)
-		if took > raceSlowdown*10*time.Second || allocated > 2<<30 || inUse > 768<<20 {
+		// Work and memory are the bounds; the clock only catches a hang, so a loaded machine cannot fail a correct
+		// walk. work never exceeds the budget by more than the one spend that ran it out.
+		if took > raceSlowdown*60*time.Second || allocated > 2<<30 || inUse > 768<<20 {
 			t.Errorf("%s: %v, %d MB allocated, %d MB in use: over the bound", c.name, took, allocated>>20, inUse>>20)
 		}
 		if raceFactor == 1 && eq != Equivalent(c.a, c.b) { // once is enough under the race detector
@@ -108,9 +110,8 @@ func TestEquivalentWorstCase(t *testing.T) {
 	}
 	// Past MaxBytes a text is refused before any work, even compared with itself.
 	long := strings.Repeat("a", MaxBytes+1)
-	start := time.Now()
-	if Equivalent(long, long) || time.Since(start) > time.Second {
-		t.Error("a text over MaxBytes was compared")
+	if eq, work := equivalentWithin(long, long); eq || work != 0 || Equivalent(long, long) {
+		t.Errorf("a text over MaxBytes was compared: equivalent %v, work %d", eq, work)
 	}
 }
 

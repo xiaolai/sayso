@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 	"unicode"
 )
 
@@ -233,15 +232,13 @@ func TestEquivalentScales(t *testing.T) {
 			b.WriteString("e mail longterm one thousand nine hundred ninety nine, ")
 		}
 	}
-	start := time.Now()
-	if !Equivalent(a.String(), b.String()) {
-		t.Error("Equivalent = false, want true")
+	// The work counter, not a clock, is the measure: each unit costs constant time and memory, and a clock on a
+	// loaded machine fails a correct walk. Work linear in the input means nothing was enumerated.
+	if eq, work := equivalentWithin(a.String(), b.String()); !eq || work > 8*(a.Len()+b.Len()) {
+		t.Errorf("Equivalent = %v with work %d, want true within %d", eq, work, 8*(a.Len()+b.Len()))
 	}
 	if Equivalent(a.String(), b.String()+" more") {
 		t.Error("Equivalent with an added word = true, want false")
-	}
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("took %v", d)
 	}
 }
 
@@ -338,10 +335,9 @@ func TestManyORings(t *testing.T) {
 			t.Errorf("Equivalent(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
 	}
-	start := time.Now()
 	long := strings.TrimSpace(strings.Repeat("o-ring a-list oh-well and-or ", 300))
-	if !Equivalent(long, strings.ReplaceAll(long, "-", "")) || time.Since(start) > 10*time.Second {
-		t.Errorf("1,200 compounds with active edges: took %v", time.Since(start))
+	if eq, work := equivalentWithin(long, strings.ReplaceAll(long, "-", "")); !eq || work > 16*len(long) {
+		t.Errorf("1,200 compounds with active edges: equivalent %v with work %d, want true within %d", eq, work, 16*len(long))
 	}
 }
 
@@ -361,7 +357,6 @@ func TestInteractingCompounds(t *testing.T) {
 		}
 		return strings.Join(a, " "), strings.Join(b, " "), strings.Join(b[1:], " ")
 	}
-	start := time.Now()
 	for _, c := range []struct {
 		word string
 		n    int
@@ -393,10 +388,9 @@ func TestInteractingCompounds(t *testing.T) {
 	}
 	long.WriteString("ab")
 	mixedLong.WriteString("ab")
-	if !Equivalent(long.String(), mixedLong.String()) || Equivalent(long.String(), mixedLong.String()+"x") {
-		t.Error("one word of 200 compounds: a mixed reading refused or a longer one accepted")
-	}
-	if d := time.Since(start); d > 20*time.Second {
-		t.Errorf("took %v", d)
+	// Each of the 20,301 spans costs a few units; listing the readings would cost 2^200.
+	eq, work := equivalentWithin(long.String(), mixedLong.String())
+	if !eq || work > 10*20301 || Equivalent(long.String(), mixedLong.String()+"x") {
+		t.Errorf("one word of 200 compounds: equivalent %v with work %d (want true within %d), or a longer one accepted", eq, work, 10*20301)
 	}
 }
