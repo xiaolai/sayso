@@ -47,4 +47,7 @@ func TestInSkipsRuntimeFramesAndRunningGoroutines(t *testing.T) {
 	if In(dump, "m/realtime.(*Session).readLoo") {
 		t.Error("a name that is only a prefix matched")
 	}
+	if n := Count(dump+"\n\n"+dump, "realtime.(*Session).readLoop"); n != 2 {
+		t.Errorf("Count found %d parked readLoops, want 2", n)
+	}
 }

@@ -18,25 +18,35 @@ const Limit = 10 * time.Second
 // "realtime.(*Session).readLoop".
 func Wait(t testing.TB, fn string) {
 	t.Helper()
+	WaitN(t, fn, 1)
+}
+
+// WaitN is Wait for at least n such goroutines.
+func WaitN(t testing.TB, fn string, n int) {
+	t.Helper()
 	buf := make([]byte, 1<<20)
 	for deadline := time.Now().Add(Limit); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-		n := runtime.Stack(buf, true)
-		for n == len(buf) { // truncated: retry with room for every goroutine
+		size := runtime.Stack(buf, true)
+		for size == len(buf) { // truncated: retry with room for every goroutine
 			buf = make([]byte, 2*len(buf))
-			n = runtime.Stack(buf, true)
+			size = runtime.Stack(buf, true)
 		}
-		if In(string(buf[:n]), fn) {
+		if Count(string(buf[:size]), fn) >= n {
 			return
 		}
 	}
-	t.Fatalf("no goroutine was blocked in %s within %v", fn, Limit)
+	t.Fatalf("fewer than %d goroutines were blocked in %s within %v", n, fn, Limit)
 }
 
 // In reports whether dump, as runtime.Stack writes it for every goroutine, has a goroutine blocked in a select or on
 // a channel whose innermost frame outside the runtime is fn.
-func In(dump, fn string) bool {
+func In(dump, fn string) bool { return Count(dump, fn) > 0 }
+
+// Count is how many goroutines of dump In would find.
+func Count(dump, fn string) int {
+	n := 0
 	for _, g := range strings.Split(dump, "\n\n") {
-		header, frames, _ := strings.Cut(g, "\n")
+		header, frames, _ := strings.Cut(strings.TrimLeft(g, "\n"), "\n")
 		if !strings.Contains(header, "[select") && !strings.Contains(header, "[chan ") {
 			continue
 		}
@@ -45,10 +55,10 @@ func In(dump, fn string) bool {
 				continue
 			}
 			if strings.Contains(line, "/"+fn+"(") || strings.HasPrefix(line, fn+"(") {
-				return true
+				n++
 			}
 			break
 		}
 	}
-	return false
+	return n
 }

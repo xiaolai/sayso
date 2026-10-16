@@ -390,6 +390,33 @@ func TestSendEncodeFailureHasAFixedMessage(t *testing.T) {
 // A write stalled on a peer that stopped reading does not hold later sends past their deadline, and Close ends both
 // with ErrClosed.
 func TestStalledWriteDoesNotHoldLaterSends(t *testing.T) {
+	s, first := stalledSession(t, context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	begin := time.Now()
+	err := s.Send(ctx, map[string]string{"type": "y"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second Send = %v, want its deadline", err)
+	}
+	if d := time.Since(begin); d > 2*time.Second {
+		t.Fatalf("second Send took %v", d)
+	}
+	_ = s.Close()
+	select {
+	case err := <-first:
+		if !errors.Is(err, realtime.ErrClosed) {
+			t.Fatalf("stalled Send after Close = %v, want ErrClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stalled Send did not end after Close")
+	}
+}
+
+// stalledSession opens a session to a peer that never reads and sends large events with ctx until a write stalls:
+// the socket buffers are full, and a write has started and not finished for half a second. No event marks a stall,
+// so it is the absence of progress, sampled. The stalled Send's error arrives on the channel.
+func stalledSession(t *testing.T, ctx context.Context) (*realtime.Session, <-chan error) {
+	t.Helper()
 	stopped := make(chan struct{})
 	hs := fakeopenai.WebSocket(t, func(c *websocket.Conn) { <-stopped }, nil) // never reads
 	t.Cleanup(func() { close(stopped) })
@@ -410,14 +437,13 @@ func TestStalledWriteDoesNotHoldLaterSends(t *testing.T) {
 	first := make(chan error, 1)
 	go func() {
 		for {
-			if err := s.Send(context.Background(), big); err != nil {
+			if err := s.Send(ctx, big); err != nil {
 				first <- err
 				return
 			}
 			sent.Add(1)
 		}
 	}()
-	// The socket buffers fill: a write has started and has not finished for a while.
 	for quiet, start := 0, time.Now(); quiet < 5; time.Sleep(100 * time.Millisecond) {
 		if started.Load() == sent.Load()+1 {
 			quiet++
@@ -428,25 +454,7 @@ func TestStalledWriteDoesNotHoldLaterSends(t *testing.T) {
 			t.Fatal("writes never stalled")
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	begin := time.Now()
-	err = s.Send(ctx, map[string]string{"type": "y"})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("second Send = %v, want its deadline", err)
-	}
-	if d := time.Since(begin); d > 2*time.Second {
-		t.Fatalf("second Send took %v", d)
-	}
-	_ = s.Close()
-	select {
-	case err := <-first:
-		if !errors.Is(err, realtime.ErrClosed) {
-			t.Fatalf("stalled Send after Close = %v, want ErrClosed", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the stalled Send did not end after Close")
-	}
+	return s, first
 }
 
 // A redirected handshake is refused with its reply kept: protocol, its status and request id, and no Location in
