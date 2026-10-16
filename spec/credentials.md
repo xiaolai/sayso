@@ -225,6 +225,9 @@ kept, and nothing else. Outside this boundary are:
   values;
 - the member names Swift decodes into keys, which are not secrets;
 - the held token or secret itself, until it is released.
+- copies of CPU registers the runtime or the kernel saves when it interrupts a thread, such as Go's asynchronous
+  preemption, which on amd64 saves the vector registers that bytes pass through while they are scanned or
+  copied (the Go memory-scan test binaries set `asyncpreemptoff=1`, so they measure the package's own buffers).
 
 This bounds what the package leaves in memory it freed. It is no protection against a process that can read live
 memory.

@@ -14,6 +14,9 @@ import (
 	"github.com/xiaolai/sayso/go/secret"
 )
 
+// The memory scan runs without asynchronous preemption, which saves registers where nothing can wipe them.
+func TestMain(m *testing.M) { memscan.Main(m) }
+
 // The no-copy tests build what the child sends in a memory scan's pages (package memscan) and count, after, how
 // often each needle, and each needle's first 16 bytes, are found in the process's writable memory, dropped garbage
 // included: a fragment left in a buffer outgrown mid-needle holds the first bytes without the rest.

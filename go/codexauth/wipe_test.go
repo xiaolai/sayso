@@ -13,6 +13,9 @@ import (
 	"github.com/xiaolai/sayso/go/internal/prereq"
 )
 
+// The memory scan runs without asynchronous preemption, which saves registers where nothing can wipe them.
+func TestMain(m *testing.M) { memscan.Main(m) }
+
 // No byte of auth.json outlives a read except the access token kept: every buffer the reader reads it into,
 // validates it in, or decodes a member of, is a view of the one cleared buffer or is cleared before it is dropped. A
 // scan of the process's writable memory, dropped garbage included, finds no copy of a value the reader did not keep,

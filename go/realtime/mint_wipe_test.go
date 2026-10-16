@@ -22,6 +22,9 @@ import (
 	"github.com/xiaolai/sayso/go/secret"
 )
 
+// The memory scan runs without asynchronous preemption, which saves registers where nothing can wipe them.
+func TestMain(m *testing.M) { memscan.Main(m) }
+
 // No byte of a mint reply outlives the mint but the secret it returns: the reply is read into one buffer, which is
 // cleared on every exit and whose outgrown predecessors were cleared, the value is decoded into a buffer that is
 // cleared, and a refusal's body, which openaihttp.CheckResponse reads, is cleared too. The transport below the origin
