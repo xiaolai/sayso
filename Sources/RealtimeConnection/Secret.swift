@@ -8,6 +8,14 @@ public enum Secret {
 
     private static let registry = Registry()
 
+    /// `date` when it is finite; otherwise a definite date: NaN and minus infinity are `Date.distantPast` (an expiry
+    /// that has long passed, never a moment that is both expired and not), plus infinity is `Date.distantFuture`.
+    static func definite(_ date: Date) -> Date {
+        let t = date.timeIntervalSince1970
+        if t.isFinite { return date }
+        return t == .infinity ? .distantFuture : .distantPast
+    }
+
     /// Adds `secret` to the scrub list. Empty strings are ignored. The list only grows: a secret seen once stays secret.
     public static func register(_ secret: String) {
         guard !secret.isEmpty else { return }
@@ -139,11 +147,12 @@ public struct Token: Sendable, Equatable, CustomStringConvertible, CustomDebugSt
     public let plan: String
     public let source: String
 
-    /// Registers `bearer` with the scrubber.
+    /// Registers `bearer` with the scrubber. A non-finite expiry is made definite (``Secret/definite(_:)``): NaN and
+    /// minus infinity are long past, so the token counts as expired; plus infinity is the distant future.
     public init(bearer: String, expires: Date?, plan: String = "", source: String = "") {
         Secret.register(bearer)
         self.bearer = bearer
-        self.expires = expires
+        self.expires = expires.map(Secret.definite)
         self.plan = plan
         self.source = source
     }
@@ -172,16 +181,18 @@ public struct ClientSecret: Sendable, Equatable, CustomStringConvertible, Custom
     /// The expiry as a `Date`. A `Date` is a `Double`, which loses whole seconds beyond 2^53; ``expiresAtUnix`` keeps
     /// them.
     public let expiresAt: Date
-    /// The expiry in Unix seconds exactly as minted (`expires_at`), as Go keeps it.
+    /// The expiry in Unix seconds exactly as minted (`expires_at`), as Go keeps it (`ExpiresAtUnix`).
     public let expiresAtUnix: Int64
 
-    /// Registers `bearer` with the scrubber. ``expiresAtUnix`` is `expiresAt` rounded down to a whole second,
-    /// saturated at the bounds of Int64.
+    /// Registers `bearer` with the scrubber. A non-finite `expiresAt` is made definite first
+    /// (``Secret/definite(_:)``), so the secret compares equal to itself and both expiries agree; ``expiresAtUnix``
+    /// is the result rounded down to a whole second, saturated at the bounds of Int64.
     public init(bearer: String, expiresAt: Date) {
         Secret.register(bearer)
         self.bearer = bearer
-        self.expiresAt = expiresAt
-        self.expiresAtUnix = Self.unixSeconds(expiresAt)
+        let at = Secret.definite(expiresAt)
+        self.expiresAt = at
+        self.expiresAtUnix = Self.unixSeconds(at)
     }
 
     /// Registers `bearer` with the scrubber and keeps `expiresAtUnix` exactly.
@@ -193,10 +204,11 @@ public struct ClientSecret: Sendable, Equatable, CustomStringConvertible, Custom
     }
 
     /// `date` in whole Unix seconds, rounded down; saturated rather than trapping beyond Int64 (2^63 itself is out
-    /// of range, and `Double(Int64.max)` rounds up to it).
+    /// of range, and `Double(Int64.max)` rounds up to it). NaN, which ``Secret/definite(_:)`` never leaves, is the
+    /// smallest value: long expired.
     static func unixSeconds(_ date: Date) -> Int64 {
         let t = date.timeIntervalSince1970.rounded(.down)
-        if t.isNaN { return 0 }
+        if t.isNaN { return .min }
         if t >= 0x1p63 { return .max }
         if t < -0x1p63 { return .min }
         return Int64(t)
