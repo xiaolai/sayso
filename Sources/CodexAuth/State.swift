@@ -38,6 +38,11 @@ public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomString
     /// For a refresh that failed or a call the backoff refused, when the next refresh may run; nil otherwise. The
     /// refusal's `cause` is the failure that started the wait.
     public internal(set) var retryAt: Date?
+    /// For a failure whose cause is a Codex start that failed once the child was running (the refusal's included),
+    /// what the child wrote to stderr, as ``AppServerError/stderr``; "" otherwise. Never part of ``description`` or
+    /// reflection.
+    public var stderr: String { Secret.scrub(capturedStderr) }
+    var capturedStderr = ""
 
     public init(
         _ state: CodexAuthState, mode: String = "", codexVersion: String = "", message: String = "",

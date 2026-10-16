@@ -14,6 +14,8 @@ final class CredentialsTests: XCTestCase {
         let fake = Fixtures.root.deletingLastPathComponent().appendingPathComponent("tools/fake-app-server.py").path
         XCTAssertTrue(FileManager.default.fileExists(atPath: fake), "the fake app-server is missing")
         try runFixtures("credentials") { c in
+            let unknown = CredentialWorld.unknownMembers(c.object)
+            guard unknown.isEmpty else { return unknown.joined(separator: "; ") }
             let world = try CredentialWorld(c.object["setup"] as? [String: Any] ?? [:], python: python, fake: fake)
             defer { world.cleanUp() }
             let problems: [String]
@@ -42,6 +44,7 @@ final class Box<T>: @unchecked Sendable {
 }
 
 /// Runs async work from a synchronous test body; `cancelAfter` cancels the work that many seconds after it starts.
+/// Work still running after ``caseWait`` is cancelled and fails the case.
 func blocking<T: Sendable>(
     cancelAfter: TimeInterval? = nil, _ body: @escaping @Sendable () async throws -> T
 ) throws -> T {
@@ -52,12 +55,41 @@ func blocking<T: Sendable>(
         done.signal()
     }
     if let cancelAfter { DispatchQueue.global().asyncAfter(deadline: .now() + cancelAfter) { task.cancel() } }
-    done.wait()
+    guard done.waited(caseWait) else {
+        task.cancel()
+        throw FixtureError("the case's async work did not finish within \(Int(caseWait)) s")
+    }
     return try result.value!.get()
 }
 
 /// One case's temporary machine: a home folder, the codex installation and the fake's record.
 final class CredentialWorld {
+    /// The case members, setup keys, file, client and step members this harness reads (spec/fixtures.md), as
+    /// problems for any other; the expectation keys are checked as they are read.
+    static func unknownMembers(_ c: [String: Any]) -> [String] {
+        let setup = c["setup"] as? [String: Any]
+        var p = FakeOpenAI.unknownKeys("case", c, FakeOpenAI.caseHead.union(["setup", "expect", "steps"]))
+        p += FakeOpenAI.unknownKeys(
+            "setup", setup,
+            [
+                "now", "marginSeconds", "source", "codex", "inheritedPath", "inheritedEnv", "codexHome", "file",
+                "retry", "timeoutMs", "cancelAfterMs", "server", "client",
+            ])
+        for name in ["file", "retry"] {
+            p += FakeOpenAI.unknownKeys(
+                "setup.\(name)", setup?[name] as? [String: Any], ["kind", "json", "raw", "hex", "rawRepeat", "padTo"])
+        }
+        let client = setup?["client"] as? [String: Any]
+        p += FakeOpenAI.unknownKeys("setup.client", client, ["handler", "dir", "experimentalAPI", "calls"])
+        for (i, call) in (client?["calls"] as? [[String: Any]] ?? []).enumerated() {
+            p += FakeOpenAI.unknownKeys("setup.client.calls[\(i)]", call, ["method", "params", "typed"])
+        }
+        for (i, step) in (c["steps"] as? [[String: Any]] ?? []).enumerated() {
+            p += FakeOpenAI.unknownKeys("steps[\(i)]", step, ["at", "op", "stale", "expect", "note"])
+        }
+        return p
+    }
+
     let root: String, home: String, record: String
     private(set) var binDir: String
     private(set) var codexHome: String
@@ -372,6 +404,9 @@ final class CredentialWorld {
                 for s in v as? [String] ?? [] where !description.contains(s) {
                     p.append("the description does not name \(s.debugDescription): \(description)")
                 }
+            case "stderr":  // what the child wrote to stderr, carried by a failed start; never in the description
+                let got = (error as? CodexAuthError)?.stderr ?? ""
+                if got != v as? String { p.append("stderr \(got.debugDescription), want \(v)") }
             case "retryAt":  // Unix seconds; null for none
                 let at = (error as? CodexAuthError)?.retryAt
                 let got: Any = at.map { NSNumber(value: Int64($0.timeIntervalSince1970)) } ?? NSNull()

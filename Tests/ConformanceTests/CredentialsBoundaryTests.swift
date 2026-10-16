@@ -25,6 +25,28 @@ final class CredentialsBoundaryTests: XCTestCase {
         XCTAssertEqual(later.description, "x")
     }
 
+    /// A failed start's stderr reaches the caller through `stderr` only, unscrubbed formats included; the exit status
+    /// is part of the description, written as Go writes it.
+    func testStartStderrIsNeverPrinted() {
+        let canary = "start-stderr-canary-unregistered"
+        var e = AppServerError("Codex app-server exited unexpectedly")
+        e.exitStatus = "exit status 3"
+        e.capturedStderr = canary
+        XCTAssertEqual(e.stderr, canary)
+        XCTAssertEqual(e.description, "Codex app-server exited unexpectedly (exit status 3)")
+        XCTAssertFalse(dumped(e).contains("canary"), "an AppServerError prints its stderr")
+        var c = CodexAuthError(.codexError, message: "Codex app-server did not start", cause: e.description)
+        c.capturedStderr = e.stderr
+        XCTAssertEqual(c.stderr, canary)
+        XCTAssertFalse(dumped(c).contains("canary"), "a CodexAuthError prints its stderr")
+        XCTAssertTrue(c.description.contains("(exit status 3)"))
+        // The wait status, as waitpid reports it: the exit code in the second byte, a signal in the low seven bits.
+        XCTAssertEqual(AppServerCore.describe(waitStatus: 3 << 8), "exit status 3")
+        XCTAssertEqual(AppServerCore.describe(waitStatus: 0), "exit status 0")
+        XCTAssertEqual(AppServerCore.describe(waitStatus: SIGKILL), "signal 9")
+        XCTAssertEqual(AppServerCore.describe(waitStatus: SIGABRT | 0x80), "signal 6")  // with a core dump
+    }
+
     func testCodexAuthErrorSanitisesEveryField() {
         let e = CodexAuthError(.unsupportedAuth, mode: "e\u{0}k_canarymode\u{7}", codexVersion: "ek_canaryversion")
         XCTAssertFalse(e.mode.contains("canary"), "the mode was stored unfiltered")

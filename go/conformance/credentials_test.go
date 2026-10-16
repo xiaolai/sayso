@@ -57,6 +57,7 @@ type credFile struct {
 }
 
 type credStep struct {
+	Note   string         `json:"note"`
 	At     int64          `json:"at"`
 	Op     string         `json:"op"`
 	Stale  string         `json:"stale"`
@@ -64,6 +65,7 @@ type credStep struct {
 }
 
 type credCase struct {
+	caseHead
 	Setup  credSetup      `json:"setup"`
 	Expect map[string]any `json:"expect"`
 	Steps  []credStep     `json:"steps"`
@@ -560,6 +562,14 @@ func (w *world) check(want map[string]any, state string, err error, tok secret.T
 				if !strings.Contains(desc, s) {
 					p = append(p, fmt.Sprintf("the description does not name %q: %s", s, desc))
 				}
+			}
+		case "stderr": // what the child wrote to stderr, carried by a failed start; never in the description
+			got := ""
+			if e := (*codexapp.StartError)(nil); errors.As(err, &e) {
+				got = e.Stderr()
+			}
+			if got != v {
+				p = append(p, fmt.Sprintf("stderr %q, want %q", got, v))
 			}
 		case "retryAt": // Unix seconds; null for none
 			var got any

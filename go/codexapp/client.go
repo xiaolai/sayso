@@ -37,6 +37,9 @@ const (
 	maxLine = 4 << 20
 	// stderrDrain is how long Close waits, once the child is gone, for its last stderr bytes.
 	stderrDrain = 100 * time.Millisecond
+	// exitWait is how long a Start that failed once the child's output ended waits for the child to exit by itself,
+	// so the exit status it reports is the child's own, not the signal Close sends.
+	exitWait = 500 * time.Millisecond
 	// refusalCap bounds the refusals queued for a child that sends server requests without reading the answers.
 	refusalCap = 2 * maxLine
 	// closeFlush bounds how long Close waits for the messages queued before it, refusals included, to be written
@@ -204,7 +207,8 @@ func checkDir(dir string) error {
 	return nil
 }
 
-// Start spawns the child in its own process group and completes the initialize handshake.
+// Start spawns the child in its own process group and completes the initialize handshake. A failure once the child
+// is running is a *StartError, which carries the child's stderr and, when it exited by itself, its exit status.
 func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if !filepath.IsAbs(cfg.Bin) {
 		return nil, fmt.Errorf("codexapp: executable path %q is not absolute", cfg.Bin)
@@ -301,20 +305,46 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	var hello json.RawMessage
 	if err := k.call(ctx, "initialize", init, &hello); err != nil {
-		_ = c.Close()
-		return nil, err
+		return nil, k.startFailed(c, err)
 	}
 	agent, err := field[string](hello, "userAgent")
 	if err != nil {
-		_ = c.Close()
-		return nil, codexError("Codex app-server sent an unexpected initialize result", nil)
+		return nil, k.startFailed(c, codexError("Codex app-server sent an unexpected initialize result", nil))
 	}
 	k.agent = secret.Scrub(agent)
 	if err := k.send(ctx, map[string]any{"method": "initialized"}, time.Now().Add(k.timeout)); err != nil {
-		_ = c.Close()
-		return nil, err
+		return nil, k.startFailed(c, err)
 	}
 	return c, nil
+}
+
+// startFailed ends the child of a Start that failed and returns err as a *StartError, with the child's exit status
+// when it exited by itself and its stderr. A child whose output ended is given exitWait to exit first.
+func (k *core) startFailed(c *Client, err error) error {
+	select {
+	case <-k.dead: // the reader stopped: the child has most likely closed its output on its way out
+		wait := time.NewTimer(exitWait)
+		select {
+		case <-k.exited:
+		case <-wait.C:
+		}
+		wait.Stop()
+	default:
+	}
+	exitedFirst := false
+	select {
+	case <-k.exited:
+		exitedFirst = !k.lost // a child the kernel reaped itself leaves no status
+	default:
+	}
+	_ = c.Close() // reaps a child that has exited before it returns, so ProcessState is set
+	e := &StartError{Err: err}
+	if exitedFirst {
+		e.ExitStatus = exitStatus(k.cmd.ProcessState)
+	}
+	stderr := secret.Scrub(k.stderr.String())
+	e.stderr = func() string { return stderr }
+	return e
 }
 
 func closeAll(files ...*os.File) {

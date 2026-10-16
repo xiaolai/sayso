@@ -10,7 +10,9 @@ Installed as `$binDir/codex`. Environment:
 Scenario keys (all optional):
 
   version              userAgent version, default "0.162.1"; null sends a userAgent without a version
-  exitBeforeInitialize exit with this code before reading anything (Codex in a read-only CODEX_HOME)
+  exitBeforeInitialize exit with this code before reading anything (Codex in a read-only CODEX_HOME), after
+                       writing `stderr`
+  killBeforeInitialize end with this signal before reading anything, after writing `stderr`
   stderr               text written to stderr at start
   serverRequest        before the first getAuthStatus reply, send this server request (it has an id and a method);
                        the client's answer is recorded like any message
@@ -145,11 +147,17 @@ def main() -> int:
     record({"spawn": {"argv": sys.argv[1:], "env": dict(os.environ)}})
     if scenario.get("ignoreTerm"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    if "exitBeforeInitialize" in scenario:
-        return int(scenario["exitBeforeInitialize"])
     if scenario.get("stderr"):
         sys.stderr.write(scenario["stderr"])
         sys.stderr.flush()
+    if "exitBeforeInitialize" in scenario:
+        return int(scenario["exitBeforeInitialize"])
+    if "killBeforeInitialize" in scenario:
+        sig = int(scenario["killBeforeInitialize"])
+        if sig not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(sig, signal.SIG_DFL)  # so ignoreTerm, or Python's own handler, cannot catch it
+        os.kill(os.getpid(), sig)
+        return 1  # not reached: the signal ends the process
     if scenario.get("descendant"):
         child = subprocess.Popen(["/bin/sleep", "30"], stdout=sys.stdout, stderr=sys.stderr, start_new_session=True)
         record({"descendant": child.pid})

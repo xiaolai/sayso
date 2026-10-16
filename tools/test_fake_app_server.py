@@ -117,6 +117,12 @@ class Fake(unittest.TestCase):
         self.assertEqual((p.returncode, out), (1, []))
         self.assertIn("spawn", rec[0])
 
+    def test_stderr_comes_before_an_early_end(self):
+        p, _, _, _ = converse({"stderr": "boom\n", "exitBeforeInitialize": 3}, [{"id": 1, "method": "initialize"}])
+        self.assertEqual((p.returncode, p.stderr), (3, "boom\n"))
+        p, out, _, _ = converse({"stderr": "boom\n", "killBeforeInitialize": 9}, [{"id": 1, "method": "initialize"}])
+        self.assertEqual((p.returncode, p.stderr, out), (-9, "boom\n", []))
+
     def test_pad_line_to(self):
         _, out, stdout, _ = converse({"methods": {"m": [{"result": {"a": 1}, "padLineTo": 1000}, {"error": {"code": 1, "message": "e"}, "padLineTo": 999}]}},
                                      [{"id": 1, "method": "m"}, {"id": 2, "method": "m"}])

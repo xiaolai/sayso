@@ -13,8 +13,13 @@ Status: early. The contract and its fixtures cover every component, and Go and S
 | PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | `go/pcm16` | `PCM16` |
 | Said guard: did the model read exactly this script? | [`spec/said-guard.md`](spec/said-guard.md) | `go/saidguard` | `SaidGuard`, with ICU spell-out for `ar de es fr hi it ja ko pt` |
 
-Go also has `go/secret` (the scrubber and the redacting secret types) and `go/numwords`. Swift's `RealtimeConnection` holds the same scrubber and secret types, and `RealtimeDeadline`, a
-helper outside the contract. `CodexAuth` builds on macOS only; the other three products also build for iOS 17.
+Both implement the scrubber and the redacting secret types: Go in `go/secret`, Swift in `RealtimeConnection`. Go
+alone has `go/numwords` (Swift's number words are internal to `SaidGuard`), `codexapp.Login`, which runs
+`codex login`, and `codexapp.PlanStatus`, which reads the plan's rate limits; Swift alone has `RealtimeDeadline`.
+These are helpers outside the contract, which no fixture checks directly. Go keeps the failure classes and the
+classified error in the leaf package `go/failure`, which `go/openaihttp` names again, so `go/codexapp` and
+`go/codexauth` build without the HTTP stack. `CodexAuth` builds on macOS only; the other three products also build
+for iOS 17.
 
 How the implementations are held to one behaviour: [`spec/parity.md`](spec/parity.md). Fixture format:
 [`spec/fixtures.md`](spec/fixtures.md).

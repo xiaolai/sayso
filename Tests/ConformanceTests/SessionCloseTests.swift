@@ -35,21 +35,26 @@ final class SessionCloseTests: XCTestCase {
         }
     }
 
+    /// A refusal the caller's cancellation cut short is cancelled, not the HTTP refusal it looks like. The request
+    /// cancels its own caller and then throws the refusal at once, so the refusal ends the race with the deadline's
+    /// timer, which the cancellation wakes on another thread: no sleep decides the order.
     func testCallerCancellationIsCancelledNotAnHTTPRefusal() async {
+        let caller = TaskBox()
+        let ready = DispatchSemaphore(value: 0)
         let task = Task { () async throws -> Int in
-            try await withDeadline(seconds: 30, what: "request") { () async throws -> Int in
-                // An error body cut short by the cancellation, still classified by its status.
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            _ = ready.waited()
+            return try await withDeadline(seconds: 30, what: "request") { () async throws -> Int in
+                caller.task?.cancel()
                 throw RealtimeError(.authExpired, status: 401)
             }
         }
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        task.cancel()
+        caller.task = task
+        ready.signal()
         do {
             _ = try await task.value
             XCTFail("a cancelled request succeeded")
         } catch let e as RealtimeError {
-            XCTAssertEqual(e.errorClass, .cancelled)
+            XCTAssertEqual(e.errorClass, .cancelled, "\(e)")
         } catch {
             XCTFail("\(error)")
         }
@@ -57,23 +62,35 @@ final class SessionCloseTests: XCTestCase {
 
     // MARK: Writes
 
+    /// A waiter cancelled while queued is released with CancellationError and leaves the queue, so the turn it would
+    /// have taken goes to the next writer. Each step waits for the gate's own state, never for a fixed time, and
+    /// nothing awaits a task that a regression would leave suspended.
     func testCancelledWaiterLeavesTheWriteQueue() async throws {
         let gate = WriteGate()
         try await gate.acquire()
-        let waiter = Task { try await gate.acquire() }
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        let refused = FakeOpenAI.Flag()
+        let waiter = Task {
+            do { try await gate.acquire() } catch is CancellationError { refused.set() }
+        }
+        let queued = await eventually { gate.waiting == 1 }
+        XCTAssertTrue(queued, "the waiter did not queue")
         waiter.cancel()
-        do {
-            try await waiter.value
-            XCTFail("a cancelled waiter got the turn")
-        } catch is CancellationError {}
+        let released = await eventually { refused.value }
+        XCTAssertTrue(released, "the cancelled waiter was not released with CancellationError")
+        XCTAssertEqual(gate.waiting, 0, "the cancelled waiter is still queued")
         gate.release()
-        let next = Task { try await gate.acquire() }
-        let got = FakeOpenAI.blocking { try await next.value }  // returns at once: the cancelled waiter left the queue
-        XCTAssertNoThrow(try got.get())
-        gate.release()
+        let acquired = FakeOpenAI.Flag()
+        let next = Task {
+            try await gate.acquire()
+            acquired.set()
+        }
+        let served = await eventually { acquired.value }
+        XCTAssertTrue(served, "the turn went to the cancelled waiter, not the next writer")
+        if served { gate.release() } else { next.cancel() }
     }
 
+    /// Writers are served in the order they queued: the second starts only once the first is queued, and the gate is
+    /// released only once both are.
     func testWritesAreServedInOrder() async throws {
         let gate = WriteGate()
         try await gate.acquire()
@@ -83,17 +100,23 @@ final class SessionCloseTests: XCTestCase {
             order.add(1)
             gate.release()
         }
-        try? await Task.sleep(nanoseconds: 30_000_000)
+        let firstQueued = await eventually { gate.waiting == 1 }
+        XCTAssertTrue(firstQueued, "the first writer did not queue")
         let second = Task {
             try await gate.acquire()
             order.add(2)
             gate.release()
         }
-        try? await Task.sleep(nanoseconds: 30_000_000)
+        let bothQueued = await eventually { gate.waiting == 2 }
+        XCTAssertTrue(bothQueued, "the second writer did not queue")
         gate.release()
-        try await first.value
-        try await second.value
+        let served = await eventually { order.values.count == 2 }
+        XCTAssertTrue(served, "a queued writer was not served")
         XCTAssertEqual(order.values, [1, 2])
+        if !served {
+            first.cancel()
+            second.cancel()
+        }
     }
 
     // MARK: Counting and quoting
@@ -273,6 +296,15 @@ private final class FakeClosingServer: @unchecked Sendable {
     }
 
     func stop() { listener.cancel() }
+}
+
+private final class TaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Task<Int, Error>?
+    var task: Task<Int, Error>? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
 }
 
 private final class OrderBox: @unchecked Sendable {

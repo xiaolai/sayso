@@ -134,8 +134,10 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     private var refused: String?
     private var backoff: TimeInterval = 0
     private var retryAt: Date?
-    /// The refresh failure that started the backoff, reported as the cause of each call it refuses.
+    /// The refresh failure that started the backoff, reported as the cause of each call it refuses, and the stderr
+    /// it carries.
     private var lastFailure = ""
+    private var lastStderr = ""
     private var latest = CodexAuthInfo()
     /// Counts successful refreshes; read off the queue. A caller that refused a token while a refresh was running
     /// takes that refresh's result instead of starting another, even when Codex returned the same bearer.
@@ -262,6 +264,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             var e = CodexAuthError(
                 .expired, message: "the last refresh failed; the next attempt waits for the backoff", cause: lastFailure)
             e.retryAt = retryAt
+            e.capturedStderr = lastStderr
             throw e
         }
         do {
@@ -272,6 +275,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             backoff = 0
             retryAt = nil
             lastFailure = ""
+            lastStderr = ""
             refused = nil
             cfg.log?("codexauth: refreshed the token")
             current = tok
@@ -281,11 +285,14 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             if op.isCancelled {
                 // The caller gave up; Codex did not fail, so no backoff is spent.
                 cfg.log?("codexauth: refresh cancelled; no backoff spent")
-                throw CodexAuthError(.expired, message: "the refresh was cancelled", cause: String(describing: error))
+                var e = CodexAuthError(.expired, message: "the refresh was cancelled", cause: String(describing: error))
+                e.capturedStderr = Self.stderr(of: error)
+                throw e
             }
             backoff = backoff == 0 ? Self.backoffStart : min(2 * backoff, Self.backoffMax)
             retryAt = cfg.now().addingTimeInterval(backoff)  // from the failure, so a slow attempt keeps the wait
             lastFailure = String(describing: error)
+            lastStderr = Self.stderr(of: error)
             cfg.log?(
                 "codexauth: refresh failed (state \(CodexAuthError.state(of: error).rawValue), backoff \(Int(backoff)) s, "
                     + "until \(Self.stamp(retryAt!)))")
@@ -297,6 +304,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             }
             var failed = CodexAuthError(.expired, message: "the refresh did not renew the sign-in", cause: lastFailure)
             failed.retryAt = retryAt
+            failed.capturedStderr = lastStderr
             throw failed
         }
     }
@@ -375,8 +383,10 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
                     guardStart: cfg.guardAccess, log: cfg.log),
                 onSpawn: { op.attach($0) })
         } catch {
-            throw CodexAuthError(
+            var e = CodexAuthError(
                 .codexError, message: "Codex app-server did not start", cause: String(describing: error))
+            e.capturedStderr = Self.stderr(of: error)
+            throw e
         }
         let version = Self.version(client.userAgent)
         latest.codexVersion = version
@@ -385,6 +395,11 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             throw CodexAuthError(.codexTooOld, codexVersion: version, message: "Codex is older than \(minimumCodexVersion)")
         }
         return client
+    }
+
+    /// The stderr of a failed Codex start that `error` carries, "" for none: Go finds it through the cause chain.
+    private static func stderr(of error: Error) -> String {
+        (error as? CodexAuthError)?.stderr ?? (error as? AppServerError)?.stderr ?? ""
     }
 
     /// Asks a fresh app-server child: metadata first, and the token only for a ChatGPT sign-in, so an API key is
