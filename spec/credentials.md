@@ -70,7 +70,11 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
   JSON-RPC error and never acted on. The answers are queued and written in order by a writer of their own, so the
   reader never waits on the child's input; answers still queued beyond 8 MiB (a child sending requests without
-  reading the answers) are `codex-error`; any other is a reply, matched to a call by its integer `id`.
+  reading the answers) are `codex-error`. A request the client sends waits, within its timeout, until the answers
+  queued before it have been written (never the ones queued later), so the child reads each answer before any
+  request sent after the server request arrived; close waits up to 100 ms for the queued answers before it closes
+  the child's input, so a request sent before close is answered. Any other message is a reply, matched to a call by
+  its integer `id`.
 - **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
   a string, and every server request after its refusal was queued, as an event: the method, the `params` member as
   JSON (absent when the message had none; `null` when it was null) and whether it was a server request. Events are

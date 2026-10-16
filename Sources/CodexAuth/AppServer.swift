@@ -333,6 +333,8 @@ final class AppServerCore: @unchecked Sendable {
     private var pending: [Int: Pending] = [:]
     private var failure: AppServerError?
     private var stopReaders = false
+    /// Set when close starts; `closed` follows once the queued refusals are written, and then stops every writer.
+    private var closeStarted = false
     private var closed = false
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
@@ -340,9 +342,14 @@ final class AppServerCore: @unchecked Sendable {
     /// child's input; `refusalBytes` counts them until written, at most `refusalCap`. Guarded by `lock`.
     private var refusals: [Data] = []
     private var refusalBytes = 0
+    /// Count the refusals queued and written, so a request waits for the answers queued before it and no later ones.
+    private var refusalsQueued = 0
+    private var refusalsDone = 0
     private let refusalWake = DispatchSemaphore(value: 0)
     /// Bounds the refusals queued for a child that sends server requests without reading the answers.
     private static let refusalCap = 2 * AppServerClient.maxLine
+    /// Bounds how long close waits for queued refusals to be written before it closes stdin.
+    private static let refusalFlush: TimeInterval = 0.1
 
     /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes` is their size, at most
     /// `eventCap`. Guarded by `lock`.
@@ -453,6 +460,7 @@ final class AppServerCore: @unchecked Sendable {
             return nextID
         }
         defer { _ = lock.withLock { pending.removeValue(forKey: id) } }
+        awaitRefusals(until: deadline)  // the write below fails as the wait did, on the deadline or a failure
         try write(["id": id, "method": method, "params": params], deadline: deadline)
         if p.done.wait(timeout: deadline) == .timedOut {
             throw AppServerError("Codex app-server did not answer \(method) within \(timeout) s")
@@ -476,8 +484,8 @@ final class AppServerCore: @unchecked Sendable {
     /// Concurrent and later calls wait until the first has finished, as Go's sync.Once makes them.
     func close() {
         let first = lock.withLock { () -> Bool in
-            defer { closed = true }
-            return !closed
+            defer { closeStarted = true }
+            return !closeStarted
         }
         guard first else {
             closeDone.wait()
@@ -485,6 +493,8 @@ final class AppServerCore: @unchecked Sendable {
             return
         }
         defer { closeDone.signal() }
+        awaitRefusals(until: .now() + Self.refusalFlush)
+        lock.withLock { closed = true }
         // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
         writeGate.wait()
         if stdinOpen {
@@ -522,6 +532,17 @@ final class AppServerCore: @unchecked Sendable {
             }
         }
         if n > 0 { log?("codex app-server wrote to stderr (\(n) bytes)") }
+    }
+
+    /// Waits until every answer to a server request queued so far has been written, or `deadline` or a failure ends the
+    /// wait. A request waits for them before it is written, so the child reads each answer before any request the
+    /// client sent after the server request arrived, as when the reader wrote the answers itself; close waits for
+    /// them, at most `refusalFlush`, so a request the child sent before close is answered rather than dropped with the
+    /// queue. Answers queued after the wait began are not waited for, so a child that keeps sending requests cannot
+    /// hold a call.
+    private func awaitRefusals(until deadline: DispatchTime) {
+        let target = lock.withLock { refusalsQueued }
+        while lock.withLock({ refusalsDone < target && failure == nil }), DispatchTime.now() < deadline { usleep(1000) }
     }
 
     var hasExited: Bool { reaped(by: .now()) }
@@ -818,7 +839,7 @@ final class AppServerCore: @unchecked Sendable {
             eventWake.wait()
             drain: while true {
                 let next = lock.withLock { () -> Next in
-                    if closed { return .stop }
+                    if closeStarted { return .stop }
                     guard !events.isEmpty else { return failure != nil ? .stop : .wait }
                     let e = events.removeFirst()
                     eventBytes -= e.method.utf8.count + e.params.count
@@ -848,6 +869,7 @@ final class AppServerCore: @unchecked Sendable {
             guard refusalBytes + data.count <= Self.refusalCap else { return true }
             refusals.append(data)
             refusalBytes += data.count
+            refusalsQueued += 1
             return false
         }
         if over {
@@ -872,6 +894,7 @@ final class AppServerCore: @unchecked Sendable {
                 try? write(data, deadline: .now() + timeout)
                 let failed = lock.withLock { () -> Bool in
                     refusalBytes -= data.count
+                    refusalsDone += 1
                     return failure != nil
                 }
                 if failed { return }
