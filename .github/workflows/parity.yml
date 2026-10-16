@@ -8,7 +8,7 @@ jobs:
   tools:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python3 -I tools/manifest.py --check
       - run: python3 -I -m unittest discover -s tools -p 'test_*.py'
   go:
@@ -19,8 +19,8 @@ jobs:
     needs: [tools, go, swift]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: results
       - name: Both suites' results are required

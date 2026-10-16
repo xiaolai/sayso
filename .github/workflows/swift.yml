@@ -6,11 +6,11 @@ jobs:
   test:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: swift build -Xswiftc -warnings-as-errors -Xswiftc -strict-concurrency=complete
       - run: swift build -Xswiftc -warnings-as-errors -Xswiftc -swift-version -Xswiftc 6
       - run: SAYSO_RESULTS="$RUNNER_TEMP/results-swift.json" swift test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: results-swift
