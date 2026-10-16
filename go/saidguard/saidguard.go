@@ -13,6 +13,7 @@ package saidguard
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ type svUnit []svSeq // the alternative readings of one script unit
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
 // reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
-const Version = 7
+const Version = 8
 
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
@@ -142,6 +143,9 @@ type svRaw struct {
 	kind       svKind
 	start, end int    // rune offsets in the normalised text
 	gap        string // the text between the previous raw and this one
+	// A word whose first or last letter touches a mark svUnquote dropped as a possible quotation mark: the mark may
+	// as well be an apostrophe, so the word may also be read with it ("‘the students’ books’").
+	optLead, optTrail bool
 }
 
 // punctBefore: something other than space separates this raw from the one before ("Oh, one").
@@ -241,7 +245,7 @@ func svSignAt(rs []rune, i int) bool {
 }
 
 func svLex(s string, hanNumbers bool) []svRaw {
-	rs := svUnquote([]rune(s))
+	rs, dropped := svUnquote([]rune(s))
 	var out []svRaw
 	prevEnd := 0
 	emit := func(kind svKind, i, j int) {
@@ -249,7 +253,12 @@ func svLex(s string, hanNumbers bool) []svRaw {
 		if kind == svNumber && rs[i] == '−' {
 			text = "-" + string(rs[i+1:j]) // one sign, however written: "−5" reads as "-5"
 		}
-		out = append(out, svRaw{text, kind, i, j, string(rs[prevEnd:i])})
+		raw := svRaw{text: text, kind: kind, start: i, end: j, gap: string(rs[prevEnd:i])}
+		if kind == svWord {
+			raw.optLead = i > 0 && dropped[i-1]
+			raw.optTrail = j < len(rs) && dropped[j]
+		}
+		out = append(out, raw)
 		prevEnd = j
 	}
 	for i := 0; i < len(rs); {
@@ -334,39 +343,60 @@ func svLex(s string, hanNumbers bool) []svRaw {
 	return out
 }
 
-// svUnquote replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"',
-// so the words inside are not read as elisions or possessives. An opener stands at a word start after a space, an
-// opening bracket or the start, and never before a leading elision (svElisions: "’Tis the students’ books" holds two
-// apostrophes, not a quotation); a closer at a word end, after any punctuation that ends the quoted words ("‘hello!’",
-// "‘yes,’"), before a space, punctuation or the end; a pair stays within a sentence, and a sentence ends at its
-// final punctuation only where no closer follows it ("‘Wait.’" is one quotation). An unpaired mark is an apostrophe
-// ("’tis", "the students’ books", "rock ’n’ roll").
-func svUnquote(rs []rune) []rune {
-	open := -1
+// svUnquote finds the single marks that may be quotation marks around words ("Say ‘hello’.", "'yes'") and replaces
+// each with an unspoken '"', reporting which. It does not decide which mark closes which: in "‘the students’ books’"
+// the middle mark may be a possessive or a closing quotation mark. A dropped mark leaves its word flagged (svRaw
+// optLead, optTrail), and each side then reads the word with and without the mark, so the transcript selects. An
+// opener stands at a word start after a space, an opening bracket or the start, and never before a leading elision
+// (svElisions: "’Tis the students’ books" holds two apostrophes); a closer at a word end, after any punctuation that
+// ends the quoted words ("‘hello!’", "‘yes,’"), before a space, punctuation or the end. Within one sentence, which ends
+// at its final punctuation only where no closer follows it ("‘Wait.’" is one quotation), an opener with a closer after
+// it, and a closer with an opener before it, may be quotation marks; every other mark is an apostrophe ("’tis", "the
+// students’ books", "rock ’n’ roll"). The candidates of a sentence are kept in a list, so the work is linear.
+func svUnquote(rs []rune) ([]rune, []bool) {
+	dropped := make([]bool, len(rs))
+	var openers, closers []int
+	flush := func() {
+		if len(openers) > 0 && len(closers) > 0 {
+			first, last := openers[0], closers[len(closers)-1]
+			for _, o := range openers {
+				dropped[o] = dropped[o] || o < last
+			}
+			for _, c := range closers {
+				dropped[c] = dropped[c] || c > first
+			}
+		}
+		openers, closers = openers[:0], closers[:0]
+	}
 	for i, r := range rs {
 		if !isApostrophe(r) {
 			if strings.ContainsRune(svSentenceEnds, r) && !isApostrophe(svAfterPunct(rs, i+1)) {
-				open = -1
+				flush()
 			}
 			continue
 		}
-		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1]) &&
-			!svElisionAt(rs, i+1)
 		k := i - 1
 		for k >= 0 && svInnerPunct(rs[k]) {
 			k--
 		}
 		closer := k >= 0 && (svLetter(rs[k]) || unicode.IsMark(rs[k]) || svDigit(rs[k])) &&
 			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
+		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1]) &&
+			!svElisionAt(rs, i+1)
 		switch {
-		case closer && open >= 0:
-			rs[open], rs[i] = '"', '"'
-			open = -1
+		case closer:
+			closers = append(closers, i)
 		case opener:
-			open = i
+			openers = append(openers, i)
 		}
 	}
-	return rs
+	flush()
+	for i, d := range dropped {
+		if d {
+			rs[i] = '"'
+		}
+	}
+	return rs, dropped
 }
 
 // svInnerPunct reports unspoken punctuation that may stand between quoted words and their closing mark ("hello!’"):
@@ -422,10 +452,12 @@ func svNormApostrophes(s string) string {
 // --- transcript side: normalisation only ---
 
 // svTok is a transcript token. link marks a token joined to the next by a hyphen ("e-mail"): the matcher lets a
-// script word equal to the joined letters consume the whole chain.
+// script word equal to the joined letters consume the whole chain. lead and trail mark a word whose dropped mark
+// (svUnquote) may have been an apostrophe: the token may also be read with "'" before or after it.
 type svTok struct {
-	text string
-	link bool
+	text        string
+	link        bool
+	lead, trail bool
 }
 
 func svTranscriptTokens(s, language string) []svTok {
@@ -436,7 +468,7 @@ func svTranscriptTokens(s, language string) []svTok {
 		case t.kind == svWord:
 			parts := strings.FieldsFunc(text, svJoiner)
 			for i, part := range parts {
-				out = append(out, svTok{part, i < len(parts)-1})
+				out = append(out, svTok{text: part, link: i < len(parts)-1, lead: i == 0 && t.optLead, trail: i == len(parts)-1 && t.optTrail})
 			}
 		case t.kind == svNumber:
 			body, percent := strings.CutSuffix(text, "%")
@@ -1271,7 +1303,12 @@ func svScriptUnits(s, language string) []svUnit {
 		return true
 	}
 
+	// Each pass of the loop reads raws[spanStart:k] into units[unitStart:]; the next pass first gives those units the
+	// readings in which a dropped mark beside a word is an apostrophe.
+	spanStart, unitStart := 0, 0
 	for k := 0; k < len(raws); k++ {
+		svKeepMarks(units[unitStart:], raws[spanStart:k], language)
+		spanStart, unitStart = k, len(units)
 		r := raws[k]
 		switch r.kind {
 		case svNumber:
@@ -1390,7 +1427,86 @@ func svScriptUnits(s, language string) []svUnit {
 		}
 		units = append(units, svWordUnit(raws, k, low, english, innerCapital, nextCapital))
 	}
+	svKeepMarks(units[unitStart:], raws[spanStart:], language)
 	return units
+}
+
+// svKeepMarks gives the units read from the raws of span the readings in which a mark svUnquote dropped beside one of
+// their words is an apostrophe ("‘the students’ books’" may say "the students’ books"). A reading that spells words as
+// written (their parts, in order, from the first word not yet placed) takes each word's marks on its own parts; the
+// unit's other readings of those words ("email" for "e-mail", "100" for "a hundred") take the first word's leading
+// mark and the last word's trailing one. A unit with no reading of the words as written ("dot" in a domain) is left
+// as it is. Each reading gains at most three spellings per position, so the readings stay linear in the marks.
+func svKeepMarks(units []svUnit, span []svRaw, language string) {
+	type part struct {
+		text        string
+		lead, trail bool
+	}
+	var words []part
+	marked := false
+	for _, r := range span {
+		if r.kind != svWord {
+			continue
+		}
+		parts := strings.FieldsFunc(svNormApostrophes(svLower(r.text, language)), svJoiner)
+		for i, p := range parts {
+			words = append(words, part{p, i == 0 && r.optLead, i == len(parts)-1 && r.optTrail})
+		}
+		marked = marked || r.optLead || r.optTrail
+	}
+	if !marked {
+		return
+	}
+	spells := func(seq svSeq, at int) bool {
+		if len(seq) == 0 || at+len(seq) > len(words) {
+			return false
+		}
+		for p, alt := range seq {
+			if !svAltHas(alt, words[at+p].text) {
+				return false
+			}
+		}
+		return true
+	}
+	at := 0
+	for u, unit := range units {
+		literal := slices.IndexFunc(unit, func(seq svSeq) bool { return spells(seq, at) })
+		if literal < 0 {
+			continue
+		}
+		n := len(unit[literal])
+		first, last := words[at], words[at+n-1]
+		out := make(svUnit, len(unit))
+		for i, seq := range unit {
+			ns := slices.Clone(seq)
+			switch {
+			case i == literal:
+				for p := range ns {
+					ns[p] = svWithMarks(ns[p], words[at+p].lead, words[at+p].trail)
+				}
+			case len(ns) == 1:
+				ns[0] = svWithMarks(ns[0], first.lead, last.trail)
+			case len(ns) > 1:
+				ns[0] = svWithMarks(ns[0], first.lead, false)
+				ns[len(ns)-1] = svWithMarks(ns[len(ns)-1], false, last.trail)
+			}
+			out[i] = ns
+		}
+		units[u] = out
+		at += n
+	}
+}
+
+// svWithMarks is a new alt holding each token of alt in all its svMarkReadings.
+func svWithMarks(alt svAlt, lead, trail bool) svAlt {
+	if !lead && !trail {
+		return alt
+	}
+	var out svAlt
+	for _, s := range alt {
+		out = append(out, svMarkReadings(s, lead, trail)...)
+	}
+	return out
 }
 
 func svWordUnit(raws []svRaw, k int, low string, english bool, innerCapital, nextCapital func(int) bool) svUnit {
@@ -1592,15 +1708,35 @@ func newSvMasks(toks []svTok) map[string][]*svMask {
 		e.bits[len(e.bits)-1] |= 1 << (pos % 64)
 	}
 	for j, t := range toks {
-		add(t.text, 1, j)
+		for _, v := range svMarkReadings(t.text, t.lead, t.trail) {
+			add(v, 1, j)
+		}
 		joined := t.text
 		for k := 2; k <= svMaxChain && j+k-1 < len(toks) && toks[j+k-2].link; k++ {
 			joined += toks[j+k-1].text
 			// Normalised again: joined jamo or a base and its mark compose ("ᄀ-ᅡ" is 가), as script tokens are.
-			add(norm.NFKC.String(joined), k, j)
+			for _, v := range svMarkReadings(norm.NFKC.String(joined), t.lead, toks[j+k-1].trail) {
+				add(v, k, j)
+			}
 		}
 	}
 	return m
+}
+
+// svMarkReadings is s, then s with each mark a dropped quotation mark may have been, as an apostrophe: before it
+// (lead), after it (trail), or both. At most four readings, so the work stays linear in the marks.
+func svMarkReadings(s string, lead, trail bool) []string {
+	out := []string{s}
+	if lead {
+		out = append(out, "'"+s)
+	}
+	if trail {
+		out = append(out, s+"'")
+	}
+	if lead && trail {
+		out = append(out, "'"+s+"'")
+	}
+	return out
 }
 
 type svSet struct {

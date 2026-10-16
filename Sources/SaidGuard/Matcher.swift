@@ -63,16 +63,26 @@ func newSvMasks(_ toks: [SvTok]) -> [String: [SvMask]] {
         e.bits[e.bits.count - 1] |= 1 << UInt64(pos % 64)
     }
     for (j, t) in toks.enumerated() {
-        add(t.text, 1, j)
+        for v in svMarkReadings(t.text, lead: t.lead, trail: t.trail) { add(v, 1, j) }
         var joined = t.text
         var k = 2
         while k <= svMaxChain && j + k - 1 < toks.count && toks[j + k - 2].link {
             joined += toks[j + k - 1].text
-            add(joined, k, j)
+            for v in svMarkReadings(joined, lead: t.lead, trail: toks[j + k - 1].trail) { add(v, k, j) }
             k += 1
         }
     }
     return m
+}
+
+/// `s`, then `s` with each mark a dropped quotation mark may have been, as an apostrophe: before it (`lead`), after it
+/// (`trail`), or both. At most four readings, so the work stays linear in the marks.
+func svMarkReadings(_ s: String, lead: Bool, trail: Bool) -> [String] {
+    var out = [s]
+    if lead { out.append("'" + s) }
+    if trail { out.append(s + "'") }
+    if lead && trail { out.append("'" + s + "'") }
+    return out
 }
 
 final class SvSet {

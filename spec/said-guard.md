@@ -29,12 +29,16 @@ the results was tried and abandoned: every rewrite rule could map two different 
 
 1. **Both sides** get only normalisation: NFKC and width folding; `\p{Cf}` deleted except U+200B, which is a space;
    `\p{Me}` and variation selectors deleted; Unicode decimal digits to ASCII at scalar level; lower case by the
-   language's rules (`tr`, `az`); apostrophes unified and **kept**, except a pair of single quotation marks around
-   words (`Say ‘hello’.`, `'yes'`), which is unspoken. A closer may follow the punctuation that ends the quoted words
-   (`‘hello!’`, `‘yes,’`, `‘done.’`), and a pair stays within one sentence, which ends at its final punctuation only
-   where no closer follows it; an unpaired mark is an apostrophe (`’tis`, `students’`), and so is
-   a mark before a leading elision, which never opens a pair (`svElisions`, a closed list: `’tis`, `’twas`, `’em`, `’n’`,
-   `’cause`, …), so `’Tis the students’ books` keeps both. **Only unspoken punctuation is deleted**, and that
+   language's rules (`tr`, `az`); apostrophes unified and **kept**, except single quotation marks around words
+   (`Say ‘hello’.`, `'yes'`), which are unspoken. Which mark closes which is not decided: in `‘the students’ books’`
+   the middle mark may be a possessive. An opener stands at a word start; a closer at a word end, possibly after the
+   punctuation that ends the quoted words (`‘hello!’`, `‘yes,’`, `‘done.’`). Within one sentence, which ends at its
+   final punctuation only where no closer follows it, every opener with a closer after it and every closer with an
+   opener before it may be a quotation mark, and each side reads the word beside such a mark both without it and with
+   it as an apostrophe; the transcript selects. Each mark is a local choice of its word, so the readings stay linear in
+   the marks. Any other mark is an apostrophe (`’tis`, `students’` with no opener before it), and so is a mark before
+   a leading elision, which is never an opener (`svElisions`, a closed list: `’tis`, `’twas`, `’em`, `’n’`, `’cause`,
+   …), so `’Tis the students’ books` keeps both. **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`

@@ -9,6 +9,10 @@ struct SvRaw {
     let kind: SvKind
     /// The text between the previous raw and this one.
     let gap: String
+    /// A word whose first or last letter touches a mark ``svUnquote(_:)`` dropped as a possible quotation mark: the
+    /// mark may as well be an apostrophe, so the word may also be read with it ("‘the students’ books’").
+    var optLead = false
+    var optTrail = false
 
     /// Something other than space separates this raw from the one before ("Oh, one").
     var punctBefore: Bool { !trimSpace(gap).isEmpty }
@@ -88,13 +92,18 @@ func isHanNumeral(_ r: Unicode.Scalar) -> Bool {
 private let svNumberSeparators = Set(".,/:".unicodeScalars)
 
 func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
-    let rs = svUnquote(Array(s.unicodeScalars))
+    let (rs, dropped) = svUnquote(Array(s.unicodeScalars))
     var out: [SvRaw] = []
     var prevEnd = 0
     func emit(_ kind: SvKind, _ i: Int, _ j: Int) {
         // One sign, however written: "−5" reads as "-5".
         let text = kind == .number && rs[i] == "−" ? "-" + svString(rs[i + 1..<j]) : svString(rs[i..<j])
-        out.append(SvRaw(text: text, kind: kind, gap: svString(rs[prevEnd..<i])))
+        var raw = SvRaw(text: text, kind: kind, gap: svString(rs[prevEnd..<i]))
+        if kind == .word {
+            raw.optLead = i > 0 && dropped[i - 1]
+            raw.optTrail = j < rs.count && dropped[j]
+        }
+        out.append(raw)
         prevEnd = j
     }
     var i = 0
@@ -197,38 +206,52 @@ func svElisionAt(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
     return (i == rs.count || !isMark(rs[i])) && svElisions.contains(b)
 }
 
-/// Replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"', so the words
-/// inside are not read as elisions or possessives. An opener stands at a word start after a space, an opening bracket
-/// or the start, and never before a leading elision (``svElisions``: "’Tis the students’ books" holds two apostrophes,
-/// not a quotation); a closer at a word end, after any punctuation that ends the quoted words ("‘hello!’", "‘yes,’"),
-/// before a space, punctuation or the end; a pair stays within a sentence, and a sentence ends at its final punctuation
-/// only where no closer follows it ("‘Wait.’" is one quotation). An unpaired mark is an apostrophe ("’tis", "the
-/// students’ books", "rock ’n’ roll").
-func svUnquote(_ input: [Unicode.Scalar]) -> [Unicode.Scalar] {
+/// Finds the single marks that may be quotation marks around words ("Say ‘hello’.", "'yes'") and replaces each with an
+/// unspoken '"', reporting which. It does not decide which mark closes which: in "‘the students’ books’" the middle
+/// mark may be a possessive or a closing quotation mark. A dropped mark leaves its word flagged (``SvRaw/optLead``,
+/// ``SvRaw/optTrail``), and each side then reads the word with and without the mark, so the transcript selects. An
+/// opener stands at a word start after a space, an opening bracket or the start, and never before a leading elision
+/// (``svElisions``: "’Tis the students’ books" holds two apostrophes); a closer at a word end, after any punctuation
+/// that ends the quoted words ("‘hello!’", "‘yes,’"), before a space, punctuation or the end. Within one sentence,
+/// which ends at its final punctuation only where no closer follows it ("‘Wait.’" is one quotation), an opener with a
+/// closer after it, and a closer with an opener before it, may be quotation marks; every other mark is an apostrophe
+/// ("’tis", "the students’ books", "rock ’n’ roll"). The candidates of a sentence are kept in a list, so the work is
+/// linear.
+func svUnquote(_ input: [Unicode.Scalar]) -> ([Unicode.Scalar], [Bool]) {
     var rs = input
-    var open = -1
+    var dropped = [Bool](repeating: false, count: rs.count)
+    var openers: [Int] = []
+    var closers: [Int] = []
+    func flush() {
+        if let first = openers.first, let last = closers.last {
+            for o in openers where o < last { dropped[o] = true }
+            for c in closers where c > first { dropped[c] = true }
+        }
+        openers.removeAll(keepingCapacity: true)
+        closers.removeAll(keepingCapacity: true)
+    }
     for i in rs.indices {
         let r = rs[i]
         if !isApostrophe(r) {
-            if svSentenceEndScalars.contains(r), !svApostropheAfterPunct(rs, i + 1) { open = -1 }
+            if svSentenceEndScalars.contains(r), !svApostropheAfterPunct(rs, i + 1) { flush() }
             continue
         }
-        let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
-            && svLetter(rs[i + 1]) && !svElisionAt(rs, i + 1)
         var k = i - 1
         while k >= 0 && svInnerPunct(rs[k]) { k -= 1 }
         let closer = k >= 0 && (svLetter(rs[k]) || isMark(rs[k]) || svDigit(rs[k]))
             && (i + 1 == rs.count || isSpace(rs[i + 1])
                 || (svUnspokenPunct.contains(rs[i + 1]) && !isApostrophe(rs[i + 1])))
-        if closer && open >= 0 {
-            rs[open] = "\""
-            rs[i] = "\""
-            open = -1
+        let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
+            && svLetter(rs[i + 1]) && !svElisionAt(rs, i + 1)
+        if closer {
+            closers.append(i)
         } else if opener {
-            open = i
+            openers.append(i)
         }
     }
-    return rs
+    flush()
+    for i in rs.indices where dropped[i] { rs[i] = "\"" }
+    return (rs, dropped)
 }
 
 /// Unspoken punctuation that may stand between quoted words and their closing mark ("hello!’"): anything unspoken but
@@ -245,10 +268,13 @@ func svApostropheAfterPunct(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
 // --- transcript side: normalisation only ---
 
 /// A transcript token. `link` marks a token joined to the next by a hyphen ("e-mail"): the matcher lets a script
-/// word equal to the joined letters consume the whole chain.
+/// word equal to the joined letters consume the whole chain. `lead` and `trail` mark a word whose dropped mark
+/// (``svUnquote(_:)``) may have been an apostrophe: the token may also be read with "'" before or after it.
 struct SvTok {
     let text: String
     var link = false
+    var lead = false
+    var trail = false
 }
 
 func svTranscriptTokens(_ s: String, _ language: String) -> [SvTok] {
@@ -257,7 +283,12 @@ func svTranscriptTokens(_ s: String, _ language: String) -> [SvTok] {
         let text = svNormApostrophes(svLower(t.text, language))
         if t.kind == .word {
             let parts = fieldsFunc(text, svJoiner)
-            for (i, part) in parts.enumerated() { out.append(SvTok(text: part, link: i < parts.count - 1)) }
+            for (i, part) in parts.enumerated() {
+                out.append(
+                    SvTok(
+                        text: part, link: i < parts.count - 1, lead: i == 0 && t.optLead,
+                        trail: i == parts.count - 1 && t.optTrail))
+            }
         } else if t.kind == .number {
             let percent = text.hasSuffix("%")
             let body = percent ? String(text.dropLast()) : text

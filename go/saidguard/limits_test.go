@@ -23,6 +23,7 @@ func TestBounds(t *testing.T) {
 		{"hyphen-chain", strings.Repeat("ab", 8000), strings.Repeat("a-b-", 8000) + "x"},
 		{"dash-chain", strings.Repeat("1-", 32767) + "1", "wrong"},
 		{"domain-hyphen-labels", strings.Repeat("e-mail.", 4000) + "com", strings.Repeat("email dot e mail dot ", 2000) + "x"},
+		{"quotation-marks", strings.Repeat("‘a’ b ", 6000), strings.Repeat("a’ b ", 5999) + "x"},
 	}
 	for _, c := range cases {
 		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {
