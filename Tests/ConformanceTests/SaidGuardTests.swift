@@ -1,3 +1,4 @@
+import Foundation
 import SaidGuard
 import XCTest
 
@@ -14,5 +15,12 @@ final class SaidGuardTests: XCTestCase {
             if expect && c.requires.contains(where: { !Results.capabilities.contains($0) }) { return "exempt" }
             return got ? "got match" : "got no match"
         }
+    }
+
+    /// The revision is shared policy (spec/parity.md): Swift's constant is the one capabilities.json records, as Go's is.
+    func testSaidGuardVersion() throws {
+        let data = try Data(contentsOf: Fixtures.root.appendingPathComponent("capabilities.json"))
+        let policy = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(policy?["saidGuardVersion"] as? Int, saidGuardVersion)
     }
 }

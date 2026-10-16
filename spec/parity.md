@@ -8,9 +8,13 @@ fixture is not run by an implementation that must run it.
 The components are `credentials`, `mint`, `session`, `pcm16` and `said-guard`. `fixtures/capabilities.json` is
 checked-in policy: for each implementation, the components it must implement and the capabilities it must declare.
 Go and Swift implement all five. Swift must declare `spellout:<lang>` for `ar de es fr hi it ja ko pt`, the voice
-languages of Checkmate other than `en` and `zh` (which use the said guard's own tables); Go declares none. A later
-implementation may implement fewer components and is held to exactly the ones it declares, and to all of their
-fixtures.
+languages of Checkmate other than `en` and `zh` (which use the said guard's own tables); Go declares none. Swift's
+declaration is its `saidGuardSpellOutLanguages`, so the two cannot drift apart. A later implementation may implement
+fewer components and is held to exactly the ones it declares, and to all of their fixtures.
+
+`capabilities.json` also records the said guard's revision, `saidGuardVersion` (spec/said-guard.md). Each suite fails
+when its constant (Go `saidguard.Version`, Swift `saidGuardVersion`) differs from it, so a change that raises the
+revision raises it in the policy and in every implementation together.
 
 ## Results and checks
 
@@ -30,6 +34,25 @@ or `exempt`. `tools/parity.py` fails when:
 
 The Go module's published archive contains only `go/`, so fixture tests run only in this repository's checkout,
 reading `../fixtures` through the manifest, and fail when it is absent.
+
+## Differential runs
+
+`tools/differential.py` runs both implementations on the same generated inputs: fixture inputs changed at one
+position by characters from classes where Unicode and JSON libraries part ways, JSON documents changed by value, and
+random strings from the same classes. Each implementation answers through an oracle test that adds no public API
+(`TestOracle` in `go/saidguard`, `go/codexauth` and `go/conformance`; `OracleTests` in the Swift test target), and
+each operation compares an observation both produce exactly. Where this spec fixes less than a value, the observation
+says only what it fixes: an expiry beyond 2^52 s is far in the future or the past, and a said-guard side refused
+unread (spec/said-guard.md) has no tokens. A disagreement fails the run unless one of these documents it:
+
+- spell-out: Swift accepts where Go refuses, in a language Swift must declare `spellout:` for (above);
+- Unicode tables: said-guard text with a character newer than Unicode 15.0 (spec/said-guard.md).
+
+The said-guard generators keep to `en` and `zh` and to the characters `tools/unicode-15.0-assigned.txt` lists, so
+neither applies to a generated case; a new entry needs a sentence of this spec. CI runs it with the seed 20261016
+plus the run number. A run prints its seed and Python's Unicode version, which with its commit's fixtures reproduce
+it through `--seed`, and prints each operation's shortest diverging input as a candidate fixture, whose expectation
+this spec decides.
 
 ## Tags
 

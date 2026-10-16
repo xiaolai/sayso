@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"github.com/xiaolai/sayso/go/numwords"
+	"golang.org/x/text/unicode/norm"
 )
 
 // --- units ---
@@ -183,7 +184,7 @@ func svScriptUnits(s, language string) []svUnit {
 				ws := strings.FieldsFunc(l, svJoiner)
 				unit := svUnit{lit(ws...)}
 				if len(ws) > 1 { // "e-mail.com" = "email dot com", as a hyphenated word may be joined
-					unit = append(unit, lit(strings.Join(ws, "")))
+					unit = append(unit, lit(norm.NFKC.String(strings.Join(ws, "")))) // as in svWordUnit
 				}
 				units = append(units, unit)
 			}
@@ -339,7 +340,8 @@ func svWordUnit(raws []svRaw, k int, low string, english bool, innerCapital, nex
 	parts := strings.FieldsFunc(low, svJoiner)
 	unit := svUnit{lit(parts...)}
 	if len(parts) > 1 {
-		unit = append(unit, lit(strings.Join(parts, ""))) // "e-mail" = "email"
+		// "e-mail" = "email", normalised again as a transcript chain is: joined jamo compose ("ᄀ-ᅡ" is 가).
+		unit = append(unit, lit(norm.NFKC.String(strings.Join(parts, ""))))
 	}
 	if !english {
 		return svWithCodeReadings(unit, raws, k, low)

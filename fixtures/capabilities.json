@@ -1,5 +1,6 @@
 {
  "components": ["credentials", "mint", "session", "pcm16", "said-guard"],
+ "saidGuardVersion": 13,
  "implementations": {
   "go": {"components": ["credentials", "mint", "session", "pcm16", "said-guard"], "capabilities": []},
   "swift": {"components": ["credentials", "mint", "session", "pcm16", "said-guard"],

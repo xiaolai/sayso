@@ -1,5 +1,5 @@
 {
- "count": 1004,
+ "count": 1020,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5854,6 +5854,102 @@
    "requires": [
     "spellout:de"
    ]
+  },
+  {
+   "id": "r13-nfkc-hangul-compat-final",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-compat-final-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-final",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-nfkc-hangul-final-before",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-jamo",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-final-jamo",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-jamo-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-domain-label",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-domain-label-written",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-not-abbreviation",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-kept",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-added",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-mark-letters",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-ie-spacing-mark-not-abbreviation",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-eg-symbol-after",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-ie-symbol-after",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
   },
   {
    "id": "ws-close-1006",

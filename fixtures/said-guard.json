@@ -5892,5 +5892,149 @@
    "spellout:de"
   ],
   "note": "2,500 German numerals written as one word."
+ },
+ {
+  "id": "r13-nfkc-hangul-compat-final",
+  "component": "said-guard",
+  "script": "가ㄳ3",
+  "transcript": "가 ᆪ 3",
+  "language": "en",
+  "expect": false,
+  "note": "NFKC composes 가 and ㄳ into the one letter 갃, so no 2–3 letters stand against the number to be read one by one."
+ },
+ {
+  "id": "r13-nfkc-hangul-compat-final-identity",
+  "component": "said-guard",
+  "script": "가ㄳ3",
+  "transcript": "갃3",
+  "language": "en",
+  "expect": true,
+  "note": "Identity under NFKC: 가 and ㄳ are the syllable 갃."
+ },
+ {
+  "id": "r13-nfkc-hangul-final",
+  "component": "said-guard",
+  "script": "각3",
+  "transcript": "가 ᆨ 3",
+  "language": "en",
+  "expect": false,
+  "note": "NFKC composes 가 and a final ᆨ into 각, one letter against the number."
+ },
+ {
+  "id": "r13-nfkc-hangul-final-before",
+  "component": "said-guard",
+  "script": "3각",
+  "transcript": "3 가 ᆨ",
+  "language": "en",
+  "expect": false,
+  "note": "The same composed letter after the number."
+ },
+ {
+  "id": "r13-join-jamo",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ",
+  "transcript": "가",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated word's joined reading is normalised again, as a transcript chain is: ᄀ and ᅡ compose to 가."
+ },
+ {
+  "id": "r13-join-final-jamo",
+  "component": "said-guard",
+  "script": "가-ᆨ",
+  "transcript": "각",
+  "language": "en",
+  "expect": true,
+  "note": "가 and a final ᆨ joined compose to 각."
+ },
+ {
+  "id": "r13-join-jamo-spaced",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ",
+  "transcript": "ᄀ ᅡ",
+  "language": "en",
+  "expect": true,
+  "note": "The hyphenated jamo read apart, as written."
+ },
+ {
+  "id": "r13-join-domain-label",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ.com",
+  "transcript": "가 dot com",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated domain label's joined reading is normalised again too."
+ },
+ {
+  "id": "r13-join-domain-label-written",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ.com",
+  "transcript": "가.com",
+  "language": "en",
+  "expect": true,
+  "note": "The same label with its dot written."
+ },
+ {
+  "id": "r13-eg-mark-not-abbreviation",
+  "component": "said-guard",
+  "script": "e.g̣",
+  "transcript": "for example",
+  "language": "en",
+  "expect": false,
+  "note": "A mark on the g makes another word, not e.g., so it is not read for example."
+ },
+ {
+  "id": "r13-eg-mark-kept",
+  "component": "said-guard",
+  "script": "e.g̣",
+  "transcript": "e g",
+  "language": "en",
+  "expect": false,
+  "note": "The mark is spoken: it may not be dropped."
+ },
+ {
+  "id": "r13-eg-mark-added",
+  "component": "said-guard",
+  "script": "e.g",
+  "transcript": "e.g̣",
+  "language": "en",
+  "expect": false,
+  "note": "Nor may a transcript add one to e.g."
+ },
+ {
+  "id": "r13-eg-mark-letters",
+  "component": "said-guard",
+  "script": "e.g̣",
+  "transcript": "e g̣",
+  "language": "en",
+  "expect": true,
+  "note": "The letters read apart, the mark kept on its letter."
+ },
+ {
+  "id": "r13-ie-spacing-mark-not-abbreviation",
+  "component": "said-guard",
+  "script": "i.eः",
+  "transcript": "that is",
+  "language": "en",
+  "expect": false,
+  "note": "A spacing mark on the e makes another word too."
+ },
+ {
+  "id": "r13-eg-symbol-after",
+  "component": "said-guard",
+  "script": "e.g🏽",
+  "transcript": "for example 🏽",
+  "language": "en",
+  "expect": true,
+  "note": "A symbol after the g, here an emoji modifier, is a token of its own, so e.g. is still the abbreviation."
+ },
+ {
+  "id": "r13-ie-symbol-after",
+  "component": "said-guard",
+  "script": "i.e🏽",
+  "transcript": "that is 🏽",
+  "language": "en",
+  "expect": true,
+  "note": "The same after i.e."
  }
 ]

@@ -222,13 +222,14 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
             i = j
         } else if svLetter(r) || (isApostrophe(r) && marksBeforeLetter(i)) {
             // "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
-            // initials ("E.G. White"), lexed letter by letter like any other.
-            let m = goLower(svString(rs[i..<min(i + 4, rs.count)]))
+            // initials ("E.G. White"), lexed letter by letter like any other; with a mark on it ("e.g̣") another word.
+            // Scalars, not graphemes: a symbol after the g, as an emoji modifier, is a token of its own, as in Go.
+            let m = goLower(svString(rs[i..<min(i + 4, rs.count)])).unicodeScalars
             // Not inside a domain ("www.e.g.com"), where its letters are labels.
-            if (m.hasPrefix("e.g") || m.hasPrefix("i.e")) && !isUpper(rs[i + 2])
+            if (m.starts(with: "e.g".unicodeScalars) || m.starts(with: "i.e".unicodeScalars)) && !isUpper(rs[i + 2])
                 && (i == 0 || (!svLetter(rs[i - 1]) && rs[i - 1] != "."))
                 && !(i + 4 < rs.count && rs[i + 3] == "." && svLetter(rs[i + 4]))
-                && (i + 3 >= rs.count || !svLetter(rs[i + 3]))
+                && (i + 3 >= rs.count || (!svLetter(rs[i + 3]) && !isMark(rs[i + 3])))
             {
                 emit(.word, i, i + 3)
                 i += 3

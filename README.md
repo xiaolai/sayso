@@ -39,6 +39,7 @@ Use it only with your own sign-in, on your own devices: OpenAI's Terms of Use fo
 - `go/`: the Go module `github.com/xiaolai/sayso/go`, tagged `go/vX.Y.Z`.
 - `Package.swift`, `Sources/`, `Tests/`: the Swift package `SaySo`, tagged `vX.Y.Z`.
 - `tools/fake-app-server.py`: the scripted `codex` both test suites run.
+- `tools/differential.py`: runs Go and Swift on the same generated inputs and fails on any disagreement.
 
 ## Test
 
@@ -47,9 +48,11 @@ python3 tools/manifest.py --check
 python3 -m unittest discover -s tools -p 'test_*.py'
 (cd go && go vet ./... && go test ./...)
 swift test
+python3 tools/differential.py
 ```
 
-The Go tests read `../fixtures` from this checkout, and fail if the fixtures are missing.
+The Go tests read `../fixtures` from this checkout, and fail if the fixtures are missing. `differential.py` needs both
+toolchains; `--seed` and `--count` choose its cases (spec/parity.md).
 
 ## Licence
 

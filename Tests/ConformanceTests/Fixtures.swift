@@ -1,4 +1,5 @@
 import Foundation
+import SaidGuard
 import XCTest
 
 /// The shared fixture corpus, read from this checkout through its manifest (spec/parity.md). A missing manifest or
@@ -119,7 +120,8 @@ struct FixtureError: Error, CustomStringConvertible {
 final class Results: @unchecked Sendable {
     static let shared = Results()
     static let components = ["credentials", "mint", "session", "pcm16", "said-guard"]
-    static let capabilities = ["ar", "de", "es", "fr", "hi", "it", "ja", "ko", "pt"].map { "spellout:" + $0 }
+    /// The languages the guard spells out, so the declaration cannot drift from the implementation.
+    static let capabilities = saidGuardSpellOutLanguages.sorted().map { "spellout:" + $0 }
     private let lock = NSLock()
     private var outcomes: [String: String] = [:]
 

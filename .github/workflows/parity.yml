@@ -44,3 +44,23 @@ jobs:
       - run: >-
           python3 -I tools/parity.py results/results-go-macos-15/results-go.json
           results/results-go-ubuntu-latest/results-go.json results/results-swift/results-swift.json
+  differential:
+    # Both implementations on the same generated inputs (tools/differential.py). It builds both oracles itself and
+    # reads no other job's results. A fixed seed plus the run number tries new cases on every run; the printed seed
+    # reproduces a failure with --seed.
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Run both implementations on generated cases
+        run: |
+          seed=$((20261016 + GITHUB_RUN_NUMBER))
+          echo "differential seed: $seed"
+          python3 -I tools/differential.py --seed "$seed"
