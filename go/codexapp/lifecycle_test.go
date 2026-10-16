@@ -62,7 +62,7 @@ func recv[T any](t *testing.T, what string, ch <-chan T) T {
 // waitFor waits up to 5 s for cond, which the test cannot otherwise synchronise on.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); !cond(); time.Sleep(2 * time.Millisecond) {
+	for deadline := time.Now().Add(bulkTimeout); !cond(); time.Sleep(2 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
@@ -183,7 +183,7 @@ func TestEmptyEventsTripTheBounds(t *testing.T) {
 		"sys.stdout.flush()\n"+
 		"time.sleep(30)\n")
 	r := newRecorder()
-	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 8 * time.Second, OnEvent: r.handle})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: bulkTimeout, OnEvent: r.handle})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestEventCountBoundIsExact(t *testing.T) {
 			"sys.stdout.flush()\n"+
 			"time.sleep(30)\n")
 		r := newRecorder()
-		c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 8 * time.Second, OnEvent: r.handle})
+		c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: bulkTimeout, OnEvent: r.handle})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -287,7 +287,7 @@ func TestEventsHeldAtAnOverflowAreDelivered(t *testing.T) {
 		"sys.stdout.flush()\n"+
 		"time.sleep(30)\n")
 	r := newRecorder()
-	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 8 * time.Second, OnEvent: r.handle})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: bulkTimeout, OnEvent: r.handle})
 	if err != nil {
 		t.Fatal(err)
 	}

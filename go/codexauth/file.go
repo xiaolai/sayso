@@ -42,9 +42,6 @@ func (l authLocation) close() {
 	}
 }
 
-// dirFlags open a folder of the path: never through a link, and never blocking on a FIFO named like a folder.
-const dirFlags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
-
 // afterResolve, when set, runs between resolving CODEX_HOME and opening it. For tests.
 var afterResolve func()
 

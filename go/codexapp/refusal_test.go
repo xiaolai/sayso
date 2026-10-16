@@ -25,7 +25,7 @@ func TestServerRequestsDoNotStallTheReader(t *testing.T) {
 		"    if n == 3000: break\n"+
 		"sys.stderr.write('refusals %d\\n' % n)\n"+
 		"time.sleep(30)\n")
-	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 8 * time.Second})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: bulkTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,11 +34,11 @@ func TestServerRequestsDoNotStallTheReader(t *testing.T) {
 	if err := c.Call(t.Context(), "echo", nil, &out); err != nil || !out.OK {
 		t.Fatalf("call: %v %v", err, out)
 	}
-	if d := time.Since(start); d > 4*time.Second {
+	if d := time.Since(start); d > bulkTimeout/2 {
 		t.Errorf("the call took %v behind the refusals", d)
 	}
 	// Every refusal reaches the child, in order behind the reply it was waiting to send.
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(bulkTimeout)
 	for !strings.Contains(c.Stderr(), "refusals 3000") && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -58,7 +58,7 @@ func TestUnreadRefusalsAreBounded(t *testing.T) {
 		"    sys.stdout.write(json.dumps({'id': 'x' * (1 << 20) + str(i), 'method': 'item/approve'}) + '\\n')\n"+
 		"sys.stdout.flush()\n"+
 		"time.sleep(30)\n")
-	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 8 * time.Second})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: bulkTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestUnreadRefusalsAreBounded(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "without reading the answers") {
 		t.Fatalf("call: %v", err)
 	}
-	if d := time.Since(start); d > 4*time.Second {
+	if d := time.Since(start); d > bulkTimeout/2 {
 		t.Errorf("the overflow took %v to fail the call", d)
 	}
 	_ = c.Close()

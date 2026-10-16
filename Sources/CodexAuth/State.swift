@@ -24,7 +24,7 @@ public let minimumCodexVersion = "0.161.0"
 /// A failure to obtain a usable token. `errorClass` is auth-expired for ``CodexAuthState/expired``, codex-error for
 /// Codex and file failures, and auth-mode for the sign-in states. Every string is scrubbed; `message` and `cause`
 /// are diagnostics, never for display.
-public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertible {
+public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     // Read-only outside the package, and sanitised on every assignment inside it, so a field read or `dump(e)` never
     // shows what the initialiser would have removed.
     public internal(set) var state: CodexAuthState
@@ -62,18 +62,33 @@ public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertibl
         return Secret.scrub(s)
     }
 
+    /// Reflection (`dump`, `Mirror`) shows the fields scrubbed when read, as ``description`` does: scrubbing on
+    /// assignment cannot remove a secret registered after the error was built.
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "state": state, "mode": Secret.scrub(mode), "codexVersion": Secret.scrub(codexVersion),
+                "errorClass": errorClass, "message": Secret.scrub(message), "cause": Secret.scrub(cause),
+            ], displayStyle: .struct)
+    }
+
     /// The state an error carries: ready for nil, codex-error for an error from elsewhere. A CodexAuthError wrapped
     /// as an NSError's underlying error counts, as Go's StateOf follows wrapping.
     /// The whole chain is followed; a chain that loops back to an error already seen ends there.
     public static func state(of error: Error?) -> CodexAuthState {
         var next = error
-        var seen = Set<ObjectIdentifier>()
+        // Every object seen is kept until the walk ends: an identifier alone would let a released temporary (the
+        // box bridging gives a Swift value) free its address for the next one, which would then read as a loop.
+        var seen: [ObjectIdentifier: AnyObject] = [:]
         while let e = next {
             if let a = e as? CodexAuthError { return a.state }
             let underlying = (e as NSError).userInfo[NSUnderlyingErrorKey]
             // The stored object's identity: a loop of NSErrors repeats objects, while bridging a Swift error makes a
             // new box each time, which is why the check is on what userInfo holds.
-            if let object = underlying as AnyObject?, !seen.insert(ObjectIdentifier(object)).inserted { break }
+            if let object = underlying as AnyObject? {
+                guard seen.updateValue(object, forKey: ObjectIdentifier(object)) == nil else { break }
+            }
             next = underlying as? Error
         }
         return error == nil ? .ready : .codexError
@@ -92,8 +107,8 @@ func classifyMode(_ mode: String?) -> CodexAuthError? {
     case modeChatGPT: return nil
     case modeAPIKey: return CodexAuthError(.apiKey, mode: modeAPIKey, message: "Codex is signed in with an API key")
     default:
-        return CodexAuthError(
-            .unsupportedAuth, mode: cleanMode(mode), message: "Codex is signed in with an unsupported mode")
+        // The initialiser makes the mode safe to print.
+        return CodexAuthError(.unsupportedAuth, mode: mode, message: "Codex is signed in with an unsupported mode")
     }
 }
 

@@ -70,18 +70,19 @@ enum AuthFile {
 
     /// The folder at `path`, an absolute path holding no link, opened from "/" one component at a time without
     /// following a link and without blocking on a FIFO, each component checked to be a folder on its own descriptor;
-    /// nil on failure.
+    /// nil on failure. Each folder is opened for search only (O_SEARCH): walking a path needs search permission on
+    /// its folders, not read permission, so an ancestor such as a 0711 home folder does not refuse it.
     static func openResolved(_ path: String) -> Int32? {
-        let flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+        let flags = O_SEARCH | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
         guard path.utf8.first == 0x2F, !path.utf8.contains(0) else { return nil }
-        var fd = open("/", flags)
+        var fd = openRetrying { open("/", flags) }
         guard fd >= 0 else { return nil }
         for part in path.utf8.split(separator: 0x2F).map({ String(decoding: $0, as: UTF8.self) }) {
             guard part != ".", part != ".." else {  // a resolved path has neither; refused rather than walked
                 Darwin.close(fd)
                 return nil
             }
-            let next = openat(fd, part, flags)
+            let next = openRetrying { openat(fd, part, flags) }
             Darwin.close(fd)
             guard next >= 0 else { return nil }
             var st = stat()
@@ -92,6 +93,33 @@ enum AuthFile {
             fd = next
         }
         return fd
+    }
+
+    /// Runs `open` until it is not interrupted: a signal arriving during an open is no reason to refuse the file.
+    /// errno is the call's own when it returns.
+    static func openRetrying(_ open: () -> Int32) -> Int32 {
+        while true {
+            let fd = interruptions.take() ? { errno = EINTR; return -1 }() : open()
+            if fd >= 0 || errno != EINTR { return fd }
+        }
+    }
+
+    /// For tests: how many opens still fail with EINTR before the real call runs.
+    static let interruptions = Interruptions()
+
+    final class Interruptions: @unchecked Sendable {
+        private let lock = NSLock()
+        private var left = 0
+
+        func set(_ n: Int) { lock.withLock { left = n } }
+
+        func take() -> Bool {
+            lock.withLock {
+                guard left > 0 else { return false }
+                left -= 1
+                return true
+            }
+        }
     }
 
     private static func realPath(_ p: String) -> String? {
@@ -117,7 +145,7 @@ enum AuthFile {
             throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: "the path holds a NUL")
         }
         let flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
-        let fd = loc.dir >= 0 ? openat(loc.dir, fileName, flags) : open(loc.path, flags)
+        let fd = openRetrying { loc.dir >= 0 ? openat(loc.dir, fileName, flags) : open(loc.path, flags) }
         if fd < 0 {
             if errno == ENOENT { throw CodexAuthError(.noSignInFile, message: "auth.json does not exist") }
             throw CodexAuthError(.codexError, message: "auth.json cannot be opened", cause: String(cString: strerror(errno)))
@@ -146,13 +174,8 @@ enum AuthFile {
         guard used < maxBytes else { throw CodexAuthError(.codexError, message: "auth.json is 64 KiB or larger") }
         var data = Data(buf[0..<used])
         defer { data.resetBytes(in: 0..<data.count) }
-        // NSDictionary, not [String: Any]: NSString keys compare literally, while a Swift String key compares
-        // canonically equivalent spellings equal ("OPENAI_API_\u{212A}EY", with a Kelvin sign, is OPENAI_API_KEY to
-        // Swift) and bridging merges them. Go and Codex read keys as bytes.
-        guard isPlainJSON(data),
-            let doc = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? NSDictionary
-        else { return nil }
-        return try decode(doc)
+        guard isPlainJSON(data) else { return nil }
+        return try decode(data)
     }
 
     /// The auth_mode values Codex knows (protocol/src/auth.rs), other than chatgpt and apikey. Compared as bytes.
@@ -160,30 +183,56 @@ enum AuthFile {
         "chatgptAuthTokens", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
     ]
 
-    /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token. An
-    /// unknown auth_mode makes the file unreadable to Codex itself, so it is codex-error.
-    static func decode(_ doc: NSDictionary) throws -> Token {
-        func present(_ key: String) -> Bool { doc.object(forKey: key).map { !($0 is NSNull) } ?? false }
+    /// Resolves the sign-in mode in Codex's own order (AuthDotJson::resolved_mode) and returns the ChatGPT token; nil
+    /// when `data`, already validated as plain JSON, is not one object. An unknown auth_mode makes the file
+    /// unreadable to Codex itself, so it is codex-error.
+    ///
+    /// Only the members needed are read, as the bytes the file holds, and member names match as bytes, as in Go and
+    /// Codex (a Swift `String` key would take "OPENAI_API_\u{212A}EY", with a Kelvin sign, for OPENAI_API_KEY). No
+    /// other value, such as a refresh token or an API key, ever becomes a `String`, which could not be wiped; each
+    /// copy of a member's bytes is wiped once read. Only the mode and the access token are decoded.
+    static func decode(_ data: Data) throws -> Token? {
+        do { _ = try WireJSON.memberBytes(data, "auth_mode") } catch { return nil }  // not an object
+        func present(_ key: String) throws -> Bool { try withMember(data, key) { $0.map { !isNull($0) } ?? false } }
         var mode = modeChatGPT
-        if present("auth_mode") {
-            guard let m = doc.object(forKey: "auth_mode") as? String,
-                let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { $0.utf8.elementsEqual(m.utf8) })
+        if try present("auth_mode") {
+            let m = try withMember(data, "auth_mode") { $0.flatMap(stringValue) }
+            guard let m, let known = ([modeChatGPT, modeAPIKey] + fileModes).first(where: { $0.utf8.elementsEqual(m.utf8) })
             else { throw CodexAuthError(.codexError, message: "auth.json names an unknown auth_mode") }
             mode = known
-        } else if present("personal_access_token") {
+        } else if try present("personal_access_token") {
             mode = "personalAccessToken"
-        } else if present("bedrock_api_key") {
+        } else if try present("bedrock_api_key") {
             mode = "bedrockApiKey"
-        } else if present("bedrock_access_keys") {
+        } else if try present("bedrock_access_keys") {
             mode = "bedrockAccessKeys"
-        } else if present("OPENAI_API_KEY") {
+        } else if try present("OPENAI_API_KEY") {
             mode = modeAPIKey
         }
         if let e = classifyMode(mode) { throw e }
-        guard let tokens = doc.object(forKey: "tokens") as? NSDictionary,
-            let access = tokens.object(forKey: "access_token") as? String, !access.isEmpty
-        else { throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token") }
+        let access = try withMember(data, "tokens") { tokens -> String? in
+            guard let tokens, !isNull(tokens) else { return nil }
+            // A tokens value that is not an object holds no access token.
+            return (try? withMember(tokens, "access_token") { $0.flatMap(stringValue) }) ?? nil
+        }
+        guard let access, !access.isEmpty else {
+            throw CodexAuthError(.codexError, message: "auth.json has a ChatGPT sign-in without an access token")
+        }
         return makeToken(access, source: "file")
+    }
+
+    /// The bytes of the member `name` of the object `data`, nil when absent, handed to `body` and wiped after it.
+    private static func withMember<T>(_ data: Data, _ name: String, _ body: (Data?) throws -> T) throws -> T {
+        var raw = try WireJSON.memberBytes(data, name)
+        defer { if let n = raw?.count { raw?.resetBytes(in: 0..<n) } }
+        return try body(raw)
+    }
+
+    private static func isNull(_ raw: Data) -> Bool { raw.elementsEqual("null".utf8) }
+
+    /// A JSON string's value; nil for any other value.
+    private static func stringValue(_ raw: Data) -> String? {
+        (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])) as? String
     }
 }
 
