@@ -11,7 +11,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -252,7 +251,7 @@ func readOnce(loc authLocation) (tok secret.Token, e *Error, parsed bool) {
 	}
 	// Read where it lies, in buf, which is cleared on every exit: no check or lookup copies any of it.
 	doc := buf[:n]
-	if !codexapp.ValidJSON(doc) || wire.KindOf(doc, wire.Root(doc)) != '{' {
+	if !wire.ValidCodex(doc) || wire.KindOf(doc, wire.Root(doc)) != '{' {
 		return secret.Token{}, nil, false
 	}
 	tok, e = decodeAuthFile(doc)

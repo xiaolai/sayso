@@ -1,4 +1,4 @@
-package codexapp
+package wire
 
 import (
 	"errors"

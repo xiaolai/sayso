@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -53,7 +52,7 @@ func jwtExpiry(tok string) time.Time {
 		acc &= 1<<bits - 1
 	}
 	// The bits left over are ignored, as base64.RawURLEncoding and Foundation ignore them.
-	if !codexapp.ValidJSON(payload) {
+	if !wire.ValidCodex(payload) {
 		return time.Time{}
 	}
 	// Exact key: a struct field would also match "EXP", which the Swift implementation does not read.
