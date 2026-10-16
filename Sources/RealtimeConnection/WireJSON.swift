@@ -183,13 +183,14 @@ package enum WireJSON {
 
         /// An object whose values are strings, null being "". Two names that are canonically equivalent are
         /// invalid: a `String`-keyed result cannot hold both, and Go refuses them too (spec/session.md, wire JSON). So
-        /// is a name with a run of more than 30 combining marks, where Go's normaliser and Swift's equality disagree.
+        /// is a name with a run of more than 30 combining marks, where Go's normaliser and Swift's equality disagree,
+        /// and a name with a character not assigned in ``pinnedUnicode``, which this runtime's tables may not know.
         func stringMap(_ name: String) throws -> [String: String]? {
             guard let o = try object(name) else { return nil }
             var out: [String: String] = [:]
             for (k, n) in o.members {
                 let key = String(decoding: k, as: UTF8.self)
-                guard !longMarkRun(key) else { throw Invalid() }
+                guard WireJSON.pinned(key), !longMarkRun(key) else { throw Invalid() }
                 guard out[key] == nil else { throw Invalid() }
                 out[key] = n.isNull ? "" : try n.string()
             }
@@ -200,6 +201,21 @@ package enum WireJSON {
         func code(_ name: String) throws -> String {
             guard let n = field(name) else { return "" }
             return n.kind == UInt8(ascii: "\"") ? try n.string() : n.raw
+        }
+    }
+
+    /// The Unicode version a metadata name's characters must be assigned in: that of the Swift runtime on the oldest
+    /// supported systems (macOS 14, iOS 17), as in Go (`wire.PinnedUnicode`). A character's canonical combining class
+    /// and decomposition never change once it is assigned, so for these characters this runtime's tables, whatever
+    /// their version, count marks and compare names as Go's Unicode 17 tables do.
+    static let pinnedUnicode = (major: 15, minor: 0)
+
+    /// Whether every character of `s` is assigned in ``pinnedUnicode``, private-use ones included. A noncharacter has
+    /// an age but no assignment, so it is refused, as Go's table refuses it.
+    static func pinned(_ s: String) -> Bool {
+        s.unicodeScalars.allSatisfy { u in
+            guard let age = u.properties.age, u.properties.generalCategory != .unassigned else { return false }
+            return (age.major, age.minor) <= pinnedUnicode
         }
     }
 

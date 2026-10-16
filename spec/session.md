@@ -82,7 +82,11 @@ implementations accept and refuse the same documents whatever their JSON librari
 - in a string map (`metadata`), two names that are canonically equivalent (`\u00e9` and `e\u0301`) are invalid,
   because Swift's `String`-keyed map cannot hold both; so is a name with a run of more than 30 combining marks
   (non-starters, counted in each character's canonical decomposition), the stream-safe bound beyond which Go's
-  normaliser inserts U+034F and the two implementations would compare names differently;
+  normaliser inserts U+034F and the two implementations would compare names differently; and so is a name with a
+  character not assigned in Unicode 15.0 (unassigned code points and noncharacters; private-use characters are
+  assigned). Unicode 15.0 is the Swift runtime's version on the oldest supported systems (macOS 14, iOS 17). A
+  character's canonical combining class and decomposition never change once it is assigned, so for the characters
+  left, every table from 15.0 on (Go's are 17.0) counts marks and compares names alike;
 - a field of the wrong type in a consumed event is a `protocol` error that names the event type.
 
 Go reads through `encoding/json/jsontext`; Swift has its own validator, because `JSONSerialization` folds none of

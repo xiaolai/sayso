@@ -796,5 +796,94 @@
    }
   },
   "note": "Control: 30 combining marks is within the stream-safe bound and is read."
+ },
+ {
+  "id": "event-metadata-unicode16-mark-run-31",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"a\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\\ud839\\uddee\": \"x\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "U+1E5EE is a combining mark (class 230) assigned in Unicode 16.0. A runtime with Unicode 15 tables saw no mark run here and Go's Unicode 17 tables saw one of 31; metadata names are read only in characters assigned in Unicode 15.0, so both refuse it whatever their tables."
+ },
+ {
+  "id": "event-metadata-unicode16-mark",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"a\\ud839\\uddee\": \"x\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "One character assigned after Unicode 15.0 refuses the name: its combining class and decomposition are not known to every supported runtime."
+ },
+ {
+  "id": "event-metadata-unassigned",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"a\\u0378\": \"x\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "A code point unassigned in Unicode 15.0 refuses the name."
+ },
+ {
+  "id": "event-metadata-noncharacter",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"a\\ufdd0\": \"x\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "A noncharacter has an age in the Unicode data but no assignment, so it refuses the name too."
+ },
+ {
+  "id": "event-metadata-unicode15",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"\\ud83d\\udedc\\ue000\": \"x\"}}}",
+  "expect": {
+   "type": "response.created",
+   "responseId": "r",
+   "metadata": {
+    "\ud83d\udedc\ue000": "x"
+   }
+  },
+  "note": "Control: a character assigned in Unicode 15.0 (U+1F6DC) and a private-use character are read."
+ },
+ {
+  "id": "event-metadata-decomposition-reordered",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"\\u1e69\": \"a\", \"s\\u0307\\u0323\": \"b\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "U+1E69 decomposes to s, U+0323, U+0307; the other name has the same marks in the other order, which canonical ordering makes equivalent, so the two names are refused."
+ },
+ {
+  "id": "event-metadata-singleton-decomposition",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"\\u212b\": \"a\", \"\\u00c5\": \"b\"}}}",
+  "expect": {
+   "protocolError": "response.created"
+  },
+  "note": "U+212B ANGSTROM SIGN decomposes to U+00C5 alone, so the two names are canonically equivalent and refused."
+ },
+ {
+  "id": "event-metadata-distinct-marks",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.created\", \"response\": {\"id\": \"r\", \"metadata\": {\"\\u1e69\": \"a\", \"s\\u0307\\u0307\": \"b\"}}}",
+  "expect": {
+   "type": "response.created",
+   "responseId": "r",
+   "metadata": {
+    "\u1e69": "a",
+    "s\u0307\u0307": "b"
+   }
+  },
+  "note": "Control: the same base with different marks is two names, both read."
  }
 ]

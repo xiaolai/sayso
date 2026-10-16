@@ -1,5 +1,5 @@
 {
- "count": 816,
+ "count": 824,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1287,6 +1287,54 @@
   },
   {
    "id": "event-metadata-mark-run-30",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unicode16-mark-run-31",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unicode16-mark",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unassigned",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-noncharacter",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unicode15",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-decomposition-reordered",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-singleton-decomposition",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-distinct-marks",
    "file": "events/events.json",
    "component": "session",
    "requires": []
