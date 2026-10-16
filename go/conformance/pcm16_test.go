@@ -13,6 +13,7 @@ import (
 )
 
 type pcmCase struct {
+	caseHead
 	Op            string  `json:"op"`
 	Input         []any   `json:"input"`
 	ExpectSamples []int   `json:"expectSamples"`
@@ -31,11 +32,25 @@ type pcmCase struct {
 	Script string `json:"script"`
 }
 
+// pcmMembers lists, per op, the case members it reads besides the head and op.
+var pcmMembers = map[string][]string{
+	"encode":    {"input", "expectSamples", "expectHex"},
+	"decode":    {"hex", "sliceFrom", "expectSamples"},
+	"wav":       {"rate", "pcmHex", "expectHex", "expectError"},
+	"validWAV":  {"hex", "capBytes", "expect"},
+	"plausible": {"pcm", "script", "expect"},
+}
+
 func TestPCM16(t *testing.T) {
 	run(t, "pcm16", func(t *testing.T, c fixtures.Case) (fixtures.Outcome, string) {
 		var pc pcmCase
 		if err := decode(c, &pc); err != nil {
 			return fixtures.Fail, err.Error()
+		}
+		if known, ok := pcmMembers[pc.Op]; ok {
+			if p := unknownMembers(c, append([]string{"op"}, known...)...); len(p) > 0 {
+				return outcome(p)
+			}
 		}
 		return outcome(checkPCM(pc))
 	})

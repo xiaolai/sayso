@@ -174,7 +174,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 }
 
 func checkClientEvent(i int, got codexapp.Event, want map[string]any, expand *strings.Replacer) []string {
-	var p []string
+	p := unknownKeys(fmt.Sprintf("events[%d]", i), want, "method", "serverRequest", "noParams", "params", "paramsRaw")
 	if got.Method() != want["method"] {
 		p = append(p, fmt.Sprintf("event %d is %s, want %v", i, got.Method(), want["method"]))
 	}

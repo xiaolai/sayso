@@ -20,6 +20,7 @@ import (
 )
 
 type sessionCase struct {
+	caseHead
 	Kind         string          `json:"kind"`
 	Code         int             `json:"code"`
 	Reason       string          `json:"reason"`
@@ -38,6 +39,12 @@ func TestSession(t *testing.T) {
 		var sc sessionCase
 		if err := decodeExact(c, &sc); err != nil {
 			return fixtures.Fail, err.Error()
+		}
+		if known, ok := sessionExpect[sc.Kind]; ok {
+			p := unknownMembers(c, append([]string{"kind", "expect"}, sessionMembers[sc.Kind]...)...)
+			if p = append(p, unknownKeys("expect", sc.Expect, known...)...); len(p) > 0 {
+				return outcome(p)
+			}
 		}
 		switch sc.Kind {
 		case "close":
@@ -66,6 +73,29 @@ func TestSession(t *testing.T) {
 		}
 		return fixtures.Fail, "unknown kind " + sc.Kind
 	})
+}
+
+// errorKeys are what checkError reads.
+var errorKeys = []string{"class", "fatal", "code", "type", "param", "notInDescription"}
+
+// sessionMembers lists, per kind, the case members it reads besides the head, kind and expect.
+var sessionMembers = map[string][]string{
+	"close":         {"code", "reason"},
+	"error-event":   {"event"},
+	"size":          {"readLimit", "messageBytes"},
+	"unknown-types": {"types", "typeBytes", "rounds"},
+	"event":         {"raw"},
+}
+
+// sessionExpect lists, per kind, the expectation keys its check reads.
+var sessionExpect = map[string][]string{
+	"close":         errorKeys,
+	"error-event":   errorKeys,
+	"size":          errorKeys,
+	"unknown-types": append([]string{"delivered", "distinct"}, errorKeys...),
+	"event": {"type", "sessionType", "model", "responseId", "metadata", "pcmHex", "delta", "status", "statusReason",
+		"usage", "limits", "exhausted", "class", "code", "param", "itemId", "transcript", "ignored", "unknown",
+		"protocolError", "notInDescription"},
 }
 
 // checkError compares a classified error with class, fatal, code, type, param and notInDescription.

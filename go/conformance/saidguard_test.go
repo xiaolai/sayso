@@ -1,7 +1,6 @@
 package conformance
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/xiaolai/sayso/go/internal/fixtures"
@@ -12,10 +11,13 @@ import (
 // implementation.
 func saidGuard(_ *testing.T, c fixtures.Case) (fixtures.Outcome, string) {
 	var f struct {
-		Script, Transcript, Language string
-		Expect                       bool
+		caseHead
+		Script     string `json:"script"`
+		Transcript string `json:"transcript"`
+		Language   string `json:"language"`
+		Expect     bool   `json:"expect"`
 	}
-	if err := json.Unmarshal(c.Raw, &f); err != nil {
+	if err := decode(c, &f); err != nil {
 		return fixtures.Fail, err.Error()
 	}
 	got := saidguard.Matches(f.Transcript, f.Script, f.Language)
