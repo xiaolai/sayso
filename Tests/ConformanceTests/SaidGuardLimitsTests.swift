@@ -34,6 +34,7 @@ final class SaidGuardLimitsTests: XCTestCase {
                 "domain-hyphen-labels", String(repeating: "e-mail.", count: 4000) + "com",
                 String(repeating: "email dot e mail dot ", count: 2000) + "x"
             ),
+            ("quotation-marks", String(repeating: "‘a’ b ", count: 6000), String(repeating: "a’ b ", count: 5999) + "x"),
             ("spellout-words", String(repeating: "vingt et un ", count: 5000), "wrong"),
             ("spellout-groups", String(repeating: "1 000 ", count: 10000), "wrong"),
             ("spellout-long-group", "1" + String(repeating: " 000", count: 16000), "wrong"),

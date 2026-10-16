@@ -4109,5 +4109,149 @@
   "language": "en",
   "expect": false,
   "note": "The elision's apostrophe is still kept after a closed quotation."
+ },
+ {
+  "id": "said-235",
+  "component": "said-guard",
+  "script": "Say ‘the students’ books’.",
+  "transcript": "Say the students’ books.",
+  "language": "en",
+  "expect": true,
+  "note": "A mark inside a quotation may be a possessive: each possible quotation mark is read both as unspoken and as an apostrophe, and the transcript selects."
+ },
+ {
+  "id": "said-236",
+  "component": "said-guard",
+  "script": "Say ‘the students’ books’.",
+  "transcript": "Say the students books.",
+  "language": "en",
+  "expect": true,
+  "note": "The same marks read as a quotation and its closer: every possible quotation mark dropped."
+ },
+ {
+  "id": "said-237",
+  "component": "said-guard",
+  "script": "Say the students’ books.",
+  "transcript": "Say ‘the students’ books’.",
+  "language": "en",
+  "expect": true,
+  "note": "The transcript side does not commit either: its possible quotation marks are read both ways."
+ },
+ {
+  "id": "said-238",
+  "component": "said-guard",
+  "script": "Say ‘the students’ books’.",
+  "transcript": "Say the student’s books.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: an apostrophe in another place is another word."
+ },
+ {
+  "id": "said-239",
+  "component": "said-guard",
+  "script": "Say ‘the students’ books’.",
+  "transcript": "Say the students’.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a missing word is refused whatever the marks are read as."
+ },
+ {
+  "id": "said-240",
+  "component": "said-guard",
+  "script": "‘a’ and ‘b’",
+  "transcript": "a and b",
+  "language": "en",
+  "expect": true,
+  "note": "Two quotations in one sentence."
+ },
+ {
+  "id": "said-241",
+  "component": "said-guard",
+  "script": "‘a’ and ‘b’",
+  "transcript": "a’ and ‘b",
+  "language": "en",
+  "expect": true,
+  "note": "Each mark is read on its own: a transcript that keeps some marks as apostrophes still matches."
+ },
+ {
+  "id": "said-242",
+  "component": "said-guard",
+  "script": "‘a’ and ‘b’",
+  "transcript": "a and c",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different quoted word is refused."
+ },
+ {
+  "id": "said-243",
+  "component": "said-guard",
+  "script": "‘the boss’s’ desk",
+  "transcript": "the boss’s desk",
+  "language": "en",
+  "expect": true,
+  "note": "The apostrophe inside a word is never a quotation mark; the closing mark is."
+ },
+ {
+  "id": "said-244",
+  "component": "said-guard",
+  "script": "‘the boss’s’ desk",
+  "transcript": "the bosss desk",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the apostrophe inside boss’s is kept."
+ },
+ {
+  "id": "said-245",
+  "component": "said-guard",
+  "script": "’Tis ‘done’.",
+  "transcript": "’Tis done.",
+  "language": "en",
+  "expect": true,
+  "note": "An elision, then a quotation: the elision keeps its apostrophe and the quotation is unspoken."
+ },
+ {
+  "id": "said-246",
+  "component": "said-guard",
+  "script": "’Tis ‘done’.",
+  "transcript": "Tis done.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the elision's apostrophe is still required."
+ },
+ {
+  "id": "said-247",
+  "component": "said-guard",
+  "script": "He said ‘it’s the dogs’ bowl’ twice.",
+  "transcript": "He said it’s the dogs bowl twice.",
+  "language": "en",
+  "expect": true,
+  "note": "A contraction inside a quotation keeps its apostrophe; the possible closers are read both ways."
+ },
+ {
+  "id": "said-248",
+  "component": "said-guard",
+  "script": "He said ‘it’s the dogs’ bowl’ twice.",
+  "transcript": "He said its the dogs bowl twice.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the contraction's apostrophe is required."
+ },
+ {
+  "id": "said-249",
+  "component": "said-guard",
+  "script": "‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘end’.",
+  "transcript": "a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and end.",
+  "language": "en",
+  "expect": true,
+  "note": "Four hundred quotations in one sentence, some marks kept by the transcript: each mark is a local choice, so the work is linear."
+ },
+ {
+  "id": "said-250",
+  "component": "said-guard",
+  "script": "‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘a’ and ‘end’.",
+  "transcript": "a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and a and a and a’ and and.",
+  "language": "en",
+  "expect": false,
+  "note": "Control for the long case: the last word differs."
  }
 ]

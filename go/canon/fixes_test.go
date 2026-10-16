@@ -345,22 +345,58 @@ func TestManyORings(t *testing.T) {
 	}
 }
 
-// Words that read each other ("one twenty") keep a piece whole; up to maxCompounds of its compounds are still chosen
-// one by one. Past that bound a piece is read all joined or all split, in time linear in its length.
+// Words that read each other ("one twenty") keep a piece whole, and every compound in it is still chosen on its own:
+// nine, fifty and two hundred number compounds, thirty "twenty-something", and letters spelling number words, read
+// mixed. The lattice grows with the spans, so each stays well inside the bound (the race detector slows it tenfold).
 func TestInteractingCompounds(t *testing.T) {
-	five := "twenty-one twenty-one twenty-one twenty-one twenty-one"
-	if !Equivalent(five, "twentyone twenty one twentyone twenty one twentyone") {
-		t.Error("five number compounds in one piece: a mixed reading refused")
+	mixed := func(word string, n int, joined func(i int) bool) (string, string, string) {
+		var a, b []string
+		for i := range n {
+			a = append(a, word)
+			if joined(i) {
+				b = append(b, strings.ReplaceAll(word, "-", ""))
+			} else {
+				b = append(b, strings.ReplaceAll(word, "-", " "))
+			}
+		}
+		return strings.Join(a, " "), strings.Join(b, " "), strings.Join(b[1:], " ")
 	}
-	if Equivalent(five, "twentyone twenty one twentyone twenty one") {
-		t.Error("five number compounds: a missing one accepted")
-	}
-	long := strings.TrimSpace(strings.Repeat("twenty-one ", 400))
 	start := time.Now()
-	if !Equivalent(long, strings.ReplaceAll(long, "-", "")) || !Equivalent(long, strings.ReplaceAll(long, "-", " ")) {
-		t.Error("400 number compounds: the all-joined or all-split reading refused")
+	for _, c := range []struct {
+		word string
+		n    int
+	}{{"twenty-one", 5}, {"twenty-one", 9}, {"twenty-one", 50}, {"twenty-one", 200}, {"twenty-something", 30}, {"o-n-e", 12}, {"t-w-o", 9}, {"o-h", 20}} {
+		for _, joined := range []func(int) bool{
+			func(i int) bool { return i%2 == 0 }, func(i int) bool { return i%3 == 1 }, func(int) bool { return true },
+			func(int) bool { return false },
+		} {
+			a, b, short := mixed(c.word, c.n, joined)
+			if !Equivalent(a, b) || !Equivalent(b, a) {
+				t.Errorf("%d x %s: the reading %q refused", c.n, c.word, b)
+			}
+			if Equivalent(a, short) {
+				t.Errorf("%d x %s: a missing compound accepted", c.n, c.word)
+			}
+		}
 	}
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("400 number compounds took %v", d)
+	if Equivalent("twenty-one twenty-one", "twentyone twenty") || Equivalent("o-n-e o-n-e", "one one one") {
+		t.Error("a reading with a different word accepted")
+	}
+	// One word of 200 compound hyphens has 20,301 spans, each read once; listing its readings would be 2^200.
+	var long, mixedLong strings.Builder
+	for i := range 200 {
+		long.WriteString("ab-")
+		mixedLong.WriteString("ab")
+		if i%7 == 0 {
+			mixedLong.WriteString(" ")
+		}
+	}
+	long.WriteString("ab")
+	mixedLong.WriteString("ab")
+	if !Equivalent(long.String(), mixedLong.String()) || Equivalent(long.String(), mixedLong.String()+"x") {
+		t.Error("one word of 200 compounds: a mixed reading refused or a longer one accepted")
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Errorf("took %v", d)
 	}
 }

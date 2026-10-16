@@ -66,9 +66,16 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         return t.count == 1 && t[0].value < 128 && isLetter(t[0])
     }
 
+    // Each pass of the loop reads raws[spanStart..<k] into units[unitStart...]; the next pass first gives those units
+    // the readings in which a dropped mark beside a word is an apostrophe.
+    var spanStart = 0
+    var unitStart = 0
     var k = 0
     while k < raws.count {
         defer { k += 1 }
+        svKeepMarks(&units, unitStart, raws[spanStart..<k], partsOf[spanStart..<k])
+        spanStart = k
+        unitStart = units.count
         let r = raws[k]
         switch r.kind {
         case .number:
@@ -202,7 +209,61 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         }
         units.append(svWordUnit(raws, k, low, partsOf[k], english, innerCapital, nextCapital))
     }
+    svKeepMarks(&units, unitStart, raws[spanStart...], partsOf[spanStart...])
     return units
+}
+
+/// Gives the units from `from` on, read from the raws of `span`, the readings in which a mark ``svUnquote(_:)``
+/// dropped beside one of their words is an apostrophe ("‘the students’ books’" may say "the students’ books"). A
+/// reading that spells words as written (their parts, in order, from the first word not yet placed) takes each word's
+/// marks on its own parts; the unit's other readings of those words ("email" for "e-mail", "100" for "a hundred") take
+/// the first word's leading mark and the last word's trailing one. A unit with no reading of the words as written
+/// ("dot" in a domain) is left as it is. Each reading gains at most three spellings per position, so the readings stay
+/// linear in the marks.
+func svKeepMarks(_ units: inout [SvUnit], _ from: Int, _ span: ArraySlice<SvRaw>, _ parts: ArraySlice<[String]>) {
+    var words: [(text: String, lead: Bool, trail: Bool)] = []
+    var marked = false
+    for (r, ps) in zip(span, parts) where r.kind == .word {
+        for (i, p) in ps.enumerated() {
+            words.append((p, i == 0 && r.optLead, i == ps.count - 1 && r.optTrail))
+        }
+        marked = marked || r.optLead || r.optTrail
+    }
+    if !marked { return }
+    func spells(_ seq: SvSeq, _ at: Int) -> Bool {
+        if seq.isEmpty || at + seq.count > words.count { return false }
+        for (p, alt) in seq.enumerated() where !alt.contains(words[at + p].text) { return false }
+        return true
+    }
+    var at = 0
+    for u in units.indices.dropFirst(from) {
+        let unit = units[u]
+        guard let literal = unit.firstIndex(where: { spells($0, at) }) else { continue }
+        let n = unit[literal].count
+        let first = words[at]
+        let last = words[at + n - 1]
+        var out: SvUnit = []
+        for (i, seq) in unit.enumerated() {
+            var ns = seq
+            if i == literal {
+                for p in ns.indices { ns[p] = svWithMarks(ns[p], words[at + p].lead, words[at + p].trail) }
+            } else if ns.count == 1 {
+                ns[0] = svWithMarks(ns[0], first.lead, last.trail)
+            } else if ns.count > 1 {
+                ns[0] = svWithMarks(ns[0], first.lead, false)
+                ns[ns.count - 1] = svWithMarks(ns[ns.count - 1], false, last.trail)
+            }
+            out.append(ns)
+        }
+        units[u] = out
+        at += n
+    }
+}
+
+/// Each token of `alt` in all its ``svMarkReadings(_:lead:trail:)``.
+func svWithMarks(_ alt: SvAlt, _ lead: Bool, _ trail: Bool) -> SvAlt {
+    if !lead && !trail { return alt }
+    return alt.flatMap { svMarkReadings($0, lead: lead, trail: trail) }
 }
 
 func svWordUnit(
