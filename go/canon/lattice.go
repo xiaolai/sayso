@@ -196,12 +196,16 @@ func spans(piece string, work *budget) (spanLattice, bool) {
 				if sub := lowered[at[a]:at[b+1]]; asciiUpTo[b+1]-asciiUpTo[a] == b+1-a && (len(sub) > 3 || !IsAbbreviation(sub)) {
 					f = []string{sub}
 				} else {
-					var text []rune
+					n := 0
+					for k := a; k <= b; k++ {
+						n += stops[k] - starts[k]
+					}
+					if !work.spend(n) { // before the text is built
+						return spanLattice{}, false
+					}
+					text := make([]rune, 0, n)
 					for k := a; k <= b; k++ {
 						text = append(text, rs[starts[k]:stops[k]]...)
-					}
-					if !work.spend(len(text)) {
-						return spanLattice{}, false
 					}
 					f = spanFields(string(text), upper)
 				}
