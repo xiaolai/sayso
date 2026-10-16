@@ -39,6 +39,9 @@ final class AppServerLifecycleTests: XCTestCase {
             }
         }
 
+        /// Records without blocking.
+        func record(_ e: AppServerEvent) { lock.withLock { methods.append(e.method) } }
+
         var seen: [String] { lock.withLock { methods } }
     }
 
@@ -98,7 +101,46 @@ final class AppServerLifecycleTests: XCTestCase {
         XCTAssertEqual(held.events, 0, "events kept after close")
         XCTAssertEqual(held.eventBytes, 0, "event charge kept after close")
         r.release.signal()
+        // The delivery barrier: the event thread ends once the running handler returns, and only then is the record
+        // final.
+        XCTAssertTrue(c.waitForEventLoop(timeout: 5), "the event thread did not end")
         XCTAssertEqual(r.seen, ["first"])
+    }
+
+    /// An event is admitted when the event thread takes it from the queue, under the lock close takes to begin: one
+    /// taken before close began is delivered although close runs before its handler is called, and none queued behind
+    /// it is.
+    func testEventAdmittedBeforeCloseIsDeliveredAndNoneAfter() throws {
+        let (script, cleanup) = try fakeCodex(
+            "call = json.loads(sys.stdin.readline())\nfor m in ['a', 'b', 'c']:\n"
+                + "    print(json.dumps({'method': m}), flush=True)\n"
+                + "print(json.dumps({'id': call['id'], 'result': {}}), flush=True)\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let r = Recorder()
+        let admitted = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let once = NSLock()
+        nonisolated(unsafe) var first = true
+        let c = try start(script, timeout: 5) { e in
+            r.record(e)
+        }
+        c.setTestSeams(eventAdmitted: {
+            let isFirst = once.withLock { () -> Bool in
+                defer { first = false }
+                return first
+            }
+            if isFirst {
+                admitted.signal()
+                release.wait()
+            }
+        })
+        _ = try c.call("echo")  // its reply follows the three events
+        XCTAssertEqual(admitted.wait(timeout: .now() + 5), .success, "no event was admitted")
+        c.close()  // "a" is taken; its handler has not been called
+        release.signal()
+        XCTAssertTrue(c.waitForEventLoop(timeout: 5), "the event thread did not end")
+        XCTAssertEqual(r.seen, ["a"])
+        XCTAssertEqual(c.held.events + c.held.eventBytes, 0)
     }
 
     /// A handler may call `call` and `close` itself: neither waits for the event thread.

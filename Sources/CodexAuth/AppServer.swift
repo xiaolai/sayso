@@ -1053,13 +1053,14 @@ final class AppServerCore: @unchecked Sendable {
         while true {
             eventWake.wait()
             drain: while true {
-                let next = lock.withLock { () -> Next in
-                    if closeStarted { return .stop }
-                    guard let e = events.popFirst() else { return failure != nil ? .stop : .wait }
-                    return .deliver(e)
+                let (next, admitted) = lock.withLock { () -> (Next, (@Sendable () -> Void)?) in
+                    if closeStarted { return (.stop, nil) }
+                    guard let e = events.popFirst() else { return (failure != nil ? .stop : .wait, nil) }
+                    return (.deliver(e), testEventAdmitted)
                 }
                 switch next {
                 case .deliver(let e):
+                    admitted?()
                     onEvent(e)
                     lock.withLock {
                         guard !closeStarted else { return }  // close released the counts with the queue

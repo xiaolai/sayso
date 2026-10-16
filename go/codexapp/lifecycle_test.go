@@ -1,12 +1,14 @@
 package codexapp
 
 import (
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/wire"
 	"go.uber.org/goleak"
 )
 
@@ -282,5 +284,45 @@ func TestEventsHeldAtAnOverflowAreDelivered(t *testing.T) {
 	seen := r.seen()
 	if len(seen) != maxEvents || seen[0] != "e0" || seen[maxEvents-1] != "e"+strconv.Itoa(maxEvents-1) {
 		t.Errorf("delivered %d events (first %q, last %q), want e0..e%d", len(seen), seen[0], seen[len(seen)-1], maxEvents-1)
+	}
+}
+
+// An event is admitted when the loop takes it from the queue, under the lock Close takes to begin. One taken before
+// Close began is delivered even though Close runs before its handler is called; none queued behind it is.
+func TestEventAdmittedBeforeCloseIsDeliveredAndNoneAfter(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	var mu sync.Mutex
+	var seen []string
+	k := &core{logger: slog.New(slog.DiscardHandler), eventWake: make(chan struct{}, 1), dead: make(chan struct{}),
+		onEvent: func(e Event) { mu.Lock(); seen = append(seen, e.Method()); mu.Unlock() }}
+	admitted, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	k.testEventAdmitted = func() { once.Do(func() { close(admitted); <-release }) }
+	for _, m := range []string{"a", "b", "c"} {
+		root, err := wire.Parse([]byte(`{"method":"` + m + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj, err := wire.AsObject(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		k.queueEvent(obj, false)
+	}
+	stopped := make(chan struct{})
+	go func() { k.eventLoop(); close(stopped) }()
+	<-admitted // "a" is taken; its handler has not been called
+	k.closeEvents()
+	close(release)
+	<-stopped
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(seen, " ") != "a" {
+		t.Errorf("delivered %q; want only the event admitted before Close", seen)
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if len(k.events) != 0 || k.eventBytes != 0 || k.eventCount != 0 {
+		t.Errorf("after Close: %d events, %d bytes, count %d held", len(k.events), k.eventBytes, k.eventCount)
 	}
 }

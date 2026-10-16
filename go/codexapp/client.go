@@ -162,9 +162,10 @@ type core struct {
 	exited     chan struct{} // closed when the child has exited (on macOS and Linux it stays unreaped until Close)
 	closeMu    sync.Once
 
-	// Test seam, nil outside this package's tests: testRefusalAdmitted runs after an answer's slot is admitted and
-	// before its bytes are encoded.
+	// Test seams, nil outside this package's tests: testRefusalAdmitted runs after an answer's slot is admitted and
+	// before its bytes are encoded, testEventAdmitted after an event is admitted and before the handler is called.
 	testRefusalAdmitted func()
+	testEventAdmitted   func()
 }
 
 type response struct {
