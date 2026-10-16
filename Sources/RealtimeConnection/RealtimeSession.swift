@@ -203,7 +203,16 @@ public final class RealtimeSession: Sendable {
     /// How many events of each unknown type this session received, API drift: one entry per distinct type as sent,
     /// in the order first seen. Types are told apart by their UTF-8 bytes, as in Go: two canonically equivalent
     /// spellings are two types on the wire, so a `String`-keyed dictionary, which would merge them, is not used.
+    /// The accounting is bounded by ``maximumUnknownTypes`` and ``maximumUnknownTypeBytes``.
     public var unknownCounts: [UnknownTypeCount] { inbox.unknownCounts }
+
+    /// At most this many distinct unknown types are counted, as in Go (`MaxUnknownTypes`). An event of one more ends
+    /// the session as `protocol`, undelivered, as a message over the read limit does: the provider chooses the
+    /// types, and every one counted is kept for the session's life.
+    public static let maximumUnknownTypes = 256
+    /// At most this many bytes of distinct unknown types, in UTF-8, are counted, as in Go (`MaxUnknownTypeBytes`);
+    /// past it, as past ``maximumUnknownTypes``.
+    public static let maximumUnknownTypeBytes = 64 << 10
 
     /// Sends a normal close and drops the connection if the peer has not finished closing within 2 s, then waits for
     /// the transport to complete, as Go waits for its connection: a dropped task always completes. It waits for the
@@ -265,7 +274,12 @@ public final class RealtimeSession: Sendable {
             }
             do {
                 let decoded = try RealtimeMessage(raw: bytes)
-                if case .unknown(let type) = decoded.event { inbox.countUnknown(type) }
+                if case .unknown(let type) = decoded.event, !inbox.countUnknown(type) {
+                    inbox.finish(
+                        RealtimeError(.protocol, message: "realtime unknown event types exceed the accounting budget"))
+                    task.cancel(with: .policyViolation, reason: nil)
+                    return
+                }
                 inbox.push(.success(decoded))
             } catch {
                 inbox.push(.failure(error))
@@ -426,6 +440,7 @@ final class Inbox: @unchecked Sendable {
     private var space: CheckedContinuation<Bool, Never>?
     private var unknown: [UnknownTypeCount] = []
     private var unknownIndex: [[UInt8]: Int] = [:]
+    private var unknownBytes = 0
 
     var isClosing: Bool {
         lock.lock()
@@ -439,16 +454,23 @@ final class Inbox: @unchecked Sendable {
         return unknown
     }
 
-    func countUnknown(_ type: String) {
+    /// Counts one event of `type`; false, counting nothing, when a new type would exceed the budget
+    /// (``RealtimeSession/maximumUnknownTypes``, ``RealtimeSession/maximumUnknownTypeBytes``).
+    func countUnknown(_ type: String) -> Bool {
         let key = Array(type.utf8)
         lock.lock()
+        defer { lock.unlock() }
         if let at = unknownIndex[key] {
             unknown[at].count += 1
-        } else {
-            unknownIndex[key] = unknown.count
-            unknown.append(UnknownTypeCount(type: type, count: 1))
+            return true
         }
-        lock.unlock()
+        guard unknown.count < RealtimeSession.maximumUnknownTypes,
+            unknownBytes + key.count <= RealtimeSession.maximumUnknownTypeBytes
+        else { return false }
+        unknownBytes += key.count
+        unknownIndex[key] = unknown.count
+        unknown.append(UnknownTypeCount(type: type, count: 1))
+        return true
     }
 
     /// The waiters in arrival order, taken from the queue; called under the lock.

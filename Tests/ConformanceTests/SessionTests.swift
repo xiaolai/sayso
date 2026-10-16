@@ -23,6 +23,9 @@ enum SessionCheck {
         case "event":
             guard let raw = c["raw"] as? String else { return ["event case without raw"] }
             return event(raw, want)
+        case "unknown-types":
+            return try unknownTypes(
+                types: c["types"] as? Int ?? 0, size: c["typeBytes"] as? Int ?? 0, rounds: c["rounds"] as? Int ?? 0, want)
         default:
             return ["unknown kind \(c["kind"] ?? "nil")"]
         }
@@ -64,6 +67,56 @@ enum SessionCheck {
         }
         if case .failure(let error) = result { return FakeOpenAI.checkError(error, want) }
         return ["a message over the limit was delivered"]
+    }
+
+    /// The fixtures' unknown type `i`: "drift.<i>." padded with "a" to `size` bytes.
+    static func driftType(_ i: Int, size: Int) -> String {
+        let head = "drift.\(i)."
+        return head + String(repeating: "a", count: max(0, size - head.utf8.count))
+    }
+
+    /// Sends `rounds` rounds of `types` distinct unknown types and compares what is delivered and counted, and the
+    /// error that ends the session, if any, with the budget.
+    static func unknownTypes(types: Int, size: Int, rounds: Int, _ want: [String: Any]) throws -> [String] {
+        let messages = (0..<rounds).flatMap { _ in
+            (0..<types).map { Data(#"{"type":"\#(driftType($0, size: size))"}"#.utf8) }
+        }
+        let server = try FakeWebSocketServer(messages: messages)
+        defer { server.stop() }
+        let client = try FakeOpenAI.client(port: server.port)
+        let configuration = RealtimeSession.Configuration(
+            url: RealtimeSession.url(model: "m", base: URL(string: "ws://127.0.0.1:\(server.port)")!),
+            handshakeTimeout: 5, readLimit: 1 << 20)
+        let secret = ClientSecret(bearer: "ek_conformance", expiresAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let total = types * rounds
+        let result = FakeOpenAI.blocking { () async throws -> (Int, Error?, [UnknownTypeCount]) in
+            let session = try await RealtimeSession.open(client: client, secret: secret, configuration: configuration)
+            var delivered = 0
+            var failure: Error?
+            while delivered < total {
+                do {
+                    _ = try await session.next()
+                    delivered += 1
+                } catch {
+                    failure = error
+                    break
+                }
+            }
+            let counts = session.unknownCounts
+            await session.close()
+            return (delivered, failure, counts)
+        }
+        guard case .success(let (delivered, failure, counts)) = result else { return ["open: \(result)"] }
+        var p: [String] = []
+        if !FakeOpenAI.same(delivered, want["delivered"] ?? NSNull()) { p.append("delivered \(delivered), want \(want["delivered"] ?? "nil")") }
+        if !FakeOpenAI.same(counts.count, want["distinct"] ?? NSNull()) { p.append("counted \(counts.count) types, want \(want["distinct"] ?? "nil")") }
+        if want["class"] == nil || want["class"] is NSNull {
+            if let failure { p.append("ended: \(failure)") }
+            if let off = counts.first(where: { $0.count != rounds }) { p.append("\(off.type) counted \(off.count) times, want \(rounds)") }
+            return p
+        }
+        guard let failure else { return p + ["the session did not end past the budget"] }
+        return p + FakeOpenAI.checkError(failure, want)
     }
 
     /// Flattens a decoded event into the fixture's expectation keys.

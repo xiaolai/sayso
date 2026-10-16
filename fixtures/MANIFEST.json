@@ -1,5 +1,5 @@
 {
- "count": 824,
+ "count": 828,
  "fixtures": [
   {
    "id": "app-ready",
@@ -4993,6 +4993,30 @@
   },
   {
    "id": "ws-size-mib-over",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-at-count-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-past-count-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-at-byte-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-past-byte-budget",
    "file": "ws/ws.json",
    "component": "session",
    "requires": []

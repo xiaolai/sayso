@@ -143,6 +143,27 @@ final class SessionWriteTests: XCTestCase {
         await session.close()
     }
 
+    // MARK: Unknown-type budget
+
+    func testUnknownTypeBudget() {
+        let byCount = Inbox()
+        for i in 0..<RealtimeSession.maximumUnknownTypes { XCTAssertTrue(byCount.countUnknown("drift.\(i)")) }
+        XCTAssertFalse(byCount.countUnknown("drift.one-more"), "a type past the count budget was counted")
+        XCTAssertTrue(byCount.countUnknown("drift.0"), "a type already counted is still counted")
+        XCTAssertEqual(byCount.unknownCounts.count, RealtimeSession.maximumUnknownTypes)
+        XCTAssertEqual(byCount.unknownCounts.first?.count, 2)
+
+        let byBytes = Inbox()
+        let size = 1024
+        func type(_ i: Int) -> String {
+            let head = "drift.\(i)."
+            return head + String(repeating: "a", count: size - head.utf8.count)
+        }
+        for i in 0..<(RealtimeSession.maximumUnknownTypeBytes / size) { XCTAssertTrue(byBytes.countUnknown(type(i))) }
+        XCTAssertFalse(byBytes.countUnknown("x"), "a type past the byte budget was counted")
+        XCTAssertEqual(byBytes.unknownCounts.count, RealtimeSession.maximumUnknownTypeBytes / size)
+    }
+
     // MARK: Checking before the secret
 
     private final class CountingSource: SecretSource, @unchecked Sendable {

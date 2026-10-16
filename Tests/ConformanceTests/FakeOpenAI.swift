@@ -143,7 +143,10 @@ final class FakeWebSocketServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "fake-openai-ws")
     let port: UInt16
 
-    init(message: Data) throws {
+    convenience init(message: Data) throws { try self.init(messages: [message]) }
+
+    /// Sends `messages` in order to each client, then waits for the client's first message or close.
+    init(messages: [Data]) throws {
         let parameters = FakeOpenAI.loopbackParameters(NWParameters(tls: nil, tcp: .init()))
         let options = NWProtocolWebSocket.Options()
         options.autoReplyPing = true
@@ -156,7 +159,9 @@ final class FakeWebSocketServer: @unchecked Sendable {
                 guard case .ready = state else { return }
                 let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
                 let context = NWConnection.ContentContext(identifier: "message", metadata: [metadata])
-                connection.send(content: message, contentContext: context, isComplete: true, completion: .idempotent)
+                for message in messages {
+                    connection.send(content: message, contentContext: context, isComplete: true, completion: .idempotent)
+                }
                 connection.receiveMessage { _, _, _, _ in connection.cancel() }
             }
             connection.start(queue: queue)

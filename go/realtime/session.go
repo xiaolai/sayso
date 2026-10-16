@@ -29,6 +29,15 @@ const closeGrace = 2 * time.Second
 // ErrClosed is returned by Next and Send after Close.
 var ErrClosed = errors.New("realtime: session closed")
 
+// The unknown-type accounting budget, as in Swift (spec/session.md): at most MaxUnknownTypes distinct unknown types,
+// totalling at most MaxUnknownTypeBytes bytes, are counted. An event of one more ends the session as a protocol
+// error, undelivered, as a message over the read limit does: the provider chooses the types, and every one counted is
+// kept for the session's life.
+const (
+	MaxUnknownTypes     = 256
+	MaxUnknownTypeBytes = 64 << 10
+)
+
 // WebSocketURL is the realtime endpoint for model under base (openaihttp.APIBase in production). The https scheme is
 // kept: the library upgrades it, and the origin policy only knows https.
 func WebSocketURL(base, model string) string {
@@ -69,8 +78,9 @@ type Session struct {
 	readerDone chan struct{}
 	readErr    error // set by the reader before it closes events
 
-	unknownMu sync.Mutex
-	unknown   map[string]int
+	unknownMu    sync.Mutex
+	unknown      map[string]int
+	unknownBytes int
 
 	closeOnce sync.Once
 }
@@ -185,8 +195,10 @@ func (s *Session) readLoop() {
 			s.trace("server", data)
 		}
 		ev, err := DecodeEvent(data)
-		if u, ok := ev.(Unknown); ok && err == nil {
-			s.countUnknown(u.Type) // delivered too: an app may read a type the package does not decode
+		if u, ok := ev.(Unknown); ok && err == nil && !s.countUnknown(u.Type) { // delivered too: an app may read it
+			s.readErr = &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "realtime: unknown event types exceed the accounting budget"}
+			_ = s.conn.CloseNow()
+			return
 		}
 		select {
 		case s.events <- item{ev: ev, err: err}:
@@ -197,14 +209,24 @@ func (s *Session) readLoop() {
 	}
 }
 
-func (s *Session) countUnknown(typ string) {
+// countUnknown counts one event of typ; false, counting nothing, when a new type would exceed the budget
+// (MaxUnknownTypes, MaxUnknownTypeBytes).
+func (s *Session) countUnknown(typ string) bool {
 	s.unknownMu.Lock()
+	if _, seen := s.unknown[typ]; !seen {
+		if len(s.unknown) >= MaxUnknownTypes || s.unknownBytes+len(typ) > MaxUnknownTypeBytes {
+			s.unknownMu.Unlock()
+			return false
+		}
+		s.unknownBytes += len(typ)
+	}
 	s.unknown[typ]++
 	n := s.unknown[typ]
 	s.unknownMu.Unlock()
 	if n == 1 {
 		s.logger.Debug("realtime: unknown event type", "type", secret.Scrub(typ))
 	}
+	return true
 }
 
 // Unknown returns how many events of each unknown type this session received: API drift (NET-04).

@@ -100,9 +100,9 @@ final class SessionCloseTests: XCTestCase {
 
     func testUnknownTypesAreCountedByTheirBytes() {
         let inbox = Inbox()
-        inbox.countUnknown("type.\u{00E9}")
-        inbox.countUnknown("type.e\u{0301}")
-        inbox.countUnknown("type.\u{00E9}")
+        XCTAssertTrue(inbox.countUnknown("type.\u{00E9}"))
+        XCTAssertTrue(inbox.countUnknown("type.e\u{0301}"))
+        XCTAssertTrue(inbox.countUnknown("type.\u{00E9}"))
         let counts = inbox.unknownCounts
         XCTAssertEqual(counts.count, 2)
         XCTAssertEqual(counts.map(\.count), [2, 1])
