@@ -180,9 +180,10 @@ public final class AppServerClient: @unchecked Sendable {
         public var experimentalAPI: Bool
         /// When set, receives every notification and every server request (already refused), in the order the child
         /// wrote them, one at a time on a thread of its own: the reader never waits for it. A reply may reach its
-        /// caller before the handler has seen the events written before it. Events still queued beyond 8 MiB (a
-        /// handler that does not keep up) fail the client. After a failure the events already queued are still
-        /// delivered; after ``AppServerClient/close()``, none that has not started. nil ignores notifications.
+        /// caller before the handler has seen the events written before it. Events held beyond 8 MiB (each charged
+        /// its method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, fail the
+        /// client. After a failure the events already queued are still delivered; after ``AppServerClient/close()``,
+        /// none that has not started. nil ignores notifications.
         public var onEvent: (@Sendable (AppServerEvent) -> Void)?
 
         public init(
@@ -387,14 +388,21 @@ final class AppServerCore: @unchecked Sendable {
     /// Bounds how long close waits for queued refusals to be written before it closes stdin.
     private static let refusalFlush: TimeInterval = 0.1
 
-    /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes` is their size, at most
-    /// `eventCap`. Guarded by `lock`.
+    /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes`
+    /// and `eventCount` are what they are charged, the one being delivered included, at most `eventCap` and
+    /// `maxEvents`. Guarded by `lock`.
     private let onEvent: (@Sendable (AppServerEvent) -> Void)?
     private var events: [AppServerEvent] = []
     private var eventBytes = 0
+    private var eventCount = 0
     private let eventWake = DispatchSemaphore(value: 0)
-    /// Bounds the events queued for a handler that does not keep up.
+    /// Bounds the events held for a handler that does not keep up.
     private static let eventCap = 2 * AppServerClient.maxLine
+    /// What each held event is charged on top of its method and params bytes, so a flood of tiny events reaches
+    /// `eventCap` too.
+    private static let eventOverhead = 64
+    /// Bounds the number of events held, whatever their size.
+    private static let maxEvents = 1 << 16
     private let exited = DispatchSemaphore(value: 0)
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
@@ -840,20 +848,22 @@ final class AppServerCore: @unchecked Sendable {
     }
 
     /// Hands one notification or server request to ``eventLoop()``. Without a handler it does nothing, so a
-    /// notification is ignored as before; a notification whose method is absent or not a string is ignored too.
-    /// The params are the exact bytes of the line, as Go keeps them. Events beyond `eventCap`, from a handler that
-    /// does not keep up, fail the client.
+    /// notification is ignored as before; a notification whose method is absent or not a string is ignored too, and
+    /// so is every event once the client has failed. The params are the exact bytes of the line,
+    /// as Go keeps them. Events held beyond `eventCap` or `maxEvents`, from a handler that does not keep up, fail the
+    /// client.
     private func queueEvent<C: Collection>(_ m: [String: Any], line: C, serverRequest: Bool) where C.Element == UInt8 {
         guard onEvent != nil, let method = m["method"] as? String else { return }
         // The line was validated, so this reads.
         let params = (try? WireJSON.memberBytes(Data(line), "params")) ?? nil
         let event = AppServerEvent(method: method, params: params ?? Data(), isServerRequest: serverRequest)
-        let size = method.utf8.count + event.params.count
+        let size = Self.size(event)
         let over = lock.withLock { () -> Bool? in
             guard failure == nil else { return nil }  // the client is done: nothing more is delivered
-            guard eventBytes + size <= Self.eventCap else { return true }
+            guard eventBytes + size <= Self.eventCap, eventCount + 1 <= Self.maxEvents else { return true }
             events.append(event)
             eventBytes += size
+            eventCount += 1
             return false
         }
         switch over {
@@ -863,8 +873,12 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
+    /// What an event is charged against `eventCap`.
+    private static func size(_ e: AppServerEvent) -> Int { eventOverhead + e.method.utf8.count + e.params.count }
+
     /// Calls the handler with each queued event, one at a time, in the order the child wrote them. After the child
-    /// fails or exits it still delivers what was queued; close stops it before the next event.
+    /// fails or exits it still delivers what was queued; close stops it before the next event. The event being
+    /// delivered stays charged against the bounds until the handler returns.
     private func eventLoop() {
         guard let onEvent else { return }
         enum Next {
@@ -878,12 +892,15 @@ final class AppServerCore: @unchecked Sendable {
                 let next = lock.withLock { () -> Next in
                     if closeStarted { return .stop }
                     guard !events.isEmpty else { return failure != nil ? .stop : .wait }
-                    let e = events.removeFirst()
-                    eventBytes -= e.method.utf8.count + e.params.count
-                    return .deliver(e)
+                    return .deliver(events.removeFirst())
                 }
                 switch next {
-                case .deliver(let e): onEvent(e)
+                case .deliver(let e):
+                    onEvent(e)
+                    lock.withLock {
+                        eventBytes -= Self.size(e)
+                        eventCount -= 1
+                    }
                 case .wait: break drain
                 case .stop: return
                 }

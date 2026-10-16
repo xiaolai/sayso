@@ -66,9 +66,10 @@ type Config struct {
 	ExperimentalAPI bool
 	// OnEvent, when set, receives every notification and every server request (already refused), in the order the
 	// child wrote them, one at a time from a goroutine of its own: the reader never waits for it. A reply may reach
-	// its caller before OnEvent has seen the events written before it. Events still queued beyond 8 MiB (a handler
-	// that does not keep up) are a codex-error, which fails the client. After a failure the events already queued
-	// are still delivered; after Close, none that has not started. Unset, notifications are ignored.
+	// its caller before OnEvent has seen the events written before it. Events held beyond 8 MiB (each charged its
+	// method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, are a codex-error
+	// that fails the client. After a failure the events already queued are still delivered; after Close, none that
+	// has not started. Unset, notifications are ignored.
 	OnEvent func(Event)
 }
 
@@ -145,11 +146,13 @@ type core struct {
 	refusalsQueued int64
 	refusalsDone   int64
 	refusalWake    chan struct{} // one pending wake-up for refuseLoop
-	// events wait for onEvent, delivered in order by eventLoop; eventBytes is their size, at most eventCap. Guarded by
-	// mu. closing is set by Close, so no event starts after it.
+	// events wait for onEvent, delivered in order by eventLoop; eventBytes and eventCount are what they are charged,
+	// the one being delivered included, at most eventCap and maxEvents. Guarded by mu. closing is set by Close, so no
+	// event starts after it.
 	onEvent    func(Event)
-	events     []Event
+	events     []eventData
 	eventBytes int
+	eventCount int
 	eventWake  chan struct{}
 	closing    atomic.Bool
 

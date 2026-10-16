@@ -88,7 +88,8 @@ temporary folder; `relative`; `missing`; `file`; absent: none), `experimentalAPI
 in order. Its `expect` adds `startFails`, `calls` (`ok` or `error` per call), `callError` (text every failed call's
 error contains), `events` (exactly these, in order:
 `method`; `params`, compared as JSON, with `$work` and `$callerCwd`, the harness's own working directory, after links
-are followed, replaced; `paramsRaw`, the exact bytes; `noParams: true` for none; `serverRequest: true`), `eventCount`, and `eventSequence` (the params
+are followed, replaced; `paramsRaw`, the exact bytes; `noParams: true` for none; `serverRequest: true`), `eventCount`,
+and `eventSequence` (the params
 member that holds each event's index); the other keys above apply too. The harness waits up to 5 s for the expected
 number of events, then 100 ms for any that should not come, before it closes the client.
 

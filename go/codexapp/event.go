@@ -11,9 +11,16 @@ import (
 	"github.com/xiaolai/sayso/go/secret"
 )
 
-// eventCap bounds the events queued for a handler that does not keep up: beyond it the client fails, as for
-// refusals.
-const eventCap = 2 * maxLine
+const (
+	// eventCap bounds the events held for a handler that does not keep up, the one being delivered included: beyond
+	// it the client fails, as for refusals.
+	eventCap = 2 * maxLine
+	// eventOverhead is what each held event is charged on top of its method and params bytes, so a flood of tiny
+	// events reaches eventCap too.
+	eventOverhead = 64
+	// maxEvents bounds the number of events held, whatever their size.
+	maxEvents = 1 << 16
+)
 
 // Event is a message from the child that is not a reply: a notification, or a server request, which the client has
 // already answered with an error (Request). Its contents are held where neither formatting, by any verb and through
@@ -50,6 +57,9 @@ func (e Event) Params() json.RawMessage { return slices.Clone(e.data().params) }
 // Request reports a server request (it had an id), which was refused before the event was queued.
 func (e Event) Request() bool { return e.data().request }
 
+// size is what the event is charged against eventCap.
+func (d eventData) size() int { return eventOverhead + len(d.method) + len(d.params) }
+
 // String shows the kind, the method scrubbed and quoted (so a control character in it cannot forge a log line or
 // reach a terminal), and the size of the params.
 func (e Event) String() string {
@@ -75,8 +85,9 @@ func (e Event) LogValue() slog.Value { return slog.StringValue(e.String()) }
 func (e Event) MarshalJSON() ([]byte, error) { return json.Marshal(e.String()) }
 
 // queueEvent hands one notification or server request to the event goroutine. Without a handler it does nothing, so
-// a notification is ignored as before. A notification whose method is absent or not a string is ignored too. Events
-// beyond eventCap, from a handler that does not keep up, fail the client.
+// a notification is ignored as before. A notification whose method is absent or not a string is ignored too, and so
+// is every event once the client has failed. Events held beyond eventCap or maxEvents, from a
+// handler that does not keep up, fail the client.
 func (k *core) queueEvent(m wire.Object, request bool) {
 	if k.onEvent == nil {
 		return
@@ -87,18 +98,19 @@ func (k *core) queueEvent(m wire.Object, request bool) {
 	}
 	var params json.RawMessage
 	if p, present := m["params"]; present {
-		params = json.RawMessage(p.Raw()) // a copy: Raw returns a new string
+		params = json.RawMessage(p.Raw()) // the exact bytes, copied: Raw returns a new string
 	}
-	size := len(method) + len(params)
+	d := eventData{method, params, request}
 	k.mu.Lock()
 	if k.failure != nil { // the client is done: nothing more is delivered
 		k.mu.Unlock()
 		return
 	}
-	over := k.eventBytes+size > eventCap
+	over := k.eventBytes+d.size() > eventCap || k.eventCount+1 > maxEvents
 	if !over {
-		k.events = append(k.events, newEvent(method, params, request))
-		k.eventBytes += size
+		k.events = append(k.events, d)
+		k.eventBytes += d.size()
+		k.eventCount++
 	}
 	k.mu.Unlock()
 	if over {
@@ -112,7 +124,8 @@ func (k *core) queueEvent(m wire.Object, request bool) {
 }
 
 // eventLoop calls the handler with each queued event, one at a time, in the order the child wrote them. After the
-// child fails or exits it still delivers what was queued; Close stops it before the next event.
+// child fails or exits it still delivers what was queued; Close stops it before the next event. The event being
+// delivered stays charged against the bounds until the handler returns.
 func (k *core) eventLoop() {
 	for {
 		select {
@@ -132,13 +145,15 @@ func (k *core) eventLoop() {
 				}
 				break
 			}
-			e := k.events[0]
-			k.events[0] = Event{}
+			d := k.events[0]
+			k.events[0] = eventData{}
 			k.events = k.events[1:]
-			d := e.data()
-			k.eventBytes -= len(d.method) + len(d.params)
 			k.mu.Unlock()
-			k.onEvent(e)
+			k.onEvent(newEvent(d.method, d.params, d.request))
+			k.mu.Lock()
+			k.eventBytes -= d.size()
+			k.eventCount--
+			k.mu.Unlock()
 		}
 	}
 }
