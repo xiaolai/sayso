@@ -155,7 +155,12 @@ func (k *core) eventLoop() {
 			if k.testEventAdmitted != nil {
 				k.testEventAdmitted()
 			}
-			k.onEvent(newEvent(d.method, d.params, d.request))
+			c := k.owner.Value()
+			if c == nil {
+				return // collected: its cleanup closes the child
+			}
+			k.onEvent(c, newEvent(d.method, d.params, d.request))
+			c = nil // held no longer than the handler runs
 			k.mu.Lock()
 			if !k.eventsClosed { // Close cleared the counts with the queue
 				k.eventBytes -= d.size()

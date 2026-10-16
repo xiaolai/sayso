@@ -58,7 +58,8 @@ final class AppServerQueueTests: XCTestCase {
     {
         try AppServerClient.start(
             AppServerClient.Configuration(
-                bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: timeout, onEvent: onEvent))
+                bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: timeout,
+                onEvent: onEvent.map { handle in { @Sendable _, e in handle(e) } }))
     }
 
     /// A failure drops the outbound queue: answers the child never read are not kept, and their charge is released.

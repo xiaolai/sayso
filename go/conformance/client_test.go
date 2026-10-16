@@ -43,13 +43,13 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	switch s.Handler {
 	case "":
 	case "record":
-		cfg.OnEvent = func(e codexapp.Event) {
+		cfg.OnEvent = func(_ *codexapp.Client, e codexapp.Event) {
 			mu.Lock()
 			events = append(events, e)
 			mu.Unlock()
 		}
 	case "block":
-		cfg.OnEvent = func(codexapp.Event) { <-block }
+		cfg.OnEvent = func(*codexapp.Client, codexapp.Event) { <-block }
 	default:
 		return []string{"unknown handler " + s.Handler}
 	}

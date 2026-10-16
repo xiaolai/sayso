@@ -184,14 +184,18 @@ public final class AppServerClient: @unchecked Sendable {
         /// its method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, fail the
         /// client. After a failure the events already queued are still delivered. Once ``AppServerClient/close()``
         /// has begun no further event is admitted; one already admitted may still be running, and close does not
-        /// wait for it, so the handler may call the client or close it itself. nil ignores notifications.
-        public var onEvent: (@Sendable (AppServerEvent) -> Void)?
+        /// wait for it, so the handler may call the client it is given, or close it. nil ignores notifications.
+        ///
+        /// The client is passed rather than captured: the event thread holds it only while the handler runs, so an
+        /// unclosed client is still released and its child ended. A handler that keeps the client itself keeps it
+        /// alive.
+        public var onEvent: (@Sendable (AppServerClient, AppServerEvent) -> Void)?
 
         public init(
             bin: String, codexHome: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment,
             timeout: TimeInterval, clientName: String = "sayso", guardStart: (@Sendable (String) throws -> Void)? = nil,
             log: (@Sendable (String) -> Void)? = nil, workingDirectory: String? = nil, experimentalAPI: Bool = false,
-            onEvent: (@Sendable (AppServerEvent) -> Void)? = nil
+            onEvent: (@Sendable (AppServerClient, AppServerEvent) -> Void)? = nil
         ) {
             self.bin = bin
             self.codexHome = codexHome
@@ -267,6 +271,7 @@ public final class AppServerClient: @unchecked Sendable {
             core: try AppServerCore(
                 bin: cfg.bin, env: env, timeout: cfg.timeout, log: cfg.log, directory: cfg.workingDirectory,
                 onEvent: cfg.onEvent))
+        c.core.attach(c)
         onSpawn?(c)
         do {
             var capabilities: [String: Any] = [:]
@@ -417,7 +422,10 @@ final class AppServerCore: @unchecked Sendable {
     /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes`
     /// and `eventCount` are what they are charged, the one being delivered included, at most `eventCap` and
     /// `maxEvents`. Guarded by `lock`.
-    private let onEvent: (@Sendable (AppServerEvent) -> Void)?
+    private let onEvent: (@Sendable (AppServerClient, AppServerEvent) -> Void)?
+    /// The client the handler is given, held weakly: the event thread keeps it only while it delivers. Guarded by
+    /// `lock`.
+    private weak var owner: AppServerClient?
     private var events = FIFO<AppServerEvent>()
     private var eventBytes = 0
     private var eventCount = 0
@@ -504,7 +512,7 @@ final class AppServerCore: @unchecked Sendable {
 
     init(
         bin: String, env: [String: String], timeout: TimeInterval, log: (@Sendable (String) -> Void)?,
-        directory: String?, onEvent: (@Sendable (AppServerEvent) -> Void)?
+        directory: String?, onEvent: (@Sendable (AppServerClient, AppServerEvent) -> Void)?
     ) throws {
         self.timeout = timeout
         self.log = log
@@ -566,7 +574,6 @@ final class AppServerCore: @unchecked Sendable {
         let out = outPipe[0], err = errPipe[0]
         Self.thread { [self] in readLoop(out) }
         Self.thread { [self] in writeLoop() }
-        if onEvent != nil { Self.thread { [self] in eventLoop() } }
         Self.thread { [self] in
             stderrLoop(err)
             stderrDone.signal()
@@ -579,6 +586,13 @@ final class AppServerCore: @unchecked Sendable {
             lock.withLock { lost = !held }
             exited.signal()
         }
+    }
+
+    /// Links the client the handler is given and starts the event thread, which needs it; events read before are
+    /// held until then.
+    func attach(_ client: AppServerClient) {
+        lock.withLock { owner = client }
+        if onEvent != nil { Self.thread { [self] in eventLoop() } }
     }
 
     var stderr: String {
@@ -1113,7 +1127,9 @@ final class AppServerCore: @unchecked Sendable {
                 switch next {
                 case .deliver(let e):
                     admitted?()
-                    onEvent(e)
+                    // Released: its deinit closes the child.
+                    guard let client = lock.withLock({ owner }) else { return }
+                    onEvent(client, e)
                     lock.withLock {
                         guard !closeStarted else { return }  // close released the counts with the queue
                         eventBytes -= Self.size(e)

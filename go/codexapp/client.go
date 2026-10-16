@@ -19,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"weak"
 
 	"github.com/xiaolai/sayso/go/internal/wire"
 
@@ -70,8 +71,11 @@ type Config struct {
 	// method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, are a codex-error
 	// that fails the client. After a failure the events already queued are still delivered. Once Close has begun no
 	// further event is admitted; one already admitted may still be running, and Close does not wait for it, so the
-	// handler may call Close or Call itself. Unset, notifications are ignored.
-	OnEvent func(Event)
+	// handler may call Close or Call itself, on the client it is given. Unset, notifications are ignored.
+	//
+	// The client is passed rather than captured: the event goroutine holds it only while the handler runs, so an
+	// unclosed client is still collected and its child ended. A handler that keeps the client itself keeps it alive.
+	OnEvent func(*Client, Event)
 }
 
 // String names the executable only: Env may hold credentials.
@@ -147,7 +151,9 @@ type core struct {
 	// events wait for onEvent, delivered in order by eventLoop; eventBytes and eventCount are what they are charged,
 	// the one being delivered included, at most eventCap and maxEvents. eventsClosed is set when Close begins, so no
 	// event is admitted after it. Guarded by mu.
-	onEvent      func(Event)
+	onEvent func(*Client, Event)
+	// owner is the client the handler is given, held weakly: the event goroutine keeps it only while it delivers.
+	owner        weak.Pointer[Client]
 	events       []eventData
 	eventBytes   int
 	eventCount   int
@@ -222,6 +228,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		eventWake:  make(chan struct{}, 1),
 	}
 	c := &Client{k: k}
+	k.owner = weak.Make(c)
 	if k.logger == nil {
 		k.logger = slog.New(slog.DiscardHandler)
 	}

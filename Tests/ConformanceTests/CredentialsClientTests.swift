@@ -23,8 +23,8 @@ extension CredentialWorld {
             }, experimentalAPI: s["experimentalAPI"] as? Bool ?? false)
         switch s["handler"] as? String ?? "" {
         case "": break
-        case "record": config.onEvent = { e in events.value.append(e) }
-        case "block": config.onEvent = { _ in block.wait() }
+        case "record": config.onEvent = { _, e in events.value.append(e) }
+        case "block": config.onEvent = { _, _ in block.wait() }
         case let other: return ["unknown handler \(other)"]
         }
         let work = root + "/work"

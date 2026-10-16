@@ -50,7 +50,8 @@ final class AppServerLifecycleTests: XCTestCase {
     {
         try AppServerClient.start(
             AppServerClient.Configuration(
-                bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: timeout, onEvent: onEvent))
+                bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: timeout,
+                onEvent: onEvent.map { handle in { @Sendable _, e in handle(e) } }))
     }
 
     private func waitFor(_ what: String, _ cond: () -> Bool) {
@@ -59,6 +60,36 @@ final class AppServerLifecycleTests: XCTestCase {
             if Date() > deadline { return XCTFail("timed out waiting for \(what)") }
             usleep(2000)
         }
+    }
+
+    /// A handler that uses the client it is given does not keep the client alive: released without a close, it is
+    /// still freed, and its deinit ends the child. As in Go.
+    func testHandlerUsingItsClientLetsItBeReleased() throws {
+        let (script, cleanup) = try fakeCodex("print(json.dumps({'method': 'hello'}), flush=True)\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let seen = DispatchSemaphore(value: 0)
+        final class PID: @unchecked Sendable {
+            let lock = NSLock()
+            var value: pid_t = 0
+        }
+        let given = PID()
+        weak var released: AppServerClient?
+        var pid: pid_t = 0
+        try autoreleasepool {
+            let c = try AppServerClient.start(
+                AppServerClient.Configuration(
+                    bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 5,
+                    onEvent: { client, _ in
+                        given.lock.withLock { given.value = client.pid }
+                        seen.signal()
+                    }))
+            pid = c.pid
+            released = c
+            XCTAssertEqual(seen.wait(timeout: .now() + 5), .success, "the event was not delivered")
+        }
+        XCTAssertEqual(given.lock.withLock { given.value }, pid, "the handler was given another client")
+        waitFor("the client to be released") { released == nil }
+        waitFor("the child to end") { kill(pid, 0) != 0 }
     }
 
     /// A host that ignores SIGCHLD has the kernel reap the child at exit, so by the time close runs its ID, and its

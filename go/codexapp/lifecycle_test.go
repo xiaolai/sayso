@@ -2,11 +2,13 @@ package codexapp
 
 import (
 	"log/slog"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"go.uber.org/goleak"
@@ -29,7 +31,7 @@ func newRecorder() *eventRecorder {
 	return &eventRecorder{entered: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (r *eventRecorder) handle(e Event) {
+func (r *eventRecorder) handle(_ *Client, e Event) {
 	r.mu.Lock()
 	r.methods = append(r.methods, e.Method())
 	first := len(r.methods) == 1
@@ -147,21 +149,17 @@ func TestHandlerMayCallAndClose(t *testing.T) {
 		close bool
 	}
 	done := make(chan outcome, 1)
-	var c *Client
-	ready := make(chan struct{})
-	handler := func(e Event) {
-		<-ready
+	handler := func(c *Client, e Event) {
 		var out struct{ OK bool }
 		err := c.Call(t.Context(), "echo", nil, &out)
 		_ = c.Close()
 		done <- outcome{err, out.OK, true}
 	}
-	var err error
-	c, err = Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second, OnEvent: handler})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second, OnEvent: handler})
 	if err != nil {
 		t.Fatal(err)
 	}
-	close(ready)
+	defer func() { _ = c.Close() }()
 	select {
 	case o := <-done:
 		if o.call != nil || !o.ok || !o.close {
@@ -317,7 +315,10 @@ func TestEventAdmittedBeforeCloseIsDeliveredAndNoneAfter(t *testing.T) {
 	var mu sync.Mutex
 	var seen []string
 	k := &core{logger: slog.New(slog.DiscardHandler), eventWake: make(chan struct{}, 1), dead: make(chan struct{}),
-		onEvent: func(e Event) { mu.Lock(); seen = append(seen, e.Method()); mu.Unlock() }}
+		onEvent: func(_ *Client, e Event) { mu.Lock(); seen = append(seen, e.Method()); mu.Unlock() }}
+	owner := &Client{k: k}
+	k.owner = weak.Make(owner)
+	defer runtime.KeepAlive(owner)
 	admitted, release := make(chan struct{}), make(chan struct{})
 	var once, releaseOnce sync.Once
 	free := func() { releaseOnce.Do(func() { close(release) }) }
@@ -359,5 +360,35 @@ func TestEventAdmittedBeforeCloseIsDeliveredAndNoneAfter(t *testing.T) {
 	defer k.mu.Unlock()
 	if len(k.events) != 0 || k.eventBytes != 0 || k.eventCount != 0 {
 		t.Errorf("after Close: %d events, %d bytes, count %d held", len(k.events), k.eventBytes, k.eventCount)
+	}
+}
+
+// A handler that uses the client it is given does not keep the client alive: dropped without Close, it is still
+// collected, and its cleanup ends the child.
+func TestHandlerUsingItsClientLetsItBeCollected(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	script := fakeCodex(t, "print(json.dumps({'method': 'hello'}), flush=True)\ntime.sleep(30)\n")
+	seen := make(chan int, 1)
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second,
+		OnEvent: func(c *Client, _ Event) { seen <- c.PID() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, exited := c.PID(), c.k.exited
+	if got := recv(t, "the event", seen); got != pid {
+		t.Fatalf("the handler was given the client of %d, want %d", got, pid)
+	}
+	c = nil
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		runtime.GC()
+		select {
+		case <-exited:
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the dropped client was not collected: its child is still running")
+		}
 	}
 }
