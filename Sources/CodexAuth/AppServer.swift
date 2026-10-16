@@ -388,11 +388,12 @@ final class AppServerCore: @unchecked Sendable {
     /// Bounds how long close waits for queued refusals to be written before it closes stdin.
     private static let refusalFlush: TimeInterval = 0.1
 
-    /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes`
+    /// The events waiting for `onEvent`, from `eventHead` on, delivered in order by ``eventLoop()``; `eventBytes`
     /// and `eventCount` are what they are charged, the one being delivered included, at most `eventCap` and
     /// `maxEvents`. Guarded by `lock`.
     private let onEvent: (@Sendable (AppServerEvent) -> Void)?
     private var events: [AppServerEvent] = []
+    private var eventHead = 0
     private var eventBytes = 0
     private var eventCount = 0
     private let eventWake = DispatchSemaphore(value: 0)
@@ -891,8 +892,14 @@ final class AppServerCore: @unchecked Sendable {
             drain: while true {
                 let next = lock.withLock { () -> Next in
                     if closeStarted { return .stop }
-                    guard !events.isEmpty else { return failure != nil ? .stop : .wait }
-                    return .deliver(events.removeFirst())
+                    guard eventHead < events.count else { return failure != nil ? .stop : .wait }
+                    let e = events[eventHead]
+                    eventHead += 1
+                    if eventHead > 1024 && eventHead * 2 > events.count {  // released in O(1) amortised
+                        events.removeFirst(eventHead)
+                        eventHead = 0
+                    }
+                    return .deliver(e)
                 }
                 switch next {
                 case .deliver(let e):
