@@ -4,6 +4,7 @@
 package canon
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -18,8 +19,8 @@ import (
 )
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
-// to Canon's output: cache keys and verification provenance record it.
-const CanonVersion = 12 // 12: domains with a capital or one letter before a lowercase label, "X O" a code, apostrophes unified, "St.\nLouis"
+// to Canon's output or to Equivalent's verdicts: cache keys and verification provenance record it.
+const CanonVersion = 13 // 13: Equivalent decides each compound and each year pair on its own, and a pair may follow a number across punctuation
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -27,41 +28,262 @@ const CanonVersion = 12 // 12: domains with a capital or one letter before a low
 // space, every other punctuation or symbol removed, and a run of single Latin letters joined
 // into one token ("X J" = "XJ": a spelled-out code). Canon is idempotent:
 // Canon(strings.Join(Canon(x), " ")) equals Canon(x).
-func Canon(s string) []string { return canon(s, false) }
+func Canon(s string) []string { return texts(canon(s)) }
 
 // Equivalent reports whether a and b canonicalise equal, also trying the
-// alternatives Canon cannot decide alone: each hyphenated compound joined or
-// split on its own ("e-mail long-term" = "email long term") and years read as
-// pairs on either side ("nineteen ninety-nine" = "1999", whose canonical form
-// is the cardinal).
-func Equivalent(a, b string) bool {
-	var tas, tbs [][]string
-	for _, v := range hyphenVariants(a, b) {
-		tas = append(tas, canon(v, false))
+// alternatives Canon cannot decide alone, each on its own: every hyphenated
+// compound joined or split ("e-mail long-term" = "email long term") and every
+// year read as a pair on either side ("nineteen ninety-nine" = "1999", whose
+// canonical form is the cardinal). A pair reads as a year where a number starts,
+// or after punctuation: "1999; twenty ten" holds two years, "2010, 20" no pair
+// "ten twenty". Each side is a graph of its readings, linear in its length, and
+// the two are walked together, so no combination of choices is listed.
+// Compounds beyond maxCompounds with no word between them that Canon reads on
+// its own ("x-ray o-ring ...") are joined or split together.
+func Equivalent(a, b string) bool { return readings(a).meets(readings(b)) }
+
+// maxCompounds bounds the compounds of one piece of text whose combinations are listed: 2^4 readings. A piece beyond
+// it is read with every compound joined or every one split.
+const maxCompounds = 4
+
+// tok is a Canon token, and whether punctuation stood before it in the text: Equivalent reads a year pair after a
+// number only across punctuation.
+type tok struct {
+	text string
+	brk  bool
+}
+
+func texts(toks []tok) []string {
+	out := make([]string, len(toks))
+	for i, t := range toks {
+		out[i] = t.text
 	}
-	for _, v := range hyphenVariants(b, a) {
-		tbs = append(tbs, canon(v, false))
+	return out
+}
+
+// readings is the graph of the token strings s may canonicalise to. s is cut where Canon reads the text on either side
+// on its own (pieces); a piece's readings are its compounds' combinations, and each reading adds a path for every
+// year pair in it.
+func readings(s string) *graph {
+	g := &graph{next: [][]arc{nil}}
+	at := 0
+	for _, piece := range pieces(s) {
+		end := g.node()
+		seen := map[string]bool{}
+		for _, v := range compoundVariants(piece) {
+			toks := canon(v)
+			key := fmt.Sprint(toks)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			g.reading(at, end, toks)
+		}
+		at = end
 	}
-	for _, ta := range tas {
-		for _, tb := range tbs {
-			// A year read as a pair is rewritten on one side at a time as well: rewriting both reads
-			// "2010, 20" as "two thousand" then the pair "ten twenty".
-			ya, yb := yearPairsToCardinal(ta), yearPairsToCardinal(tb)
-			if equalTokens(ta, tb) || equalTokens(ta, yb) || equalTokens(ya, tb) || equalTokens(ya, yb) {
-				return true
+	g.end = at
+	return g
+}
+
+// graph is an automaton over tokens: a path from node 0 to end spells one reading. An arc with no token is empty.
+type graph struct {
+	next [][]arc
+	end  int
+}
+
+type arc struct {
+	tok string
+	to  int
+}
+
+func (g *graph) node() int {
+	g.next = append(g.next, nil)
+	return len(g.next) - 1
+}
+
+// path adds arcs spelling words from node a to node b.
+func (g *graph) path(a, b int, words []string) {
+	if len(words) == 0 {
+		g.next[a] = append(g.next[a], arc{to: b})
+		return
+	}
+	for i, w := range words {
+		to := b
+		if i < len(words)-1 {
+			to = g.node()
+		}
+		g.next[a] = append(g.next[a], arc{w, to})
+		a = to
+	}
+}
+
+// reading adds toks from node a to node b, and beside every year pair in them ("nineteen ninety nine") a path
+// spelling its cardinal. A pair starts a number ("two thousand ten twenty", "2010, 20" once the comma is gone, holds
+// no pair "ten twenty") or follows punctuation ("1999; twenty ten"). A piece starts after a word Canon reads alone,
+// never a number word, so a pair at its start starts a number.
+func (g *graph) reading(a, b int, toks []tok) {
+	at := make([]int, len(toks)+1)
+	at[0], at[len(toks)] = a, b
+	for i := 1; i < len(toks); i++ {
+		at[i] = g.node()
+	}
+	if len(toks) == 0 {
+		g.path(a, b, nil)
+		return
+	}
+	words := texts(toks)
+	for i, t := range toks {
+		g.next[at[i]] = append(g.next[at[i]], arc{t.text, at[i+1]})
+	}
+	for i := range toks {
+		if v, n := yearPairAt(words, i); n > 0 && (i == 0 || toks[i].brk || !isNumberWord(words[i-1]) && !isScale(words[i-1])) {
+			g.path(at[i], at[i+n], cardinal(uint64(v)))
+		}
+	}
+}
+
+// meets reports whether g and h share a reading: a walk over pairs of nodes, each step one token on both sides or an
+// empty arc on one.
+func (g *graph) meets(h *graph) bool {
+	type pair struct{ x, y int }
+	seen := map[pair]bool{}
+	var todo []pair
+	visit := func(p pair) {
+		if !seen[p] {
+			seen[p] = true
+			todo = append(todo, p)
+		}
+	}
+	visit(pair{0, 0})
+	for len(todo) > 0 {
+		p := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		if p.x == g.end && p.y == h.end {
+			return true
+		}
+		for _, e := range g.next[p.x] {
+			if e.tok == "" {
+				visit(pair{e.to, p.y})
+				continue
+			}
+			for _, f := range h.next[p.y] {
+				if f.tok == e.tok {
+					visit(pair{e.to, f.to})
+				}
+			}
+		}
+		for _, f := range h.next[p.y] {
+			if f.tok == "" {
+				visit(pair{p.x, f.to})
 			}
 		}
 	}
 	return false
 }
 
-// maxCompounds bounds the per-compound alternatives: 2^4 variants a side. Beyond it every compound is
-// joined, or every one split, or each joined exactly when the other side has its joined word.
-const maxCompounds = 4
+// pieces cuts s, as Canon reads it, at each space between two words Canon reads as it reads each alone (separable),
+// so the pieces canonicalise to s's tokens one after the other and each compound's choice is made in its own piece.
+// When they would not, s is one piece.
+func pieces(s string) []string {
+	rs := []rune(width.Fold.String(norm.NFKC.String(strings.ToValidUTF8(s, " "))))
+	out := cuts(rs)
+	// Compared without the punctuation marks: a piece's first token has none, and a pair at a piece's start is read
+	// either way.
+	var whole []string
+	for _, p := range out {
+		whole = append(whole, Canon(p)...)
+	}
+	if len(out) > 1 && !slices.Equal(whole, Canon(string(rs))) {
+		return []string{string(rs)}
+	}
+	return out
+}
 
-// hyphenVariants is s with each hyphen between two letters kept or removed, every combination; the
-// hyphens of numbers ("3-4", "COVID-19") are never removed, as Canon reads them as separators.
-func hyphenVariants(s, other string) []string {
+// cuts is rs cut at each space between two separable words.
+func cuts(rs []rune) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(rs); {
+		if !unicode.IsSpace(rs[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(rs) && unicode.IsSpace(rs[j]) {
+			j++
+		}
+		k, m := i, j // the words before and after this space
+		for k > start && !unicode.IsSpace(rs[k-1]) {
+			k--
+		}
+		for m < len(rs) && !unicode.IsSpace(rs[m]) {
+			m++
+		}
+		if k < i && j < m && separable(string(rs[k:i]), string(rs[j:m])) {
+			out = append(out, string(rs[start:i]))
+			start = j
+		}
+		i = j
+	}
+	return append(out, string(rs[start:]))
+}
+
+// separable reports whether Canon reads the words left and right, written with a space between them, as it reads
+// each alone. Every token rule that looks at a neighbour (a run of single letters, "oh" beside a number, "and" in a
+// number, "a" before a scale word, a year pair, a title before a name) needs a token the words cannot make: each is
+// letters, marks, hyphens and apostrophes, after closing punctuation on the left one and opening punctuation on the
+// right one, and no form the word ends (left) or starts (right) with, split or joined, is a number, a scale or zero
+// word, "and", "a", "point" or an abbreviation; and they are not both single letters at the space.
+func separable(left, right string) bool {
+	left = strings.TrimRightFunc(left, func(r rune) bool { return strings.ContainsRune(".,;:!?)]}\"”»…", r) })
+	right = strings.TrimLeftFunc(right, func(r rune) bool { return strings.ContainsRune("([{\"“«¿¡", r) })
+	lp, rp := strings.FieldsFunc(left, isHyphen), strings.FieldsFunc(right, isHyphen)
+	if len(lp) == 0 || len(rp) == 0 || !wordShaped(left) || !wordShaped(right) {
+		return false
+	}
+	for i := range lp {
+		if !inert(strings.Join(lp[i:], "")) {
+			return false
+		}
+	}
+	for i := range rp {
+		if !inert(strings.Join(rp[:i+1], "")) {
+			return false
+		}
+	}
+	single := func(w string) bool { t := canon(w); return len(t) == 1 && len(t[0].text) == 1 }
+	return !single(lp[len(lp)-1]) || !single(rp[0])
+}
+
+func wordShaped(w string) bool {
+	for _, r := range w {
+		if !unicode.IsLetter(r) && !unicode.IsMark(r) && !isHyphen(r) && !isApostrophe(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// inert reports whether the word w is one Canon token that no neighbour rule reads.
+func inert(w string) bool {
+	if IsAbbreviation(w) {
+		return false
+	}
+	t := canon(w)
+	if len(t) != 1 {
+		return false
+	}
+	switch x := t[0].text; {
+	case isNumberWord(x), isScale(x), x == "oh", x == "o", x == "and", x == "a", x == "point":
+		return false
+	}
+	return true
+}
+
+// compoundVariants is s with each hyphen between two letters kept or removed, every combination up to maxCompounds,
+// beyond it all kept or all removed; the hyphens of numbers ("3-4", "COVID-19") are never removed, as Canon reads them
+// as separators.
+func compoundVariants(s string) []string {
 	// Compounds are found in the text Canon reads: a full-width hyphen ("e－mail") is a hyphen after NFKC, and a
 	// decomposed accent composes ("café-au-lait"). A mark that does not compose still ends the letter run before it.
 	rs := []rune(width.Fold.String(norm.NFKC.String(strings.ToValidUTF8(s, " "))))
@@ -76,56 +298,17 @@ func hyphenVariants(s, other string) []string {
 		k := 0
 		for i, r := range rs {
 			if k < len(at) && at[k] == i {
-				if mask(k) {
-					k++
+				k++
+				if mask(k - 1) {
 					continue
 				}
-				k++
 			}
 			b.WriteRune(r)
 		}
 		return b.String()
 	}
-	if len(at) == 0 {
-		return []string{string(rs)}
-	}
 	if len(at) > maxCompounds {
-		// Guided: a compound is joined when its joined word is a token of the other side, split or joined, which
-		// decides "e-mail long-term ..." against "email long term ..." without trying every combination.
-		words := map[string]bool{}
-		for _, j := range []bool{false, true} {
-			for _, t := range canon(other, j) {
-				words[t] = true
-			}
-		}
-		guided := make([]bool, len(at))
-		for k := 0; k < len(at); {
-			// A chain of compounds ("well-known-ish") is one word, joined or split as a whole.
-			m := k
-			for m+1 < len(at) && strings.IndexFunc(string(rs[at[m]+1:at[m+1]]), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsMark(r) }) < 0 {
-				m++
-			}
-			start, end := at[k], at[m]
-			for start > 0 && (unicode.IsLetter(rs[start-1]) || unicode.IsMark(rs[start-1])) {
-				start--
-			}
-			for end+1 < len(rs) && (unicode.IsLetter(rs[end+1]) || unicode.IsMark(rs[end+1])) {
-				end++
-			}
-			joined := strings.Map(func(r rune) rune {
-				if isHyphen(r) {
-					return -1
-				}
-				return r
-			}, string(rs[start:end+1]))
-			if t := canon(joined, false); len(t) == 1 && words[t[0]] {
-				for x := k; x <= m; x++ {
-					guided[x] = true
-				}
-			}
-			k = m + 1
-		}
-		return []string{string(rs), join(func(int) bool { return true }), join(func(k int) bool { return guided[k] })}
+		return []string{string(rs), join(func(int) bool { return true })}
 	}
 	out := make([]string, 0, 1<<len(at))
 	for m := 0; m < 1<<len(at); m++ {
@@ -134,19 +317,7 @@ func hyphenVariants(s, other string) []string {
 	return out
 }
 
-func equalTokens(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func canon(s string, joinHyphens bool) []string {
+func canon(s string) []tok {
 	// An invalid byte ends up a separator anyway; making it one first keeps the number pass
 	// from stalling on it ("\xf7¾" would keep "3 4" as digits, and a second pass read them).
 	s = strings.ToValidUTF8(s, " ")
@@ -174,14 +345,12 @@ func canon(s string, joinHyphens bool) []string {
 	for _, r := range s {
 		switch {
 		case isApostrophe(r):
-		case isHyphen(r):
-			if !joinHyphens {
-				b.WriteByte(' ')
-			}
+		case isHyphen(r), unicode.IsSpace(r):
+			b.WriteByte(' ')
 		case tokenRune(r):
 			b.WriteRune(r)
 		default:
-			b.WriteByte(' ')
+			b.WriteString(" \x00 ") // punctuation: a separator, and a mark for the token after it
 		}
 	}
 	// Letters join before abbreviations expand, or a second pass would expand what the first
@@ -190,16 +359,31 @@ func canon(s string, joinHyphens bool) []string {
 	// second pass would compose; compose them now.
 	// Joining can make a number word ("T W O" -> "two"), so the number rewrites run again after it,
 	// or a second pass would read a following "oh" as zero or drop an "and" before it.
-	numberWords := func(t []string) []string { return spokenZeros(scaleArticle(dropNumberAnd(t))) }
-	return expandTokens(numberWords(joinLetters(numberWords(strings.Fields(norm.NFKC.String(b.String()))))))
+	numberWords := func(t []tok) []tok { return spokenZeros(scaleArticle(dropNumberAnd(t))) }
+	return expandTokens(numberWords(joinLetters(numberWords(marked(strings.Fields(norm.NFKC.String(b.String())))))))
+}
+
+// marked drops the punctuation marks from fields, setting brk on the token after each.
+func marked(fields []string) []tok {
+	out := make([]tok, 0, len(fields))
+	brk := false
+	for _, f := range fields {
+		if f == "\x00" {
+			brk = true
+			continue
+		}
+		out = append(out, tok{f, brk})
+		brk = false
+	}
+	return out
 }
 
 // spokenZeros reads "oh" and "o" as zero inside a reading of digits: the spoken form says
 // "three seven oh four" for 3704 and "four point oh" for 4.0, and STT writes "O" or "oh". A
 // run of them counts when a number word stands right before or after it, or "point" right
 // before it, so "oh no" and the letter O stay. It runs before joinLetters, which would join "O O" into "oo".
-func spokenZeros(toks []string) []string {
-	zero := func(t string) bool { return t == "oh" || t == "o" }
+func spokenZeros(toks []tok) []tok {
+	zero := func(t tok) bool { return t.text == "oh" || t.text == "o" }
 	out := slices.Clone(toks)
 	for i := 0; i < len(out); {
 		if !zero(out[i]) {
@@ -212,15 +396,15 @@ func spokenZeros(toks []string) []string {
 		}
 		// Beside a single letter, O is a letter of a spelled code ("X O 7" = "XO 7"), not a zero.
 		letter := func(k int) bool {
-			return k >= 0 && k < len(out) && len(out[k]) == 1 && out[k][0] >= 'a' && out[k][0] <= 'z'
+			return k >= 0 && k < len(out) && len(out[k].text) == 1 && out[k].text[0] >= 'a' && out[k].text[0] <= 'z'
 		}
 		if letter(i-1) || letter(j) {
 			i = j
 			continue
 		}
-		if i > 0 && (isNumberWord(out[i-1]) || out[i-1] == "point") || j < len(out) && isNumberWord(out[j]) {
+		if i > 0 && (isNumberWord(out[i-1].text) || out[i-1].text == "point") || j < len(out) && isNumberWord(out[j].text) {
 			for k := i; k < j; k++ {
-				out[k] = "zero"
+				out[k].text = "zero"
 			}
 		}
 		i = j
@@ -231,16 +415,16 @@ func spokenZeros(toks []string) []string {
 // joinLetters joins each run of two or more single-letter Latin tokens into one token. A code
 // read letter by letter is transcribed spaced ("X J 4471 B") or not ("XJ 4471B"); joining
 // removes only that spacing, so different letters still compare different.
-func joinLetters(toks []string) []string {
-	single := func(t string) bool { return len(t) == 1 && t[0] >= 'a' && t[0] <= 'z' }
-	var out []string
+func joinLetters(toks []tok) []tok {
+	single := func(t tok) bool { return len(t.text) == 1 && t.text[0] >= 'a' && t.text[0] <= 'z' }
+	var out []tok
 	for i := 0; i < len(toks); {
 		j := i
 		for j < len(toks) && single(toks[j]) {
 			j++
 		}
 		if j-i >= 2 {
-			out = append(out, strings.Join(toks[i:j], ""))
+			out = append(out, tok{strings.Join(texts(toks[i:j]), ""), toks[i].brk})
 			i = j
 			continue
 		}
@@ -253,14 +437,16 @@ func joinLetters(toks []string) []string {
 // expandTokens expands abbreviations that only became whole tokens after
 // punctuation removal ("M's" -> "ms"). Without it a second Canon pass would
 // expand them, breaking idempotence. Case is gone here, so "st" is "street".
-func expandTokens(toks []string) []string {
-	var out []string
+func expandTokens(toks []tok) []tok {
+	var out []tok
 	for _, t := range toks {
 		// Case is gone here, so a title ("ms", "st", "dr") cannot be told from a unit, a suffix or joined spelled
 		// letters; only the case-free abbreviations ("vs", "etc") expand.
-		switch exp := abbreviations[t]; {
-		case exp != "" && !titleAbbreviation[t]:
-			out = append(out, strings.Fields(exp)...)
+		switch exp := abbreviations[t.text]; {
+		case exp != "" && !titleAbbreviation[t.text]:
+			for i, w := range strings.Fields(exp) {
+				out = append(out, tok{w, t.brk && i == 0})
+			}
 		default:
 			out = append(out, t)
 		}
@@ -509,11 +695,11 @@ func ordinalSuffix(s string) int {
 
 // scaleArticle reads "a" before a scale word as one ("a hundred" = "one hundred"), the form the
 // digits canonicalise to: STT writes "about a hundred and sixty" as "about 160".
-func scaleArticle(toks []string) []string {
+func scaleArticle(toks []tok) []tok {
 	out := slices.Clone(toks)
 	for i := range out {
-		if out[i] == "a" && i+1 < len(out) && isScale(out[i+1]) {
-			out[i] = "one"
+		if out[i].text == "a" && i+1 < len(out) && isScale(out[i+1].text) {
+			out[i].text = "one"
 		}
 	}
 	return out
@@ -521,12 +707,17 @@ func scaleArticle(toks []string) []string {
 
 // dropNumberAnd removes "and" inside a number reading ("one hundred and
 // five" = "one hundred five"), the form numbers are canonicalised to.
-func dropNumberAnd(toks []string) []string {
+// A dropped "and" passes its punctuation mark to the token after it.
+func dropNumberAnd(toks []tok) []tok {
 	out := toks[:0:0]
+	brk := false
 	for i, t := range toks {
-		if t == "and" && i > 0 && i+1 < len(toks) && isScale(toks[i-1]) && isNumberWord(toks[i+1]) {
+		if t.text == "and" && i > 0 && i+1 < len(toks) && isScale(toks[i-1].text) && isNumberWord(toks[i+1].text) {
+			brk = brk || t.brk
 			continue
 		}
+		t.brk = t.brk || brk
+		brk = false
 		out = append(out, t)
 	}
 	return out
@@ -554,25 +745,6 @@ func twoDigit(toks []string, i int) (int, int) {
 		}
 	}
 	return v, 1
-}
-
-// yearPairsToCardinal rewrites year-pair readings for 1000..2099 ("nineteen
-// ninety nine", "nineteen oh five", "nineteen hundred", "twenty twenty")
-// into the cardinal words Canon gives the digits.
-func yearPairsToCardinal(toks []string) []string {
-	var out []string
-	for i := 0; i < len(toks); {
-		// A pair starts a number: "two thousand ten twenty" ("2010, 20" once the comma is gone) holds no
-		// pair "ten twenty".
-		if v, n := yearPairAt(toks, i); n > 0 && (i == 0 || !isNumberWord(toks[i-1]) && !isScale(toks[i-1])) {
-			out = append(out, cardinal(uint64(v))...)
-			i += n
-			continue
-		}
-		out = append(out, toks[i])
-		i++
-	}
-	return out
 }
 
 // yearPairAt reports the year read as a pair at toks[i] ("nineteen ninety-nine", "nineteen
