@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -84,23 +85,24 @@ func (e Event) LogValue() slog.Value { return slog.StringValue(e.String()) }
 // MarshalJSON redacts like String, so an Event inside a value a JSON log handler encodes shows no params.
 func (e Event) MarshalJSON() ([]byte, error) { return json.Marshal(e.String()) }
 
-// queueEvent hands one notification or server request to the event goroutine. Without a handler it does nothing, so
-// a notification is ignored as before. A notification whose method is absent or not a string is ignored too, and so
-// is every event once the client has failed or Close has begun. Events held beyond eventCap or maxEvents, from a
-// handler that does not keep up, fail the client.
-func (k *core) queueEvent(m wire.Object, request bool) {
+// queueEvent hands one notification or server request, the object msg of the validated line, to the event
+// goroutine. Without a handler it does nothing, so a notification is ignored as before, and nothing of it is copied.
+// A notification whose method is absent or not a string is ignored too, and so is every event once the client has
+// failed or Close has begun. Events held beyond eventCap or maxEvents, from a handler that does not keep up, fail the
+// client.
+func (k *core) queueEvent(line []byte, msg wire.Span, request bool) {
 	if k.onEvent == nil {
 		return
 	}
-	method, ok, err := m.String("method")
-	if err != nil || !ok {
+	m, ok := present(line, msg, "method")
+	if !ok || wire.KindOf(line, m) != '"' {
 		return
 	}
 	var params json.RawMessage
-	if p, present := m["params"]; present {
-		params = json.RawMessage(p.Raw()) // the exact bytes, copied: Raw returns a new string
+	if p, ok := wire.Member(line, msg, "params"); ok {
+		params = bytes.Clone(line[p.Start:p.End]) // the exact bytes, copied: the line is cleared once handled
 	}
-	d := eventData{method, params, request}
+	d := eventData{decoded(line, m), params, request}
 	k.mu.Lock()
 	if k.failure != nil || k.eventsClosed {
 		k.mu.Unlock()

@@ -10,8 +10,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/xiaolai/sayso/go/internal/wire"
 )
 
 // bareCore is a core with no child: its stdin is a pipe the test reads, and writeLoop starts only when the test says,
@@ -246,11 +244,7 @@ func TestWriterWaitsAtAnAnswerBeingEncoded(t *testing.T) {
 // returns.
 func refuseAsync(t *testing.T, k *core, id string) <-chan struct{} {
 	t.Helper()
-	node, err := wire.Parse([]byte(strconv.Quote(id)))
-	if err != nil {
-		t.Fatal(err)
-	}
 	refused := make(chan struct{})
-	go func() { k.refuse(node); close(refused) }()
+	go func() { k.refuse([]byte(strconv.Quote(id))); close(refused) }()
 	return refused
 }

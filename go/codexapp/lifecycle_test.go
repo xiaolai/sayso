@@ -324,15 +324,8 @@ func TestEventAdmittedBeforeCloseIsDeliveredAndNoneAfter(t *testing.T) {
 	free := func() { releaseOnce.Do(func() { close(release) }) }
 	k.testEventAdmitted = func() { once.Do(func() { close(admitted); <-release }) }
 	for _, m := range []string{"a", "b", "c"} {
-		root, err := wire.Parse([]byte(`{"method":"` + m + `"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		obj, err := wire.AsObject(root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		k.queueEvent(obj, false)
+		line := []byte(`{"method":"` + m + `"}`)
+		k.queueEvent(line, wire.Root(line), false)
 	}
 	stopped := make(chan struct{})
 	go func() { k.eventLoop(); close(stopped) }()

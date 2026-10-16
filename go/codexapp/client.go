@@ -182,8 +182,8 @@ type core struct {
 }
 
 type response struct {
-	result    json.RawMessage
-	hasResult bool // the reply had a result member, null included
+	result    []byte // a copy of the result member, the call's own, which it clears
+	hasResult bool   // the reply had a result member, null included
 	err       error
 }
 
@@ -378,6 +378,9 @@ func trimJSONSpace(b []byte) []byte {
 // handle reads one line (spec/credentials.md, messages); false when it is not JSON-RPC. A message is classified
 // before its reply fields are read: a notification (no id) is ignored whatever else it holds, unless OnEvent takes
 // it, and a message with a method, even "", is a server request. Keys are exact.
+//
+// The line is read where it lies (wire.Member): a reply is checked in place, and its result and error message are
+// copied out only for the call waiting for it (deliver). An event copies its method and params for the handler.
 func (k *core) handle(line []byte) bool {
 	if len(line) == 0 {
 		return true
@@ -385,55 +388,62 @@ func (k *core) handle(line []byte) bool {
 	if !ValidJSON(line) {
 		return false
 	}
-	root, err := wire.Parse(line)
-	if err != nil {
-		return false
-	}
-	if root.IsNull() {
+	root := wire.Root(line)
+	switch wire.KindOf(line, root) {
+	case 'n':
 		return true
-	}
-	m, err := wire.AsObject(root)
-	if err != nil {
+	case '{':
+	default:
 		return false
 	}
-	id, hasID := m.Field("id")
+	id, hasID := present(line, root, "id")
 	if !hasID {
-		k.queueEvent(m, false)
+		k.queueEvent(line, root, false)
 		return true // a notification, whatever else it holds
 	}
-	_, hasMethod, err := m.String("method")
-	if err != nil {
-		return false
-	}
-	if hasMethod {
-		k.refuse(id)
-		k.queueEvent(m, true)
+	if method, ok := present(line, root, "method"); ok {
+		if wire.KindOf(line, method) != '"' {
+			return false
+		}
+		k.refuse(bytes.Clone(line[id.Start:id.End]))
+		k.queueEvent(line, root, true)
 		return true
 	}
-	var resp response
-	if e, ok, err := m.Object("error"); err != nil {
-		return false
-	} else if ok {
-		code, _, err := e.Int("code")
-		if err != nil {
+	var reply func() response // made only for a call that waits for it
+	if e, ok := present(line, root, "error"); ok {
+		if wire.KindOf(line, e) != '{' {
 			return false
 		}
-		msg, _, err := e.String("message")
-		if err != nil {
+		var code int64
+		if c, ok := present(line, e, "code"); ok {
+			if code, ok = wire.Int64Of(line, c); !ok {
+				return false
+			}
+		}
+		msg, hasMsg := present(line, e, "message")
+		if hasMsg && wire.KindOf(line, msg) != '"' {
 			return false
 		}
-		resp.err = &RPCError{Code: code, Message: secret.Scrub(msg)}
-	} else if r, ok := m["result"]; ok {
-		resp.result, resp.hasResult = json.RawMessage(r.Raw()), true
+		reply = func() response {
+			rpc := &RPCError{Code: code}
+			if hasMsg {
+				rpc.Message = scrubbed(line, msg)
+			}
+			return response{err: rpc}
+		}
+	} else if r, ok := wire.Member(line, root, "result"); ok {
+		reply = func() response { return response{result: bytes.Clone(line[r.Start:r.End]), hasResult: true} }
+	} else {
+		reply = func() response { return response{} }
 	}
-	if id.Kind() != '0' {
+	if wire.KindOf(line, id) != '0' {
 		return true // not one of ours
 	}
-	n, err := strconv.ParseInt(id.Raw(), 10, 64)
-	if err != nil {
+	n, ok := wire.Int64Of(line, id)
+	if !ok {
 		return true // a fraction or an exponent: not one of ours
 	}
-	k.deliver(strconv.FormatInt(n, 10), resp)
+	k.deliver(strconv.FormatInt(n, 10), line, reply)
 	return true
 }
 
@@ -478,8 +488,9 @@ func (k *core) enqueue(o *outbound) bool {
 // turn. The reader never writes, so a child that blocks on its full output while we wait to write its input cannot
 // stall it. The answer is admitted to the queue as soon as the server request is read, before it is encoded, so a
 // request queued while it is encoded is written after it; writeLoop waits at its slot until the bytes are in.
-// Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the client.
-func (k *core) refuse(id wire.Node) {
+// Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the client. id is
+// the request's id as the child wrote it.
+func (k *core) refuse(id []byte) {
 	slot := &outbound{refusal: true, state: outReserved}
 	if !k.enqueue(slot) {
 		return // failed: the queue is gone
@@ -487,7 +498,7 @@ func (k *core) refuse(id wire.Node) {
 	if k.testRefusalAdmitted != nil {
 		k.testRefusalAdmitted()
 	}
-	msg := map[string]any{"id": json.RawMessage(id.Raw()), "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}}
+	msg := map[string]any{"id": json.RawMessage(id), "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}}
 	b, err := json.Marshal(msg)
 	if err != nil { // id is a parsed JSON value, so this cannot happen
 		k.fail(codexError("Codex app-server sent a server request that could not be answered", nil))
@@ -571,20 +582,24 @@ func (k *core) writeLoop() {
 	}
 }
 
-// deliver hands a reply to its call. A reply read after the client failed is dropped: the failure came first, so the
-// call fails with it.
-func (k *core) deliver(id string, resp response) {
+// deliver hands the reply in line to the call waiting for it. The reply is made, by reply, only for a call that
+// waits, under the lock the call takes to stop waiting: so a reply is either taken by its call, which clears its
+// result, or never made. The line is cleared before the call is given the reply. A reply read after the client
+// failed is dropped: the failure came first, so the call fails with it.
+func (k *core) deliver(id string, line []byte, reply func() response) {
 	k.mu.Lock()
+	defer k.mu.Unlock()
 	if k.failure != nil {
-		k.mu.Unlock()
 		return
 	}
 	ch, ok := k.pending[id]
-	delete(k.pending, id)
-	k.mu.Unlock()
-	if ok {
-		ch <- resp // buffered, never blocks
+	if !ok {
+		return
 	}
+	delete(k.pending, id)
+	resp := reply()
+	clear(line)
+	ch <- resp // buffered, and this is its one reply: never blocks
 }
 
 // fail marks the client unusable and releases every pending call. The outbound queue is dropped with it: nothing is
@@ -721,7 +736,25 @@ func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) err
 	return codexError("Codex app-server is not accepting requests", nil)
 }
 
+// call is callRaw with the result decoded into out, when non-nil: out is the caller's, and no longer the package's
+// to clear.
 func (k *core) call(ctx context.Context, method string, params, out any) error {
+	var decode func([]byte) error
+	if out != nil {
+		decode = func(result []byte) error {
+			if err := json.Unmarshal(result, out); err != nil {
+				return codexError("Codex app-server sent an unexpected "+method+" result", nil)
+			}
+			return nil
+		}
+	}
+	return k.callRaw(ctx, method, params, decode)
+}
+
+// callRaw sends one request and hands its result to use, when non-nil, whose error it returns. The result is a copy
+// of the call's own, cleared once use returns; a reply that comes after the call stopped waiting is cleared here, or
+// never copied (deliver).
+func (k *core) callRaw(ctx context.Context, method string, params any, use func(result []byte) error) error {
 	if err := ctx.Err(); err != nil {
 		return err // an already-cancelled call sends nothing
 	}
@@ -742,6 +775,11 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 	defer func() {
 		k.mu.Lock()
 		delete(k.pending, key)
+		select {
+		case resp := <-ch: // delivered once the call had stopped waiting: deliver sends under this lock
+			clear(resp.result)
+		default:
+		}
 		k.mu.Unlock()
 	}()
 
@@ -756,16 +794,15 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 		return err
 	}
 	answer := func(resp response) error {
+		defer clear(resp.result)
 		if resp.err != nil {
 			return codexError("Codex app-server rejected "+method, resp.err)
 		}
 		if !resp.hasResult { // neither result nor error, whether or not the caller reads the result
 			return codexError("Codex app-server sent an unexpected "+method+" result", nil)
 		}
-		if out != nil {
-			if err := json.Unmarshal(resp.result, out); err != nil {
-				return codexError("Codex app-server sent an unexpected "+method+" result", nil)
-			}
+		if use != nil {
+			return use(resp.result)
 		}
 		return nil
 	}

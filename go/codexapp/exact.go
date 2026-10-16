@@ -2,8 +2,11 @@ package codexapp
 
 import (
 	"encoding/json"
+	"strings"
+	"unsafe"
 
 	"github.com/xiaolai/sayso/go/internal/wire"
+	"github.com/xiaolai/sayso/go/secret"
 )
 
 // MaxJSONDepth is how deeply Codex's JSON (a reply, auth.json, a JWT payload) may nest: a bound both implementations'
@@ -52,4 +55,31 @@ func field[T any](raw json.RawMessage, key string) (T, error) {
 		return zero, err
 	}
 	return *p, nil
+}
+
+// The readers below read a validated document where it lies (wire.Member), for the lines and results that may hold
+// a credential: nothing of the document is copied but the strings they return.
+
+// present is the member name of the object at obj, unless it is absent or null.
+func present(doc []byte, obj wire.Span, name string) (wire.Span, bool) {
+	v, ok := wire.Member(doc, obj, name)
+	return v, ok && wire.KindOf(doc, v) != 'n'
+}
+
+// decoded is the string at v, decoded into a buffer that is cleared once the string returned is made from it: the
+// string is the one copy left.
+func decoded(doc []byte, v wire.Span) string {
+	buf := make([]byte, 0, v.End-v.Start)
+	defer clear(buf[:cap(buf)])
+	buf, _ = wire.AppendString(buf, doc, v)
+	return string(buf)
+}
+
+// scrubbed is the string at v, decoded and scrubbed. The scrubber reads the decoded bytes in place, and they are
+// cleared, so only the scrubbed text is left: a secret it removes leaves no copy behind.
+func scrubbed(doc []byte, v wire.Span) string {
+	buf := make([]byte, 0, v.End-v.Start)
+	defer clear(buf[:cap(buf)])
+	buf, _ = wire.AppendString(buf, doc, v)
+	return strings.Clone(secret.Scrub(unsafe.String(unsafe.SliceData(buf), len(buf)))) // never the view itself
 }

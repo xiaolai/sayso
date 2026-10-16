@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"runtime"
 	"strings"
 	"time"
 
@@ -68,31 +69,52 @@ func (s AuthStatus) LogValue() slog.Value {
 // GetAuthStatus calls getAuthStatus. Any token in the reply is registered with the scrubber before it is returned,
 // whatever was asked for.
 func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken bool) (AuthStatus, error) {
-	var raw json.RawMessage
+	defer runtime.KeepAlive(c)
 	params := map[string]any{"includeToken": includeToken, "refreshToken": refreshToken}
-	if err := c.Call(ctx, "getAuthStatus", params, &raw); err != nil {
+	var st AuthStatus
+	err := c.k.callRaw(ctx, "getAuthStatus", params, func(result []byte) error {
+		var ok bool
+		if st, ok = authStatus(result); !ok {
+			return codexError("Codex app-server sent an unexpected getAuthStatus result", nil)
+		}
+		return nil
+	})
+	if err != nil {
 		return AuthStatus{}, err
 	}
-	bad := codexError("Codex app-server sent an unexpected getAuthStatus result", nil)
-	token, err := field[string](raw, "authToken")
-	if err != nil {
-		return AuthStatus{}, bad
-	}
-	secret.Register(token) // before anything else can fail or format it
-	method, err := optional[string](raw, "authMethod")
-	if err != nil {
-		return AuthStatus{}, bad
-	}
-	requires, err := optional[bool](raw, "requiresOpenaiAuth")
-	if err != nil {
-		return AuthStatus{}, bad
-	}
-	st := AuthStatus{HasMethod: method != nil, RequiresOpenAIAuth: requires == nil || *requires}
-	st.token = sealed(token)
-	if method != nil {
-		st.Method = *method
-	}
 	return st, nil
+}
+
+// authStatus reads a getAuthStatus result where it lies, with exact keys; null is absence, and a null result is an
+// empty object. Every field is checked before a string is made, so a refused result leaves no copy of the token, and
+// the token is decoded once and registered with the scrubber as soon as it exists.
+func authStatus(result []byte) (AuthStatus, bool) {
+	root := wire.Root(result)
+	switch wire.KindOf(result, root) {
+	case 'n':
+		return AuthStatus{RequiresOpenAIAuth: true}, true
+	case '{':
+	default:
+		return AuthStatus{}, false
+	}
+	token, hasToken := present(result, root, "authToken")
+	method, hasMethod := present(result, root, "authMethod")
+	requires, hasRequires := present(result, root, "requiresOpenaiAuth")
+	isBool := func(v wire.Span) bool { k := wire.KindOf(result, v); return k == 't' || k == 'f' }
+	if hasToken && wire.KindOf(result, token) != '"' || hasMethod && wire.KindOf(result, method) != '"' ||
+		hasRequires && !isBool(requires) {
+		return AuthStatus{}, false
+	}
+	st := AuthStatus{HasMethod: hasMethod, RequiresOpenAIAuth: !hasRequires || wire.KindOf(result, requires) == 't'}
+	if hasMethod {
+		st.Method = decoded(result, method)
+	}
+	if hasToken {
+		t := decoded(result, token)
+		secret.Register(t)
+		st.token = sealed(t)
+	}
+	return st, true
 }
 
 // CredentialsStore calls config/read and returns the effective cli_auth_credentials_store; "" when absent, which
