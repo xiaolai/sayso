@@ -3,3 +3,4 @@ results-*.json
 .build/
 .swiftpm/
 __pycache__/
+.cc-suite/
