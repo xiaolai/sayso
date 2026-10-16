@@ -13,16 +13,9 @@ import (
 	"time"
 
 	"go.uber.org/goleak"
-)
 
-func python(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("needs python3")
-	}
-	return p
-}
+	"github.com/xiaolai/sayso/go/internal/prereq"
+)
 
 // fakeCodex writes an executable Python child: it answers initialize, reads initialized, then runs body.
 // bulkTimeout bounds the tests whose child writes megabytes or tens of thousands of lines: under the race detector on
@@ -33,7 +26,7 @@ const bulkTimeout = 60 * time.Second
 func fakeCodex(t *testing.T, body string) string {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "codex")
-	src := "#!" + python(t) + "\nimport sys, json, os, time, subprocess\n" +
+	src := "#!" + prereq.Python(t) + "\nimport sys, json, os, time, subprocess\n" +
 		"m = json.loads(sys.stdin.readline())\n" +
 		"print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n" +
 		"sys.stdin.readline()\n" + body

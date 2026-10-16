@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/prereq"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -96,10 +96,7 @@ func TestDecodeRateLimits(t *testing.T) {
 // stalled starts a child that answers initialize and never reads again.
 func stalled(t *testing.T, timeout time.Duration) *Client {
 	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("needs python3")
-	}
+	python := prereq.Python(t)
 	script := filepath.Join(t.TempDir(), "codex")
 	body := "#!" + python + "\nimport sys, json, time\nm = json.loads(sys.stdin.readline())\n" +
 		"print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\ntime.sleep(30)\n"
