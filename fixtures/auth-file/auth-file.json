@@ -1152,5 +1152,245 @@
    "expiresAt": null
   },
   "note": "A JWT payload is unpadded base64url (RFC 7515, and Codex's decoder): padding makes it no JWT, so the expiry is unknown, not exp 1."
+ },
+ {
+  "id": "auth-file-auth-mode-object",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": {
+      "refresh_token": "canary-shape-object"
+     },
+     "tokens": {
+      "access_token": "opaque-shape-token"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-object"
+   ]
+  },
+  "note": "A needed member that is not a string or an object where one belongs is refused from its bytes, never decoded: a credential nested in it never becomes a string the read cannot wipe."
+ },
+ {
+  "id": "auth-file-access-token-object",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "refresh_token": "canary-shape-object"
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-object"
+   ]
+  }
+ },
+ {
+  "id": "auth-file-tokens-object",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "refresh_token": "canary-shape-object"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-object"
+   ]
+  }
+ },
+ {
+  "id": "auth-file-auth-mode-array",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": [
+      "canary-shape-array"
+     ],
+     "tokens": {
+      "access_token": "opaque-shape-token"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-array"
+   ]
+  }
+ },
+ {
+  "id": "auth-file-access-token-array",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": [
+       "canary-shape-array"
+      ]
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-array"
+   ]
+  }
+ },
+ {
+  "id": "auth-file-tokens-array",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": [
+      "canary-shape-array"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-array"
+   ]
+  }
+ },
+ {
+  "id": "auth-file-auth-mode-number",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "auth_mode": 7,
+     "tokens": {
+      "access_token": "opaque-shape-token"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-access-token-number",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": 7
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-tokens-number",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": 7
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error"
+  }
+ },
+ {
+  "id": "auth-file-tokens-string",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": "canary-shape-string\n"
+    }
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "notInDescription": [
+    "canary-shape-string"
+   ]
+  },
+  "note": "A tokens value that is a string, escaped, holds no access token and is refused from its bytes."
  }
 ]

@@ -1,5 +1,5 @@
 {
- "count": 900,
+ "count": 910,
  "fixtures": [
   {
    "id": "app-ready",
@@ -831,6 +831,66 @@
   },
   {
    "id": "auth-file-jwt-padded",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-auth-mode-object",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-access-token-object",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-tokens-object",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-auth-mode-array",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-access-token-array",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-tokens-array",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-auth-mode-number",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-access-token-number",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-tokens-number",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-tokens-string",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []
