@@ -36,7 +36,8 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         word(k) && k > 0 && svIsCapitalised(raws[k].text) && !containsAny(raws[k].gap, svSentenceEnds + ":")
     }
     func nextCapital(_ k: Int) -> Bool { word(k + 1) && svIsCapitalised(raws[k + 1].text) }
-    let inExpression = svExpressions(raws)
+    let inExpression = svExpressions(raws, withWords: false)
+    let inWordExpression = svExpressions(raws, withWords: true)
 
     // Spoken zeros: "oh" or "o" in a run of digits and number words with no punctuation inside ("oh oh seven",
     // "X O 4"), English only.
@@ -105,9 +106,38 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                 k += 1
                 continue
             }
+            // A sign before a Han numeral is the number's sign: "-五" = "-5" = "- 5".
+            if r.freeDash == .sign && k + 1 < raws.count && raws[k + 1].kind == .hanRun && raws[k + 1].gap.isEmpty {
+                units.append(svSignedHanUnit(raws[k + 1].text))
+                k += 1
+                continue
+            }
+            // A measurement mark after a number ("5'", "5′10″", whose ″ NFKC folds to ′′): feet or minutes, and a
+            // pair, or the '"' after feet, inches or seconds. Never silent, so "5'" still refuses "5".
+            if english && k > 0 && r.gap.isEmpty && (raws[k - 1].kind == .number || raws[k - 1].kind == .symbol) {
+                if svMeasureMark(r.text) && raws[k - 1].kind == .number {
+                    if k + 1 < raws.count && raws[k + 1].kind == .symbol && raws[k + 1].text == r.text
+                        && raws[k + 1].gap.isEmpty
+                    {
+                        units.append([lit(r.text, r.text)] + svInchNames.map { lit($0) })
+                        k += 1
+                    } else {
+                        units.append(svSymbolUnit(r.text, english) + svFootNames.map { lit($0) })
+                    }
+                    continue
+                }
+                if r.text == "\"" {
+                    units.append([lit(r.text)] + svInchNames.map { lit($0) })
+                    continue
+                }
+            }
             var unit = svSymbolUnit(r.text, english)
-            if r.text == "-" && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty && !inExpression[k] {
+            if r.text == "-" && r.freeDash == nil && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty
+                && !inExpression[k]
+            {
                 unit.append([])  // a range or score ("3-4", "1-0") is often read with no word for the dash
+            } else if r.freeDash == .silentable && !inWordExpression[k] {
+                unit.append([])  // a dash between words ("Monday - Friday", "pre- and post-war") may be unspoken
             }
             units.append(unit)
             continue
@@ -142,7 +172,8 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         // domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
         var j = k + 1
         var labels = [k]
-        while low == r.text && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+        let lowercase = low == r.text
+        while lowercase && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
             labels.append(j)
             j += 1
         }
@@ -181,7 +212,13 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             var l = ends.count
             while l > 0 && !found {
                 if let digits = svParseEnglishPhrase(words[..<ends[l - 1]]) {
-                    let unit = [lit(Array(words[..<ends[l - 1]]))] + svNumberUnits(digits, language, nil)[0]
+                    // The words keep their ordinary readings ("TEN" = "T E N", "forty-two" = "fortytwo") beside
+                    // the number's, up to svMaxProduct of them; a longer phrase is read as written and as a number.
+                    let plain = (k..<k + l).map { svWordUnit(raws, $0, lower($0), partsOf[$0], english, innerCapital, nextCapital) }
+                    var unit = svProduct(plain) ?? [lit(Array(words[..<ends[l - 1]]))]
+                    for reading in svNumberUnits(digits, language, nil)[0] where !unit.contains(reading) {
+                        unit.append(reading)
+                    }
                     units.append(unit)
                     k += l - 1
                     found = true
@@ -274,7 +311,7 @@ func svWordUnit(
     var unit: SvUnit = [lit(parts)]
     if parts.count > 1 { unit.append(lit(parts.joined())) }  // "e-mail" = "email"
     if !english { return svWithCodeReadings(unit, raws, k, low) }
-    let bare = r.text.hasSuffix(".") ? String(r.text.dropLast()) : r.text
+    let bare = r.text  // the lexer keeps no dot in a word ("e.g." is "e.g")
     // A title only with its capital and before a name: "ms" is milliseconds, "5 Ms." is no one. "Dr" and "St" after a
     // capitalised word inside a sentence are a road ("Take Oak Dr.", "Main St. Next").
     let road =
@@ -341,12 +378,46 @@ func svWithCodeReadings(_ unit: SvUnit, _ raws: [SvRaw], _ k: Int, _ low: String
     return unit
 }
 
+/// Every concatenation of one reading per unit, or nil beyond svMaxProduct readings.
+func svProduct(_ units: [SvUnit]) -> SvUnit? {
+    var out: SvUnit = [[]]
+    for u in units {
+        var next: SvUnit = []
+        for a in out {
+            for b in u {
+                next.append(a + b)
+                if next.count > svMaxProduct { return nil }
+            }
+        }
+        out = next
+    }
+    return out
+}
+
+/// The most readings a phrase's words keep beside the number they spell (``svProduct(_:)``).
+let svMaxProduct = 64
+
+/// The operators that make a run holding words an expression (``svExpressions(_:withWords:)``).
+private let svMathOperators: Set<String> = ["=", "+", "−", "×", "÷", "<", ">", "≠", "*", "^"]
+
 /// Marks each raw that sits in an expression: a run of numbers and symbols joined by nothing but space that holds an
-/// operator other than "-" ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so in "1-0. #1" the
-/// score's dash is not in one. One pass over the raws, so a long chain costs its length.
-func svExpressions(_ raws: [SvRaw]) -> [Bool] {
+/// operator other than "-" or a number's "'" or '"' ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so
+/// in "1-0. #1" the score's dash is not in one. `withWords` lets words into the run but counts only the arithmetic
+/// operators (`svMathOperators`): in "x - y = z" the free dash is a minus, in "Tom & Jerry - live" it may be
+/// silent. One pass over the raws, so a long chain costs its length.
+func svExpressions(_ raws: [SvRaw], withWords: Bool) -> [Bool] {
     var inside = [Bool](repeating: false, count: raws.count)
-    func operand(_ j: Int) -> Bool { raws[j].kind == .number || raws[j].kind == .hanRun || raws[j].kind == .symbol }
+    func operand(_ j: Int) -> Bool {
+        switch raws[j].kind {
+        case .number, .hanRun, .symbol: return true
+        case .word: return withWords
+        case .unspacedChar: return false
+        }
+    }
+    func op(_ j: Int) -> Bool {
+        guard raws[j].kind == .symbol else { return false }
+        return withWords ? svMathOperators.contains(raws[j].text) : !["-", "'", "\""].contains(raws[j].text)
+    }
     var i = 0
     while i < raws.count {
         guard operand(i) else {
@@ -354,12 +425,12 @@ func svExpressions(_ raws: [SvRaw]) -> [Bool] {
             continue
         }
         var j = i
-        var op = false
+        var holds = false
         while j < raws.count && operand(j) && (j == i || !raws[j].punctBefore) {
-            op = op || (raws[j].kind == .symbol && raws[j].text != "-")
+            holds = holds || op(j)
             j += 1
         }
-        for m in i..<j { inside[m] = op }
+        for m in i..<j { inside[m] = holds }
         i = j
     }
     return inside
@@ -367,6 +438,24 @@ func svExpressions(_ raws: [SvRaw]) -> [Bool] {
 
 /// The characters that end a sentence. NFKC folds the full-width ！ and ？ but not the ideographic full stop.
 let svSentenceEnds = ".!?。"
+
+/// The English readings of a measurement mark after a number (``svMeasureMark(_:)``), and of two of them or the '"'
+/// after feet.
+private let svFootNames = ["feet", "foot", "minutes", "minute"]
+private let svInchNames = ["inches", "inch", "seconds", "second"]
+
+/// A Han numeral after its sign: each reading of the numeral after the sign as a token of its own ("-" or "−"), and
+/// a reading in digits also with the sign joined to it, as the transcript lexes "-5".
+func svSignedHanUnit(_ run: String) -> SvUnit {
+    var unit: SvUnit = []
+    for seq in svHanUnit(run) {
+        unit.append([["-", "−"]] + seq)
+        guard let first = seq.first else { continue }
+        let signed = first.filter { $0.unicodeScalars.first.map(svDigit) ?? false }.map { "-" + $0 }
+        if !signed.isEmpty { unit.append([signed] + seq.dropFirst()) }
+    }
+    return unit
+}
 
 /// The English names of spoken symbols. A symbol without a name matches only itself.
 private let svSymbolNames: [String: [String]] = [

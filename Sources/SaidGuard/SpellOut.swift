@@ -162,7 +162,7 @@ final class SpellOut: @unchecked Sendable {
         guard used > 0 else { return nil }
         let plainWords = (k..<j).map(ordinary)
         guard used <= Self.maxPhraseWords, let v = values[parts.joined(separator: " ")],
-            var unit = Self.product(plainWords)
+            var unit = svProduct(plainWords)
         else { return (plainWords, used) }
         let n = NSDecimalNumber(decimal: v)
         lock.lock()
@@ -174,22 +174,6 @@ final class SpellOut: @unchecked Sendable {
             if !reading.isEmpty && !unit.contains(reading) { unit.append(reading) }
         }
         return ([unit], used)
-    }
-
-    /// Every concatenation of one reading per unit, or nil beyond 64 readings, when the words stay plain words.
-    private static func product(_ units: [SvUnit]) -> SvUnit? {
-        var out: SvUnit = [[]]
-        for u in units {
-            var next: SvUnit = []
-            for a in out {
-                for b in u {
-                    next.append(a + b)
-                    if next.count > 64 { return nil }
-                }
-            }
-            out = next
-        }
-        return out
     }
 
     /// The locale's spellings of every number to 10,000, the thousands to 100,000, and the powers up to a trillion,
