@@ -5627,5 +5627,23 @@
   "language": "en",
   "expect": false,
   "note": "A spacing mark on the e makes another word too."
+ },
+ {
+  "id": "r13-eg-symbol-after",
+  "component": "said-guard",
+  "script": "e.g🏽",
+  "transcript": "for example 🏽",
+  "language": "en",
+  "expect": true,
+  "note": "A symbol after the g, here an emoji modifier, is a token of its own, so e.g. is still the abbreviation."
+ },
+ {
+  "id": "r13-ie-symbol-after",
+  "component": "said-guard",
+  "script": "i.e🏽",
+  "transcript": "that is 🏽",
+  "language": "en",
+  "expect": true,
+  "note": "The same after i.e."
  }
 ]
