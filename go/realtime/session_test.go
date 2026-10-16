@@ -231,7 +231,9 @@ func TestSessionClassifiesWebSocketFailures(t *testing.T) {
 	})
 }
 
-func TestReadLimitAndSerialisedWrites(t *testing.T) {
+// A 12 MiB message under the read limit is delivered whole; eight concurrent Sends each reach the server as a whole
+// message; and a message over the limit then ends the session as protocol.
+func TestReadLimitBoundsMessagesAndConcurrentSendsArriveWhole(t *testing.T) {
 	big := strings.Repeat("A", 12<<20) // base64 of 9 MiB, under the 16 MiB limit
 	var mu sync.Mutex
 	got := 0
