@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -27,19 +29,32 @@ const (
 // default path. The folder stays open for every read, so replacing a folder of the path after validation (with a
 // link elsewhere, say) cannot redirect a later read.
 type authLocation struct {
-	dir  *os.Root // nil for the default path
-	path string   // the file, for the caller's guard and for diagnostics
+	dir  *pinnedDir // the open CODEX_HOME folder; nil for the default path
+	path string     // the file, for the caller's guard and for diagnostics
 }
+
+// pinnedDir is an open folder descriptor. A pointer, so the zero authLocation closes nothing.
+type pinnedDir struct{ fd int }
 
 func (l authLocation) close() {
 	if l.dir != nil {
-		_ = l.dir.Close()
+		_ = unix.Close(l.dir.fd)
 	}
 }
+
+// dirFlags open a folder of the path: never through a link, and never blocking on a FIFO named like a folder.
+const dirFlags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+
+// afterResolve, when set, runs between resolving CODEX_HOME and opening it. For tests.
+var afterResolve func()
 
 // authFilePath locates $CODEX_HOME/auth.json when codexHome resolves, after following links, to a folder the user
 // owns, inside confine when that is set, and ~/.codex/auth.json when codexHome is unset. A set CODEX_HOME that fails
 // is codex-error. The caller closes the location.
+//
+// The resolved path is then opened one folder at a time from the root, each relative to the folder before it and
+// without following a link: the folder opened is the one at the resolved path, which is inside confine, even when a
+// folder of the path is replaced after resolution. Such a replacement with a link fails the open instead.
 func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 	if codexHome == "" {
 		return authLocation{path: filepath.Join(home, ".codex", authFileName)}, nil
@@ -54,11 +69,6 @@ func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 	if err != nil {
 		return authLocation{}, fail(StateCodexError, "CODEX_HOME does not resolve", err)
 	}
-	// os.OpenRoot opens without O_DIRECTORY or O_NONBLOCK, so a FIFO named as a folder would block it forever.
-	if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
-		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder", err)
-	}
-	var dir *os.Root
 	if confine != "" {
 		// Absolute first: EvalSymlinks keeps a relative path relative, and Rel cannot relate it to real.
 		abs, err := filepath.Abs(confine)
@@ -73,33 +83,63 @@ func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return authLocation{}, fail(StateCodexError, "CODEX_HOME is outside the folder it is confined to", nil)
 		}
-		if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to is not a folder", err)
-		}
-		// Opened through the confining folder, which refuses any path that leaves it, even one changed since.
-		top, err := os.OpenRoot(root)
-		if err != nil {
-			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to does not resolve", err)
-		}
-		dir, err = top.OpenRoot(rel)
-		_ = top.Close()
-		if err != nil {
-			return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder inside the folder it is confined to", err)
-		}
-	} else if dir, err = os.OpenRoot(real); err != nil {
-		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder", err)
+	}
+	if afterResolve != nil {
+		afterResolve()
+	}
+	dir, err := openDirNoFollow(real)
+	if err != nil {
+		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder, or a folder of its path changed", err)
 	}
 	// Checked on the open folder, the one every read goes through.
-	fi, err := dir.Stat(".")
-	if err != nil || !fi.IsDir() {
-		_ = dir.Close()
+	var st unix.Stat_t
+	if err := unix.Fstat(dir, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		_ = unix.Close(dir)
 		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder", err)
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
-		_ = dir.Close()
+	if int(st.Uid) != os.Getuid() {
+		_ = unix.Close(dir)
 		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not owned by the user", nil)
 	}
-	return authLocation{dir: dir, path: filepath.Join(real, authFileName)}, nil
+	return authLocation{dir: &pinnedDir{dir}, path: filepath.Join(real, authFileName)}, nil
+}
+
+// openDirNoFollow opens the folder at the clean absolute path p one component at a time, never following a link and
+// never blocking: a link, a FIFO or a file anywhere on the path fails.
+func openDirNoFollow(p string) (int, error) {
+	if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+		return -1, errors.New("not a clean absolute path")
+	}
+	fd, err := openRetry(unix.AT_FDCWD, "/")
+	if err != nil {
+		return -1, err
+	}
+	for name := range strings.SplitSeq(strings.TrimPrefix(p, "/"), "/") {
+		if name == "" {
+			continue // p is "/"
+		}
+		if name == "." || name == ".." {
+			_ = unix.Close(fd)
+			return -1, errors.New("the path names a relative folder")
+		}
+		next, err := openRetry(fd, name)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, err
+		}
+		fd = next
+	}
+	return fd, nil
+}
+
+// openRetry opens the folder name inside dir with dirFlags, retrying an interrupted call.
+func openRetry(dir int, name string) (int, error) {
+	for {
+		fd, err := unix.Openat(dir, name, dirFlags, 0)
+		if err != unix.EINTR {
+			return fd, err
+		}
+	}
 }
 
 // errNoFile marks a missing auth.json.
@@ -123,42 +163,34 @@ func readAuthFile(loc authLocation, onRetry func()) (secret.Token, *Error) {
 	return tok, e
 }
 
-// openAuthFile opens the file without following a link and without blocking on a FIFO.
+// fileFlags open auth.json: never through a link, and never blocking on a FIFO.
+const fileFlags = unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+
+// openAuthFile opens the file without following a link and without blocking on a FIFO: inside the pinned folder,
+// relative to its descriptor, when CODEX_HOME is set.
 func openAuthFile(loc authLocation) (*os.File, *Error) {
-	if loc.dir == nil {
-		fd, err := syscall.Open(loc.path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-		if errors.Is(err, syscall.ENOENT) {
-			return nil, fail(StateNoSignInFile, "auth.json does not exist", errNoFile)
+	var fd int
+	var err error
+	for {
+		if loc.dir == nil {
+			fd, err = unix.Open(loc.path, fileFlags, 0)
+		} else {
+			fd, err = unix.Openat(loc.dir.fd, authFileName, fileFlags, 0)
 		}
-		if err != nil {
-			return nil, fail(StateCodexError, "auth.json cannot be opened", err)
+		if err != unix.EINTR {
+			break
 		}
-		return os.NewFile(uintptr(fd), loc.path), nil
 	}
-	// os.Root follows a link that stays inside the folder, so the file is examined first and the opened file must be
-	// that same regular file: an inode cannot be both a link and the file it was checked to be.
-	li, err := loc.dir.Lstat(authFileName)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, unix.ENOENT) {
 		return nil, fail(StateNoSignInFile, "auth.json does not exist", errNoFile)
+	}
+	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EMLINK) {
+		return nil, fail(StateCodexError, "auth.json is a link", err) // FreeBSD reports EMLINK for O_NOFOLLOW
 	}
 	if err != nil {
 		return nil, fail(StateCodexError, "auth.json cannot be opened", err)
 	}
-	if !li.Mode().IsRegular() {
-		return nil, fail(StateCodexError, "auth.json is not a regular file", nil)
-	}
-	f, err := loc.dir.OpenFile(authFileName, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fail(StateNoSignInFile, "auth.json does not exist", errNoFile)
-	}
-	if err != nil {
-		return nil, fail(StateCodexError, "auth.json cannot be opened", err)
-	}
-	if fi, err := f.Stat(); err != nil || !os.SameFile(li, fi) {
-		_ = f.Close()
-		return nil, fail(StateCodexError, "auth.json changed while it was opened", err)
-	}
-	return f, nil
+	return os.NewFile(uintptr(fd), loc.path), nil
 }
 
 // readOnce opens the file, checks the open descriptor, and decodes the bytes read from it. parsed is false only

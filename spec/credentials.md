@@ -97,7 +97,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   to `$home`), inside that folder; otherwise a set `CODEX_HOME` is `codex-error`. Unset: `~/.codex/auth.json`. A
   set `CODEX_HOME` is opened once, through the confining folder when there is one, and every read, the re-read
   included, goes through that open folder, whose ownership is checked on its descriptor: replacing a folder of the
-  path afterwards cannot redirect a read.
+  path afterwards cannot redirect a read. The resolved path is opened one folder at a time, each relative to the one
+  before it, never through a link and never blocking, so a folder replaced with a link between resolution and opening,
+  or a FIFO named as a folder, is `codex-error`.
 - **Read.** One `open` with `O_NOFOLLOW | O_NONBLOCK`; `fstat` on that descriptor must show a regular file owned by
   the user and smaller than 64 KiB (65,536 bytes is refused); the bytes are read from that descriptor, bounded. The
   content is JSON in UTF-8 without a byte-order mark (UTF-16 and UTF-32 are not JSON here, as for Codex), with exact
