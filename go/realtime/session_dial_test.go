@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/xiaolai/sayso/go/internal/fakeopenai"
+	"github.com/xiaolai/sayso/go/internal/parked"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/realtime"
 )
@@ -67,7 +68,7 @@ func TestNextCancelledKeepsThePendingEvent(t *testing.T) {
 		send(c, `{"type":"input_audio_buffer.committed","item_id":"kept"}`)
 		_, _, _ = c.Read(context.Background())
 	}, nil)
-	time.Sleep(100 * time.Millisecond) // the reader is now offering the event
+	parked.Wait(t, "realtime.(*Session).readLoop") // the reader is offering the event
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	for range 50 {

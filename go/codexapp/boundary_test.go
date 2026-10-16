@@ -115,6 +115,20 @@ func stalled(t *testing.T, timeout time.Duration) *Client {
 
 var big = map[string]any{"pad": strings.Repeat("x", 4<<20)} // far beyond a pipe buffer
 
+// waitWriting waits until c's writer has started a write, which the stalled child's full pipe then holds.
+func waitWriting(t *testing.T, c *Client) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		c.k.mu.Lock()
+		writing := c.k.writing
+		c.k.mu.Unlock()
+		if writing {
+			return
+		}
+	}
+	t.Fatal("the write never started")
+}
+
 // A write cut off inside a request leaves the stream unusable, so the next call fails at once; an already-cancelled
 // call sends nothing; a waiting writer gives up at its own deadline; cancellation interrupts a blocked write.
 func TestWritePathUnderFailure(t *testing.T) {
@@ -128,7 +142,7 @@ func TestWritePathUnderFailure(t *testing.T) {
 
 	blocked := make(chan error, 1)
 	go func() { blocked <- c.Call(t.Context(), "big", big, nil) }()
-	time.Sleep(300 * time.Millisecond)
+	waitWriting(t, c)
 	short, cancelShort := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancelShort()
 	start := time.Now()
@@ -147,7 +161,7 @@ func TestWritePathUnderFailure(t *testing.T) {
 	defer d.Close()
 	ctx, cancel = context.WithCancel(t.Context())
 	go func() { blocked <- d.Call(ctx, "big", big, nil) }()
-	time.Sleep(300 * time.Millisecond)
+	waitWriting(t, d) // a cancellation now interrupts the write, not a call still queued
 	start = time.Now()
 	cancel()
 	select {
