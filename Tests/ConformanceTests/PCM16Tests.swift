@@ -5,7 +5,22 @@ import XCTest
 final class PCM16Tests: XCTestCase {
     func testPCM16() throws { try runFixtures("pcm16") { try checkPCM($0.object) } }
 
+    /// Per op, the case members it reads besides the head and `op`.
+    private static let members: [String: Set<String>] = [
+        "encode": ["input", "expectSamples", "expectHex"],
+        "decode": ["hex", "sliceFrom", "expectSamples"],
+        "wav": ["rate", "pcmHex", "expectHex", "expectError"],
+        "validWAV": ["hex", "capBytes", "expect"],
+        "plausible": ["pcm", "script", "expect"],
+    ]
+
     private func checkPCM(_ c: [String: Any]) throws -> String? {
+        if let op = c["op"] as? String, let known = Self.members[op] {
+            let unknown =
+                FakeOpenAI.unknownKeys("case", c, FakeOpenAI.caseHead.union(["op"]).union(known))
+                + FakeOpenAI.unknownKeys("pcm", c["pcm"] as? [String: Any], ["samples", "value"])
+            guard unknown.isEmpty else { return unknown.joined(separator: "; ") }
+        }
         switch c["op"] as? String {
         case "encode":
             guard let input = c["input"] as? [Any] else { return "bad case" }

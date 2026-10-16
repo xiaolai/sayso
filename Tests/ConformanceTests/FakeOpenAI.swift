@@ -234,6 +234,18 @@ extension FakeOpenAI {
         return p + leaks(strings(want["notInDescription"]), String(describing: e))
     }
 
+    /// The members every case may carry besides its component's own (spec/fixtures.md).
+    static let caseHead: Set<String> = ["id", "component", "note", "requires"]
+
+    /// Each key of `m` outside `known`, sorted, as a problem in `place`: a member no harness reads would let a case
+    /// pass whatever it says.
+    static func unknownKeys(_ place: String, _ m: [String: Any]?, _ known: Set<String>) -> [String] {
+        (m ?? [:]).keys.filter { !known.contains($0) }.sorted().map { "unknown \(place) key \"\($0)\"" }
+    }
+
+    /// The expectation keys ``checkError(_:_:)`` reads.
+    static let errorKeys: Set<String> = ["class", "fatal", "code", "type", "param", "notInDescription"]
+
     static func outcome(_ problems: [String]) -> String? {
         problems.isEmpty ? nil : problems.joined(separator: "; ")
     }

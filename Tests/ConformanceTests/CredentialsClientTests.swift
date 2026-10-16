@@ -103,6 +103,8 @@ extension CredentialWorld {
                     break
                 }
                 for (i, (e, w)) in zip(got, list).enumerated() {
+                    p += FakeOpenAI.unknownKeys(
+                        "events[\(i)]", w, ["method", "serverRequest", "noParams", "params", "paramsRaw"])
                     if e.method != w["method"] as? String { p.append("event \(i) is \(e.method), want \(w["method"] ?? "")") }
                     if e.isServerRequest != (w["serverRequest"] as? Bool ?? false) {
                         p.append("event \(i): server request \(e.isServerRequest)")

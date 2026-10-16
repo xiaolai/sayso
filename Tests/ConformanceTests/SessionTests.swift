@@ -7,8 +7,31 @@ final class SessionTests: XCTestCase {
 }
 
 enum SessionCheck {
+    /// Per kind, the case members it reads besides the head, `kind` and `expect`, and the expectation keys its check
+    /// reads.
+    static let schema: [String: (members: Set<String>, expect: Set<String>)] = [
+        "close": (["code", "reason"], FakeOpenAI.errorKeys),
+        "error-event": (["event"], FakeOpenAI.errorKeys),
+        "size": (["readLimit", "messageBytes"], FakeOpenAI.errorKeys),
+        "unknown-types": (["types", "typeBytes", "rounds"], FakeOpenAI.errorKeys.union(["delivered", "distinct"])),
+        "event": (
+            ["raw"],
+            [
+                "type", "sessionType", "model", "responseId", "metadata", "pcmHex", "delta", "status", "statusReason",
+                "usage", "limits", "exhausted", "class", "code", "param", "itemId", "transcript", "ignored", "unknown",
+                "protocolError", "notInDescription",
+            ]
+        ),
+    ]
+
     static func run(_ c: [String: Any]) throws -> [String] {
         let want = c["expect"] as? [String: Any] ?? [:]
+        if let kind = c["kind"] as? String, let s = schema[kind] {
+            let unknown =
+                FakeOpenAI.unknownKeys("case", c, FakeOpenAI.caseHead.union(["kind", "expect"]).union(s.members))
+                + FakeOpenAI.unknownKeys("expect", want, s.expect)
+            guard unknown.isEmpty else { return unknown }
+        }
         switch c["kind"] as? String {
         case "close":
             // The session classifies a received close frame through closeError, as here.
