@@ -622,8 +622,8 @@ final class AppServerCore: @unchecked Sendable {
     /// child, a group with its ID is not ours, so the answer is yes.
     private func gone() -> Bool {
         guard reaped(by: .now()) else { return false }
-        let (lost, liveGroup) = lock.withLock { (lost, testLiveGroup) }
-        return lost || !(liveGroup?() ?? groupAlive())
+        let (wasLost, liveGroup) = lock.withLock { (self.lost, self.testLiveGroup) }
+        return wasLost || !(liveGroup?() ?? groupAlive())
     }
 
     /// Sends `sig` to the child's process group while the child is our unreaped child, whose ID, and so the group ID,
