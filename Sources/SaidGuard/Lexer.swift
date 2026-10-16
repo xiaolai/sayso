@@ -200,20 +200,24 @@ func svElisionAt(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
 /// Replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"', so the words
 /// inside are not read as elisions or possessives. An opener stands at a word start after a space, an opening bracket
 /// or the start, and never before a leading elision (``svElisions``: "’Tis the students’ books" holds two apostrophes,
-/// not a quotation); a closer at a word end before a space, punctuation or the end; a pair stays within a sentence. An
-/// unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n’ roll").
+/// not a quotation); a closer at a word end, after any punctuation that ends the quoted words ("‘hello!’", "‘yes,’"),
+/// before a space, punctuation or the end; a pair stays within a sentence, and a sentence ends at its final punctuation
+/// only where no closer follows it ("‘Wait.’" is one quotation). An unpaired mark is an apostrophe ("’tis", "the
+/// students’ books", "rock ’n’ roll").
 func svUnquote(_ input: [Unicode.Scalar]) -> [Unicode.Scalar] {
     var rs = input
     var open = -1
     for i in rs.indices {
         let r = rs[i]
         if !isApostrophe(r) {
-            if svSentenceEndScalars.contains(r) { open = -1 }
+            if svSentenceEndScalars.contains(r), !svApostropheAfterPunct(rs, i + 1) { open = -1 }
             continue
         }
         let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
             && svLetter(rs[i + 1]) && !svElisionAt(rs, i + 1)
-        let closer = i > 0 && (svLetter(rs[i - 1]) || isMark(rs[i - 1]) || svDigit(rs[i - 1]))
+        var k = i - 1
+        while k >= 0 && svInnerPunct(rs[k]) { k -= 1 }
+        let closer = k >= 0 && (svLetter(rs[k]) || isMark(rs[k]) || svDigit(rs[k]))
             && (i + 1 == rs.count || isSpace(rs[i + 1])
                 || (svUnspokenPunct.contains(rs[i + 1]) && !isApostrophe(rs[i + 1])))
         if closer && open >= 0 {
@@ -225,6 +229,17 @@ func svUnquote(_ input: [Unicode.Scalar]) -> [Unicode.Scalar] {
         }
     }
     return rs
+}
+
+/// Unspoken punctuation that may stand between quoted words and their closing mark ("hello!’"): anything unspoken but
+/// a space or another apostrophe.
+func svInnerPunct(_ r: Unicode.Scalar) -> Bool { svUnspokenPunct.contains(r) && !isApostrophe(r) }
+
+/// Whether the first scalar from rs[i] on that is not ``svInnerPunct`` is an apostrophe.
+func svApostropheAfterPunct(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
+    var i = start
+    while i < rs.count && svInnerPunct(rs[i]) { i += 1 }
+    return i < rs.count && isApostrophe(rs[i])
 }
 
 // --- transcript side: normalisation only ---

@@ -4010,5 +4010,104 @@
   "language": "en",
   "expect": false,
   "note": "Control: the last label differs."
+ },
+ {
+  "id": "said-224",
+  "component": "said-guard",
+  "script": "Say ‘hello!’",
+  "transcript": "Say hello!",
+  "language": "en",
+  "expect": true,
+  "note": "Punctuation inside a quotation ends the quoted words: the closer after it still pairs, so the pair is unspoken."
+ },
+ {
+  "id": "said-225",
+  "component": "said-guard",
+  "script": "Say ‘hello,’ then go.",
+  "transcript": "Say hello, then go.",
+  "language": "en",
+  "expect": true,
+  "note": "A comma before the closer, as in American quotation style."
+ },
+ {
+  "id": "said-226",
+  "component": "said-guard",
+  "script": "Is the answer ‘yes?’",
+  "transcript": "Is the answer yes?",
+  "language": "en",
+  "expect": true,
+  "note": "A question mark before the closer."
+ },
+ {
+  "id": "said-227",
+  "component": "said-guard",
+  "script": "She said ‘done.’ Then she left.",
+  "transcript": "She said done. Then she left.",
+  "language": "en",
+  "expect": true,
+  "note": "A full stop followed by the closer does not end the sentence before the closer."
+ },
+ {
+  "id": "said-228",
+  "component": "said-guard",
+  "script": "Say ‘hello’!",
+  "transcript": "Say hello!",
+  "language": "en",
+  "expect": true,
+  "note": "Control: punctuation after the closer, as before."
+ },
+ {
+  "id": "said-229",
+  "component": "said-guard",
+  "script": "Say ‘hello!’",
+  "transcript": "Say goodbye!",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different word inside the quotation is still refused."
+ },
+ {
+  "id": "said-230",
+  "component": "said-guard",
+  "script": "Say ‘hello!’",
+  "transcript": "Say ‘goodbye!’",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different quoted word is refused."
+ },
+ {
+  "id": "said-231",
+  "component": "said-guard",
+  "script": "The dogs’. ’Tis late.",
+  "transcript": "The dogs. Tis late.",
+  "language": "en",
+  "expect": false,
+  "note": "A possessive before a full stop and space, then an elision: no quotation spans the sentence end, so both apostrophes are kept."
+ },
+ {
+  "id": "said-232",
+  "component": "said-guard",
+  "script": "The dogs’. ’Tis late.",
+  "transcript": "The dogs’. ’Tis late.",
+  "language": "en",
+  "expect": true,
+  "note": "Control: the script matches itself."
+ },
+ {
+  "id": "said-233",
+  "component": "said-guard",
+  "script": "‘Wait!’ ’Tis late.",
+  "transcript": "Wait! ’Tis late.",
+  "language": "en",
+  "expect": true,
+  "note": "A quotation closed after its punctuation, then an elision: the pair is unspoken and the elision keeps its apostrophe."
+ },
+ {
+  "id": "said-234",
+  "component": "said-guard",
+  "script": "‘Wait!’ ’Tis late.",
+  "transcript": "Wait! Tis late.",
+  "language": "en",
+  "expect": false,
+  "note": "The elision's apostrophe is still kept after a closed quotation."
  }
 ]
