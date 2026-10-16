@@ -43,20 +43,14 @@ func (g *graph) pieceGraph(at int, piece string, w *budget) (int, bool) {
 	start := key{0, -1, 0, cascade{}}
 	nodes := map[key]int{start: at}
 	todo := []key{start}
-	type arcKey struct {
-		a, b  int
-		words string
-	}
-	seen := map[arcKey]bool{}
-	path := func(a, b int, words []string) bool { // two ways often emit the same tokens between the same nodes
+	// Every arc is recorded, duplicates included: each field leaves a constant number of ways, so duplicate arcs
+	// cost a constant factor, while recognising them would mean reading, or copying into a key, every byte of their
+	// tokens. An arc shares its tokens' bytes with the text, or with the state that built them, and copies none.
+	path := func(a, b int, words []string) bool {
 		if !w.spend(1 + len(words)) {
 			return false
 		}
-		k := arcKey{a, b, strings.Join(words, " ")}
-		if !seen[k] {
-			seen[k] = true
-			g.path(a, b, words)
-		}
+		g.path(a, b, words)
 		return true
 	}
 	reach := func(from int, to key, words []string) bool {

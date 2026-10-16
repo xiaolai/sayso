@@ -67,10 +67,11 @@ const equivalentWork = 1 << 22
 // budget counts the work of one Equivalent call beyond Canon's own passes over the two texts, which are linear in
 // their length. A unit is a byte of input; a span, or a rune of a span's text that Canon's text passes read (a word of
 // h compound hyphens has (h+1)(h+2)/2 spans, counted before any is built); a graph node, with the letters its state
-// holds; a field read along a span; a token emitted; or a pair of nodes or of arcs compared in meets. Every loop of
-// readings and meets spends before it works, and none does more than a constant amount of work or allocation per unit
-// spent (the ways one field can go are at most a constant number, and the walk merges ways by state after every
-// field), so the time and memory of one call are linear in MaxBytes and equivalentWork whatever the input.
+// holds; a field read along a span; a token emitted (an arc, which shares its token's bytes with the text or with the
+// state, already paid for, that built it); or a pair of nodes or of arcs compared in meets. Every loop of readings
+// and meets spends before it works, and none does more than a constant amount of work or allocation per unit spent
+// (the ways one field can go are at most a constant number, and the walk merges ways by state after every field), so
+// the time and memory of one call are linear in MaxBytes and equivalentWork whatever the input.
 type budget struct{ left int }
 
 func (b *budget) spend(n int) bool {

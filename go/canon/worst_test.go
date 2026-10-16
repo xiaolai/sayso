@@ -39,6 +39,8 @@ func worstShapes(n int) []shape {
 		{"oh-oh", rep("oh-oh "), rep("oh oh ")},
 		{"oh.span", rep("oh."), rep("oh ")},
 		{"nineteen", rep("nineteen-twenty "), rep("nineteen twenty ")},
+		// A long run of single letters still being joined, then compounds of single letters (audit).
+		{"letters-then-compounds", rep("q ")[:n/2] + rep("x-y-z ")[:n/2], rep("q ")[:n/2] + rep("x-y-z ")[:n/2]},
 	}
 }
 
