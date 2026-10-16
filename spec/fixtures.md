@@ -130,7 +130,7 @@ text) → `expect` with `type` and fields, or `protocolError` (the type the erro
 
 ### `pcm16` (`pcm16.json`)
 
-`op`: `encode` (`input`, with `"NaN"`, `"Infinity"`, `"-Infinity"` as strings) → `expectSamples`, `expectHex`;
-`decode` (`hex`, `sliceFrom`) → `expectSamples` (each float is the sample / 32768); `wav` (`rate`, `pcmHex`) →
+`op`: `encode` (`input`, with `"NaN"`, `"Infinity"`, `"-Infinity"` as strings) → `expectSamples` (required),
+`expectHex`; `decode` (`hex`, `sliceFrom`) → `expectSamples` (required; each float is the sample / 32768); `wav` (`rate`, `pcmHex`) →
 `expectHex`, or `expectError: true`; `validWAV` (`hex`, `capBytes`) → `expect`; `plausible` (`pcm`: `samples` copies of `value`, `script`)
 → `expect`.

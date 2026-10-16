@@ -57,6 +57,10 @@ func TestPCM16(t *testing.T) {
 }
 
 func checkPCM(pc pcmCase) []string {
+	if (pc.Op == "encode" || pc.Op == "decode") && pc.ExpectSamples == nil {
+		// Without them the case would check the hex alone, or nothing.
+		return []string{map[string]string{"encode": "an encode", "decode": "a decode"}[pc.Op] + " case needs expectSamples"}
+	}
 	switch pc.Op {
 	case "encode":
 		in := make([]float32, len(pc.Input))

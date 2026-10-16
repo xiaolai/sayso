@@ -24,6 +24,8 @@ final class PCM16Tests: XCTestCase {
         switch c["op"] as? String {
         case "encode":
             guard let input = c["input"] as? [Any] else { return "bad case" }
+            // Required: without it the case would check the hex alone, or nothing.
+            guard let wantSamples = c["expectSamples"] as? [Int] else { return "an encode case needs expectSamples" }
             let samples: [Float] = input.map { v in
                 if let n = v as? NSNumber { return Float(n.doubleValue) }
                 switch v as? String {
@@ -35,9 +37,7 @@ final class PCM16Tests: XCTestCase {
             }
             let out = PCM.encode(samples)
             var problems: [String] = []
-            if let want = c["expectSamples"] as? [Int], ints(out) != want {
-                problems.append("samples \(ints(out)), want \(want)")
-            }
+            if ints(out) != wantSamples { problems.append("samples \(ints(out)), want \(wantSamples)") }
             if let want = c["expectHex"] as? String, hex(out) != want {
                 problems.append("hex \(hex(out)), want \(want)")
             }
@@ -47,7 +47,8 @@ final class PCM16Tests: XCTestCase {
             let from = c["sliceFrom"] as? Int ?? 0
             // A slice of a larger buffer, whose indices do not start at zero.
             let got = PCM.decode(raw[(raw.startIndex + from)...])
-            let want = (c["expectSamples"] as? [Int] ?? []).map { Float($0) / 32768 }
+            guard let samples = c["expectSamples"] as? [Int] else { return "a decode case needs expectSamples" }
+            let want = samples.map { Float($0) / 32768 }
             return got == want ? nil : "decoded \(got), want \(want)"
         case "wav":
             let pcm = try bytes(c["pcmHex"]), rate = c["rate"] as? Int ?? 0
