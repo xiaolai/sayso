@@ -67,7 +67,7 @@ func svScriptUnits(s, language string) []svUnit {
 			k = j
 		}
 	}
-	singleLetter := func(k int, _ bool) bool {
+	singleLetter := func(k int) bool {
 		if !word(k) || zero[k] {
 			return false
 		}
@@ -145,10 +145,10 @@ func svScriptUnits(s, language string) []svUnit {
 			continue
 		}
 		// A run of single letters is a spelled code, transcribed spaced or joined ("X J" = "XJ").
-		if singleLetter(k, false) && singleLetter(k+1, true) && svSpelledGap(raws[k+1].gap) {
+		if singleLetter(k) && singleLetter(k+1) && svSpelledGap(raws[k+1].gap) {
 			j := k
 			var letters []string
-			for j < len(raws) && singleLetter(j, j > k) && (j == k || svSpelledGap(raws[j].gap)) {
+			for j < len(raws) && singleLetter(j) && (j == k || svSpelledGap(raws[j].gap)) {
 				letters = append(letters, lower(j))
 				j++
 			}
