@@ -47,7 +47,7 @@ var Args = []string{"-c", `model_provider="openai"`, "app-server", "--listen", "
 type Config struct {
 	Bin       string        // absolute path, from Resolve
 	CodexHome string        // passed as CODEX_HOME when non-empty
-	Env       []string      // the inherited environment; nil means os.Environ()
+	Env       Env           // the child's environment, from EnvOf; the zero Env inherits os.Environ()
 	Timeout   time.Duration // per call; required
 	Logger    *slog.Logger  // nil discards
 	// ClientName is sent as clientInfo.name; "" means "sayso".
@@ -57,7 +57,7 @@ type Config struct {
 	Guard func(bin string) error
 }
 
-// String names the executable only: Env holds the inherited environment, which may hold credentials.
+// String names the executable only: Env may hold credentials.
 func (cfg Config) String() string { return "codexapp.Config{" + cfg.Bin + "}" }
 
 // GoString redacts like String.
@@ -155,8 +155,8 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 			return nil, fmt.Errorf("codexapp: start refused: %w", err)
 		}
 	}
-	env := cfg.Env
-	if env == nil {
+	env := cfg.Env.List()
+	if cfg.Env.IsZero() {
 		env = os.Environ()
 	}
 	k := &core{

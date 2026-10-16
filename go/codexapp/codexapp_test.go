@@ -157,7 +157,7 @@ func TestResolveNeedsExecutePermissionForThisUser(t *testing.T) {
 
 // Formatting a Config never prints the environment it carries.
 func TestConfigRedactsEnvironment(t *testing.T) {
-	cfg := Config{Bin: "/b/codex", Env: []string{"OPENAI_API_KEY=canary-env-1"}}
+	cfg := Config{Bin: "/b/codex", Env: EnvOf([]string{"OPENAI_API_KEY=canary-env-1"})}
 	for _, s := range []string{fmt.Sprintf("%v %+v %#v %s", cfg, cfg, cfg, cfg), fmt.Sprint(&cfg)} {
 		if strings.Contains(s, "canary") {
 			t.Fatalf("leaked: %s", s)
@@ -180,7 +180,7 @@ func TestCallTimesOutWhenTheChildStopsReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Generous enough for a loaded machine to start Python and answer initialize.
-	c, err := Start(t.Context(), Config{Bin: script, Env: []string{"PATH=/usr/bin:/bin"}, Timeout: 3 * time.Second})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

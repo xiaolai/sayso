@@ -23,19 +23,26 @@ type AuthStatus struct {
 	HasMethod bool
 	// RequiresOpenAIAuth is requiresOpenaiAuth; false means a provider needing no OpenAI sign-in is in force.
 	RequiresOpenAIAuth bool
-	// token sits behind a pointer, as secret.Token's bearer does: fmt prints a struct holding an AuthStatus in an
-	// unexported field by reflection, without the redacting methods, and shows a pointer as its address.
-	token *sealedToken
+	// token lives in a closure, as Env's variables do: fmt prints a struct holding an AuthStatus in an unexported
+	// field by reflection, without the redacting methods, and shows a func as its address; reflection can neither
+	// read a closure's variables nor call a func reached through an unexported field.
+	token func() string
 }
 
-type sealedToken struct{ s string }
+// sealed holds t in a closure; "" holds nothing.
+func sealed(t string) func() string {
+	if t == "" {
+		return nil
+	}
+	return func() string { return t }
+}
 
 // Token returns the credential Codex sent, or "". It is already registered with the scrubber.
 func (s AuthStatus) Token() string {
 	if s.token == nil {
 		return ""
 	}
-	return s.token.s
+	return s.token()
 }
 
 func (s AuthStatus) String() string {
@@ -81,9 +88,7 @@ func (c *Client) GetAuthStatus(ctx context.Context, includeToken, refreshToken b
 		return AuthStatus{}, bad
 	}
 	st := AuthStatus{HasMethod: method != nil, RequiresOpenAIAuth: requires == nil || *requires}
-	if token != "" {
-		st.token = &sealedToken{token}
-	}
+	st.token = sealed(token)
 	if method != nil {
 		st.Method = *method
 	}

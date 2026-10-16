@@ -1,9 +1,59 @@
 package codexapp
 
 import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 )
+
+// Env is the environment handed to the child, which may hold credentials. The variables live in a closure: fmt
+// prints a func as its address and reflection can neither read a closure's variables nor call a func reached through
+// an unexported field, so a Config held anywhere, an unexported wrapper field included, cannot show them. The zero
+// Env inherits os.Environ() when the child starts.
+type Env struct{ get func() []string }
+
+// EnvOf holds a copy of kv. EnvOf(nil) is the zero Env, which inherits; an empty, non-nil kv is an empty environment.
+func EnvOf(kv []string) Env {
+	if kv == nil {
+		return Env{}
+	}
+	held := append([]string{}, kv...)
+	return Env{get: func() []string { return slices.Clone(held) }}
+}
+
+// IsZero reports the zero Env, which inherits os.Environ().
+func (e Env) IsZero() bool { return e.get == nil }
+
+// List returns a copy of the variables; nil for the zero Env.
+func (e Env) List() []string {
+	if e.get == nil {
+		return nil
+	}
+	return e.get()
+}
+
+// String never shows a variable.
+func (e Env) String() string {
+	if e.get == nil {
+		return "codexapp.Env{inherited}"
+	}
+	return "codexapp.Env{redacted}"
+}
+
+// GoString redacts like String.
+func (e Env) GoString() string { return e.String() }
+
+// Format redacts like String for every verb.
+func (e Env) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(e.String())) }
+
+// MarshalJSON encodes the redacted form.
+func (e Env) MarshalJSON() ([]byte, error) { return json.Marshal(e.String()) }
+
+// LogValue logs the redacted form.
+func (e Env) LogValue() slog.Value { return slog.StringValue(e.String()) }
 
 // removedEnv are the variables that override Codex's own authentication or its token endpoints (upstream
 // login/src/auth/manager.rs). They never reach the child; names compare case-insensitively.
