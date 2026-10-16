@@ -24,7 +24,7 @@ public let minimumCodexVersion = "0.161.0"
 /// A failure to obtain a usable token. `errorClass` is auth-expired for ``CodexAuthState/expired``, codex-error for
 /// Codex and file failures, and auth-mode for the sign-in states. Every string is scrubbed; `message` and `cause`
 /// are diagnostics, never for display.
-public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertible {
+public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     // Read-only outside the package, and sanitised on every assignment inside it, so a field read or `dump(e)` never
     // shows what the initialiser would have removed.
     public internal(set) var state: CodexAuthState
@@ -60,6 +60,17 @@ public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertibl
         s += ": openai: \(errorClass.rawValue): \(message)"
         if !cause.isEmpty { s += ": " + cause }
         return Secret.scrub(s)
+    }
+
+    /// Reflection (`dump`, `Mirror`) shows the fields scrubbed when read, as ``description`` does: scrubbing on
+    /// assignment cannot remove a secret registered after the error was built.
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "state": state, "mode": Secret.scrub(mode), "codexVersion": Secret.scrub(codexVersion),
+                "errorClass": errorClass, "message": Secret.scrub(message), "cause": Secret.scrub(cause),
+            ], displayStyle: .struct)
     }
 
     /// The state an error carries: ready for nil, codex-error for an error from elsewhere. A CodexAuthError wrapped

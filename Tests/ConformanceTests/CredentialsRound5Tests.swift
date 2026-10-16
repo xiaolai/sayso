@@ -85,5 +85,23 @@ final class CredentialsRound5Tests: XCTestCase {
             }
         }
     }
+
+    /// A secret registered after the error was built does not show through reflection: dump and Mirror read the
+    /// fields scrubbed, as description does.
+    func testReflectionScrubsASecretRegisteredLater() throws {
+        let canary = "opaque-late-registered-canary-\(UUID().uuidString)"
+        let e = CodexAuthError(
+            .unsupportedAuth, mode: "m " + canary, codexVersion: "0.1 " + canary, message: "m " + canary,
+            cause: "c " + canary)
+        Secret.register(canary)
+        var dumped = ""
+        dump(e, to: &dumped)
+        XCTAssertFalse(dumped.contains(canary), "dump shows a secret registered after the error was built")
+        for child in Mirror(reflecting: e).children {
+            XCTAssertFalse("\(child.value)".contains(canary), "Mirror child \(child.label ?? "?") shows the secret")
+        }
+        XCTAssertFalse(String(reflecting: e).contains(canary))
+        XCTAssertFalse(e.description.contains(canary))
+    }
 }
 #endif
