@@ -579,9 +579,8 @@ func (k *core) close() error {
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
-		// Once the child has exited and its group is empty nothing is signalled. On macOS and Linux the child is not
-		// reaped until the end of Close, so its group ID cannot name another group meanwhile; elsewhere it may, once
-		// reaped.
+		// Once the child has exited and its group is empty nothing is signalled. The child is not reaped until the end
+		// of Close, so its group ID cannot name another group meanwhile.
 		if !k.gone(pid) {
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
 		}
@@ -599,17 +598,15 @@ func (k *core) close() error {
 		case <-time.After(stderrDrain):
 		}
 		closeAll(k.stdout, k.stderrR)
-		if reservesGroup {
-			// The group is no longer signalled, so the child is reaped now, or once it exits if it was abandoned.
-			select {
-			case <-k.exited:
+		// The group is no longer signalled, so the child is reaped now, or once it exits if it was abandoned.
+		select {
+		case <-k.exited:
+			_ = k.cmd.Wait()
+		default:
+			go func() {
+				<-k.exited
 				_ = k.cmd.Wait()
-			default:
-				go func() {
-					<-k.exited
-					_ = k.cmd.Wait()
-				}()
-			}
+			}()
 		}
 		if n := k.stderr.Len(); n > 0 {
 			k.logger.Debug("codex app-server wrote to stderr", "bytes", n)

@@ -39,9 +39,6 @@ func fakeCodex(t *testing.T, body string) string {
 // When the child exits leaving a member of its group alive, Close still signals that member, because the exited
 // child stays unreaped and keeps the group ID ours; Close reaps it last.
 func TestCloseSignalsTheGroupOfAnExitedChild(t *testing.T) {
-	if !reservesGroup {
-		t.Skip("the group is reserved on macOS and Linux only")
-	}
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	pidFile := filepath.Join(t.TempDir(), "member")
 	script := fakeCodex(t, "p = subprocess.Popen(['/bin/sleep', '30'])\n"+
@@ -93,9 +90,6 @@ func TestCloseSignalsTheGroupOfAnExitedChild(t *testing.T) {
 
 // groupAlive tells a group holding only our exited, unreaped child from one with a live member.
 func TestGroupAliveIgnoresTheZombieLeader(t *testing.T) {
-	if !reservesGroup {
-		t.Skip("the group is reserved on macOS and Linux only")
-	}
 	script := fakeCodex(t, "os._exit(0)\n")
 	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second})
 	if err != nil {

@@ -17,9 +17,6 @@ import (
 // A child that has exited stays unreaped until Close, so its process and group IDs cannot be reused while Close may
 // still signal the group; Close reaps it.
 func TestChildStaysUnreapedUntilClose(t *testing.T) {
-	if !reservesGroup {
-		t.Skip("the group is reserved on darwin only")
-	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("needs python3")

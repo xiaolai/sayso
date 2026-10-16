@@ -10,11 +10,9 @@ import (
 	"unsafe"
 )
 
-// reservesGroup reports that waitExit leaves the child unreaped. A zombie keeps its process ID, and so its group ID,
-// ours: Close can signal the group without reaching a group that reused the ID, and reaps the child last.
-const reservesGroup = true
-
 // waitExit returns when the child has exited, leaving it a zombie: waitid(P_PID, pid, WEXITED|WNOWAIT).
+// A zombie keeps its process ID, and so its group ID, ours: Close can signal the group without reaching a group that
+// reused the ID, and reaps the child last.
 func waitExit(cmd *exec.Cmd) {
 	const pPID, wExited, wNoWait = 1, 0x4, 0x1000000
 	var info [128]byte // siginfo_t, 128 bytes on Linux; unread

@@ -53,9 +53,10 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   child. The child starts in its own process group. Close: stdin closed, `SIGTERM` to the group, a 2 s grace,
   `SIGKILL` to the group unless the child was reaped and no other member of its group remains; close returns within
   grace + 1 s even when a descendant outside the group still holds the pipes (our ends are closed and the readers
-  abandoned). A client released without a close ends its child the same way. On macOS and Linux a child that
-  exits stays unreaped until close, so its process-group ID cannot be reused by another process while close may still
-  signal it; close reaps it last.
+  abandoned). A client released without a close ends its child the same way. A child that exits stays unreaped
+  until close, so its process-group ID cannot be reused by another process while close may still signal it; close
+  reaps it last. An implementation that cannot keep the child unreaped on a platform does not support that platform:
+  the Go client builds on macOS and Linux only.
 - **Messages.** Newline-delimited JSON-RPC, UTF-8 without a byte-order mark; a last line ended by end of file rather
   than a newline is still a line. Only JSON's own whitespace (space, tab, line feed, carriage return) is trimmed
   around a line. A line longer than 4 MiB, or a line that is not strict JSON (one value, valid UTF-8, no duplicate

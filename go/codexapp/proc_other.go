@@ -2,20 +2,11 @@
 
 package codexapp
 
-import (
-	"errors"
-	"os/exec"
-	"syscall"
-)
+// codexapp builds on macOS and Linux only. Elsewhere it has no way, wired here, to keep an exited child unreaped, so
+// the child's process-group ID could name another group while Close signals it (spec/credentials.md). Rather than
+// risk signalling a stranger's processes, the package does not build: the undefined name below is the error.
+var _ = codexappBuildsOnMacOSAndLinuxOnly
 
-// reservesGroup is false on the systems without a waitid this package calls (the BSDs other than macOS): the child is
-// reaped as soon as it exits, and Close signals the group only while kill(-pgid, 0) shows it alive, which leaves the
-// short window in which a reaped ID could be reused. macOS and Linux reserve the group.
-const reservesGroup = false
-
-func waitExit(cmd *exec.Cmd) { _ = cmd.Wait() }
-
-func groupAlive(pgid int) bool {
-	err := syscall.Kill(-pgid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
+// Declared so the name above is the only error a build here reports.
+func waitExit(any)        {}
+func groupAlive(int) bool { return true }
