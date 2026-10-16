@@ -115,8 +115,9 @@ A timeline case has `steps` instead of `expect`: each runs `op` (`token`, or `re
 `session`, `lifetimeSeconds`, `token` (what the stub credential source returns), `refreshTo` (what it returns after a
 refresh), `replies` (in order: `status`, `headers`, and `json` or `body`; `bodyPadTo` pads with trailing spaces).
 `expect`: `class` (`null`: success), `secret`, `expiresAt`, `status`, `type`, `code`, `param`, `requestId`, `requests`
-(requests the fake received), `refreshCalls`, `request` (the first request: method, path, headers, JSON body),
-`secondAuthorization`, `scrubs` (strings the scrubber must replace afterwards), `notInDescription`.
+(requests the fake received), `refreshCalls`, `tokenCalls` (tokens asked of the stub), `request` (the first request:
+method, path, headers, JSON body), `secondAuthorization`, `scrubs` (strings the scrubber must replace afterwards),
+`notInDescription`.
 
 ### `session` (`ws/`, `events/`)
 

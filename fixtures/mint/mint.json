@@ -1306,9 +1306,10 @@
   },
   "expect": {
    "class": "internal",
-   "requests": 0
+   "requests": 0,
+   "tokenCalls": 0
   },
-  "note": "Refused before a connection is made."
+  "note": "Refused before a connection is made, and before a token is asked for."
  },
  {
   "id": "mint-origin-other-host",
@@ -1349,9 +1350,10 @@
   },
   "expect": {
    "class": "internal",
-   "requests": 0
+   "requests": 0,
+   "tokenCalls": 0
   },
-  "note": "Refused before a connection is made."
+  "note": "Refused before a connection is made, and before a token is asked for."
  },
  {
   "id": "mint-origin-port",
@@ -1392,9 +1394,10 @@
   },
   "expect": {
    "class": "internal",
-   "requests": 0
+   "requests": 0,
+   "tokenCalls": 0
   },
-  "note": "Refused before a connection is made."
+  "note": "Refused before a connection is made, and before a token is asked for."
  },
  {
   "id": "mint-origin-userinfo",
@@ -1435,9 +1438,10 @@
   },
   "expect": {
    "class": "internal",
-   "requests": 0
+   "requests": 0,
+   "tokenCalls": 0
   },
-  "note": "Refused before a connection is made."
+  "note": "Refused before a connection is made, and before a token is asked for."
  },
  {
   "id": "mint-wire-error-names-exact",

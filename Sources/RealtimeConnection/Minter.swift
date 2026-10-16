@@ -55,13 +55,17 @@ public struct Minter: SecretSource {
             throw RealtimeError(.internal, message: "Minter needs a positive, finite timeout")
         }
         let body = try Self.body(session: session, lifetimeSeconds: lifetimeSeconds)
+        // The destination first, as the client checks it: a wrong base URL is a programming error, which must not
+        // cost a sign-in (a Codex start, perhaps a refresh) before the request is refused.
+        let endpoint = try self.endpoint()
+        try client.policy.check(Self.request(endpoint, bearer: "unchecked", body: body))
         let token = try await credentials.token()
         do {
-            return try await post(token, body)
+            return try await post(endpoint, token, body)
         } catch let e as RealtimeError where e.errorClass == .authExpired {
             let fresh = try await credentials.refresh(after: token)
             do {
-                return try await post(fresh, body)
+                return try await post(endpoint, fresh, body)
             } catch let again as RealtimeError where again.errorClass == .authExpired {
                 var refused = again
                 refused.message = "the refreshed sign-in was refused too"
@@ -82,18 +86,27 @@ public struct Minter: SecretSource {
         return try await secret(session: data)
     }
 
-    /// One mint request. Neither the request nor the reply is ever logged: both carry or yield secrets.
-    private func post(_ token: Token, _ body: Data) async throws -> ClientSecret {
+    private func endpoint() throws -> URL {
         var url = baseURL.absoluteString
         while url.hasSuffix("/") { url.removeLast() }
         guard let endpoint = URL(string: url + Self.path) else {
             throw RealtimeError(.internal, message: "the base URL does not form a mint URL")
         }
+        return endpoint
+    }
+
+    private static func request(_ endpoint: URL, bearer: String, body: Data) -> URLRequest {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer " + token.bearer, forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
+        return request
+    }
+
+    /// One mint request. Neither the request nor the reply is ever logged: both carry or yield secrets.
+    private func post(_ endpoint: URL, _ token: Token, _ body: Data) async throws -> ClientSecret {
+        let request = Self.request(endpoint, bearer: token.bearer, body: body)
         var reply: HTTPReply? = try await client.send(request, timeout: timeout, limit: Self.maximumReply, route: route)
         return try Self.secret(from: &reply)
     }

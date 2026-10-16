@@ -40,14 +40,18 @@ type mintCase struct {
 	Expect map[string]any `json:"expect"`
 }
 
-// stubCreds returns token, and refreshTo after a refresh, counting refreshes.
+// stubCreds returns token, and refreshTo after a refresh, counting both.
 type stubCreds struct {
 	token, refreshTo string
 	mu               sync.Mutex
+	tokens           int
 	refreshes        int
 }
 
 func (s *stubCreds) Token(context.Context) (secret.Token, error) {
+	s.mu.Lock()
+	s.tokens++
+	s.mu.Unlock()
 	return secret.NewToken(s.token, time.Time{}, "", "conformance"), nil
 }
 
@@ -152,6 +156,9 @@ func checkMint(t *testing.T, mc mintCase) []string {
 	}
 	if w, ok := want["refreshCalls"]; ok && !sameExact(creds.refreshes, w) {
 		p = append(p, fmt.Sprintf("refreshCalls %d, want %v", creds.refreshes, w))
+	}
+	if w, ok := want["tokenCalls"]; ok && !sameExact(creds.tokens, w) {
+		p = append(p, fmt.Sprintf("tokenCalls %d, want %v", creds.tokens, w))
 	}
 	if w, ok := want["request"].(map[string]any); ok {
 		if len(requests) == 0 {

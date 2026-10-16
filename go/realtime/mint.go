@@ -99,6 +99,17 @@ func (m *Minter) Secret(ctx context.Context, session any) (secret.ClientSecret, 
 	if err != nil {
 		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: err.Error()}
 	}
+	// The destination first, as Open checks it: a wrong BaseURL is a programming error, which must not cost a
+	// sign-in (a Codex start, perhaps a refresh) before the request is refused.
+	if err := openaihttp.CheckOrigin(m.Client, strings.TrimRight(m.BaseURL, "/")+mintPath); err != nil {
+		var e *openaihttp.Error
+		if errors.As(err, &e) {
+			refused := *e
+			refused.Message = "realtime: mint: " + e.Message
+			return secret.ClientSecret{}, &refused
+		}
+		return secret.ClientSecret{}, err
+	}
 	tok, err := m.Creds.Token(ctx)
 	if err != nil {
 		return secret.ClientSecret{}, err

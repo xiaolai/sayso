@@ -18,6 +18,8 @@ Tests reach a fake server only through an origin injected explicitly as a test o
 ## Minting (`NET-02`)
 
 - `POST /v1/realtime/client_secrets`, `Authorization: Bearer <ChatGPT token>`, `Content-Type: application/json`.
+- The destination is checked against the origin policy before the credential source is asked for a token: a wrong
+  base URL is refused as `internal` without costing a sign-in (a Codex start, perhaps a refresh).
 - Body: `{"session": <caller's session object>, "expires_after": {"anchor": "created_at", "seconds": <caller's
   lifetime>}}`. The session shape is app policy; the package passes it through unchanged.
 - Reply: at most 1 MiB; JSON with `value`, a non-empty string of at most 4,096 UTF-8 bytes, and `expires_at`, an

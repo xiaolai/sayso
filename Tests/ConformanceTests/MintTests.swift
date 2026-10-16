@@ -6,10 +6,11 @@ final class MintTests: XCTestCase {
     func testMint() throws { try runFixtures("mint") { c in FakeOpenAI.outcome(try MintCheck.run(c.object)) } }
 }
 
-/// Returns `token`, and `refreshTo` after a refresh, counting refreshes.
+/// Returns `token`, and `refreshTo` after a refresh, counting both.
 final class StubCredentials: CredentialSource, @unchecked Sendable {
     private let lock = NSLock()
     private let tokenValue: String, refreshValue: String
+    private var tokenCount = 0
     private var refreshCount = 0
 
     init(token: String, refreshTo: String) {
@@ -17,9 +18,13 @@ final class StubCredentials: CredentialSource, @unchecked Sendable {
         refreshValue = refreshTo
     }
 
+    var tokens: Int { lock.withLock { tokenCount } }
     var refreshes: Int { lock.withLock { refreshCount } }
 
-    func token() async throws -> Token { Token(bearer: tokenValue, expires: nil, source: "conformance") }
+    func token() async throws -> Token {
+        lock.withLock { tokenCount += 1 }
+        return Token(bearer: tokenValue, expires: nil, source: "conformance")
+    }
 
     func refresh(after stale: Token) async throws -> Token {
         lock.withLock { refreshCount += 1 }
@@ -88,6 +93,9 @@ enum MintCheck {
         if let w = want["requests"], !FakeOpenAI.same(requests.count, w) { p.append("requests \(requests.count), want \(w)") }
         if let w = want["refreshCalls"], !FakeOpenAI.same(creds.refreshes, w) {
             p.append("refreshCalls \(creds.refreshes), want \(w)")
+        }
+        if let w = want["tokenCalls"], !FakeOpenAI.same(creds.tokens, w) {
+            p.append("tokenCalls \(creds.tokens), want \(w)")
         }
         if let w = want["request"] as? [String: Any] {
             if let r = requests.first {
