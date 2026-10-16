@@ -5,11 +5,22 @@ permissions:
 jobs:
   test:
     runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - run: swift build -Xswiftc -warnings-as-errors -Xswiftc -strict-concurrency=complete
       - run: swift build -Xswiftc -warnings-as-errors -Xswiftc -swift-version -Xswiftc 6
       - run: SAYSO_RESULTS="$RUNNER_TEMP/results-swift.json" swift test
+      # Strict concurrency takes an @unchecked Sendable type at its word; only the sanitizer sees its races. No
+      # results file: the run above is the one parity reads.
+      - run: swift test --sanitize=thread
+      # The said guard's CPU bounds are tighter in a release build, which the runs above never make.
+      - run: swift test -c release -Xswiftc -enable-testing --filter SaidGuardLimitsTests
+      # Every product builds for iOS (Package.swift); CodexAuth's API is macOS-only and builds there to nothing.
+      - run: xcodebuild build -scheme SaySo-Package -destination 'generic/platform=iOS' -quiet
       - uses: actions/upload-artifact@v7
         if: always()
         with:

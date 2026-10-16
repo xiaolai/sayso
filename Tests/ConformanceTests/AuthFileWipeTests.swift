@@ -9,6 +9,10 @@ import XCTest
 /// of the process's writable memory, freed blocks included, finds no copy of a value the reader did not keep, on the
 /// success path and on every refusal.
 final class AuthFileWipeTests: XCTestCase {
+    override func setUpWithError() throws {
+        if MemoryScan.allocatorReplaced { throw XCTSkip("a sanitizer replaced the allocator the scan watches") }
+    }
+
     private enum Part {
         case text(String)
         /// A fresh needle, as it is.

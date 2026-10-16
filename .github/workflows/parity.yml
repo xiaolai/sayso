@@ -6,9 +6,18 @@ permissions:
   contents: read
 jobs:
   tools:
-    runs-on: ubuntu-latest
+    # The fake app server is used by the suites on both systems, so its own tests run on both.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - run: python3 -I tools/manifest.py --check
       - run: python3 -I -m unittest discover -s tools -p 'test_*.py'
   go:
@@ -18,11 +27,20 @@ jobs:
   parity:
     needs: [tools, go, swift]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - uses: actions/download-artifact@v8
         with:
           path: results
-      - name: Both suites' results are required
-        run: test -f results/results-go/results-go.json && test -f results/results-swift/results-swift.json
-      - run: python3 -I tools/parity.py results/results-go/results-go.json results/results-swift/results-swift.json
+      - name: Every suite's results are required
+        run: |
+          test -f results/results-go-macos-15/results-go.json
+          test -f results/results-go-ubuntu-latest/results-go.json
+          test -f results/results-swift/results-swift.json
+      - run: >-
+          python3 -I tools/parity.py results/results-go-macos-15/results-go.json
+          results/results-go-ubuntu-latest/results-go.json results/results-swift/results-swift.json

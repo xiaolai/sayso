@@ -4,7 +4,14 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: macos-15
+    # The Go client builds on macOS and Linux only (spec/credentials.md), and each has its own process and folder
+    # code, so the whole suite runs on both.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: go
@@ -14,12 +21,19 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: SAYSO_RESULTS="$RUNNER_TEMP/results-go.json" go test -count=1 -race ./...
+      # int is 32 bits on 386, the only place the pure packages' overflow guards can fail. -race needs a 64-bit
+      # platform, and these packages have no cgo.
+      - if: runner.os == 'Linux'
+        run: GOARCH=386 go test -count=1 ./pcm16/ ./saidguard/ ./numwords/
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: results-go
+          name: results-go-${{ matrix.os }}
           path: ${{ runner.temp }}/results-go.json
           if-no-files-found: error

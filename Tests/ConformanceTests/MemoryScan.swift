@@ -80,6 +80,13 @@ final class MemoryScan {
 
     var mark: Int { used }
 
+    /// Whether a sanitizer's allocator replaced the system's. It never calls `malloc_logger`, so ``frees(during:)``
+    /// sees nothing and a test of "no copy left" would pass without checking: under it the scan cannot be used.
+    static var allocatorReplaced: Bool {
+        let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
+        return ["__tsan_init", "__asan_init"].contains { (name: String) in dlsym(rtldDefault, name) != nil }
+    }
+
     /// Runs `body` and returns how many blocks were freed, each needle counted apart, while holding the needle's
     /// bytes: the allocator's logger sees every free before it happens, so a copy the system zeroes on free (small
     /// blocks, on recent macOS) is still found. The logger allocates nothing.
