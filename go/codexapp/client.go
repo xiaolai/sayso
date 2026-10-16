@@ -127,7 +127,7 @@ type core struct {
 	pending    map[string]chan response
 	failure    error         // set once the child is unusable
 	dead       chan struct{} // closed when the reader stops
-	exited     chan struct{} // closed when the child has exited (on darwin it stays unreaped until Close)
+	exited     chan struct{} // closed when the child has exited (on macOS and Linux it stays unreaped until Close)
 	closeMu    sync.Once
 }
 
@@ -518,8 +518,9 @@ func (k *core) close() error {
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
-		// Once the child has exited and its group is empty nothing is signalled. On darwin the child is not reaped
-		// until the end of Close, so its group ID cannot name another group meanwhile; elsewhere it may, once reaped.
+		// Once the child has exited and its group is empty nothing is signalled. On macOS and Linux the child is not
+		// reaped until the end of Close, so its group ID cannot name another group meanwhile; elsewhere it may, once
+		// reaped.
 		if !k.gone(pid) {
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
 		}

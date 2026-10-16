@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package codexapp
 
@@ -8,9 +8,9 @@ import (
 	"syscall"
 )
 
-// reservesGroup is false here: Linux counts a zombie leader as a live member of its group, so the darwin scheme would
-// make every close wait the whole grace. The child is reaped as soon as it exits, and Close signals the group only
-// while kill(-pgid, 0) shows it alive, which leaves the short window in which a reaped ID could be reused.
+// reservesGroup is false on the systems without a waitid this package calls (the BSDs other than macOS): the child is
+// reaped as soon as it exits, and Close signals the group only while kill(-pgid, 0) shows it alive, which leaves the
+// short window in which a reaped ID could be reused. macOS and Linux reserve the group.
 const reservesGroup = false
 
 func waitExit(cmd *exec.Cmd) { _ = cmd.Wait() }
