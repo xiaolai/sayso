@@ -94,12 +94,22 @@ public struct Minter: SecretSource {
         request.setValue("Bearer " + token.bearer, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let reply = try await client.send(request, timeout: timeout, limit: Self.maximumReply, route: route)
-        var body = reply.body
-        defer { body.resetBytes(in: 0..<body.count) }  // the reply holds the secret
+        var reply: HTTPReply? = try await client.send(request, timeout: timeout, limit: Self.maximumReply, route: route)
+        return try Self.secret(from: &reply)
+    }
+
+    /// Reads the secret from a 2xx mint reply, taking the reply: it holds the secret, so its body is wiped on every
+    /// exit. The reply is released before the wipe, since while it shares the body's storage the wipe would copy the
+    /// storage first and clear only the copy.
+    static func secret(from reply: inout HTTPReply?) throws -> ClientSecret {
+        let status = reply?.status ?? 0
+        let requestID = reply?.headers["x-request-id"] ?? ""
+        var body = reply?.body ?? Data()
+        reply = nil
+        defer { body.resetBytes(in: 0..<body.count) }
         // A reply refused after a 2xx keeps the status and request id, as an HTTP refusal does.
         func refuse(_ message: String) -> RealtimeError {
-            RealtimeError(.protocol, status: reply.status, message: message, requestID: reply.headers["x-request-id"] ?? "")
+            RealtimeError(.protocol, status: status, message: message, requestID: requestID)
         }
         guard let root = try? WireJSON.parse(body), let fields = try? WireJSON.Object(root) else {
             throw refuse("mint reply is not valid JSON")

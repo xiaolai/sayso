@@ -11,8 +11,10 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"unicode"
 
 	"golang.org/x/text/unicode/norm"
+	"golang.org/x/text/unicode/rangetable"
 )
 
 // ErrInvalid is any document or field the rules refuse.
@@ -194,7 +196,9 @@ func (o Object) Array(name string) ([]Node, bool, error) {
 // StringMap returns an object member whose values are strings (null is ""). Two names that are canonically
 // equivalent ("\u00e9" and "e\u0301") are ErrInvalid: Swift's String-keyed map cannot hold both, so both refuse them.
 // A name with a run of more than 30 combining marks is ErrInvalid too: NFC inserts U+034F into such a run (the
-// stream-safe text format), which would make two distinct names compare equal here and not in Swift.
+// stream-safe text format), which would make two distinct names compare equal here and not in Swift. So is a name
+// with a character not assigned in Unicode 15.0 (PinnedUnicode), whose marks and decompositions Swift's tables on
+// the oldest supported systems do not know.
 func (o Object) StringMap(name string) (map[string]string, bool, error) {
 	m, ok, err := o.Object(name)
 	if err != nil || !ok {
@@ -203,7 +207,7 @@ func (o Object) StringMap(name string) (map[string]string, bool, error) {
 	out := make(map[string]string, len(m))
 	seen := make(map[string]bool, len(m))
 	for k := range m {
-		if longMarkRun(k) {
+		if !pinned(k) || longMarkRun(k) {
 			return nil, false, ErrInvalid
 		}
 		nfc := norm.NFC.String(k)
@@ -233,6 +237,31 @@ func (o Object) Code(name string) (string, error) {
 		return s, err
 	}
 	return n.Raw(), nil
+}
+
+// PinnedUnicode is the Unicode version a metadata name's characters must be assigned in: that of the Swift runtime
+// on the oldest systems the Swift package supports (macOS 14, iOS 17). A character's canonical combining class and
+// decomposition never change once it is assigned, so for these characters every table from 15.0 on, Go's 17.0
+// included, counts marks and compares names the same way.
+const PinnedUnicode = "15.0.0"
+
+// assigned is every code point assigned in PinnedUnicode, private-use ones included; noncharacters are not.
+var assigned = rangetable.Assigned(PinnedUnicode)
+
+func init() {
+	if assigned == nil {
+		panic("wire: x/text has no Unicode " + PinnedUnicode + " tables")
+	}
+}
+
+// pinned reports whether every character of s is assigned in PinnedUnicode.
+func pinned(s string) bool {
+	for _, r := range s {
+		if !unicode.Is(assigned, r) {
+			return false
+		}
+	}
+	return true
 }
 
 // maxMarkRun is the stream-safe bound: UAX #15 allows at most 30 consecutive non-starters.

@@ -15,7 +15,12 @@ Component `session`. Product `RealtimeConnection` (Swift), package `realtime` (G
   the recorder and 2 MiB elsewhere; recite 16 MiB). The size check runs before JSON decoding: a message longer
   than the limit is `protocol` and is never decoded.
 - Sessions take a secret source, never a sign-in: `RealtimeSecretSource` yields a client secret for a session
-  object, so a later remote client changes no API.
+  object, so a later remote client changes no API. The configuration and the destination's origin are checked
+  before the source is asked, so a programming error never costs a sign-in or a mint.
+- A client event is sent as a text message and must be valid UTF-8; otherwise the send is `internal` and sends
+  nothing. Writes are serialised; closing the session releases every write still waiting for its turn, as closed.
+  A write cancelled before it starts sends nothing and leaves the session open; one cancelled in flight ends the
+  session.
 
 ## Close and error classification
 
@@ -58,7 +63,11 @@ is `session_expired`, `invalid_api_key` or `session_not_found`, or its type is `
 
 A documented type the package does not consume (`session.updated`, `response.output_item.added`, …; the list is in
 the fixtures) is **ignored**. Any other type is **unknown**: passed through raw and counted, as API drift. A session
-delivers both, each with its raw bytes, so an app can read a type the package does not decode. Invalid JSON, a
+delivers both, each with its raw bytes, so an app can read a type the package does not decode. Unknown types are
+counted within a budget: at most 256 distinct types, totalling at most 64 KiB of UTF-8, per session (a type already
+counted is always counted again). An event of a new type past either bound ends the session as `protocol`,
+undelivered and uncounted, as a message over the read limit does: the provider chooses the types, and each one
+counted is kept for the session's life. Invalid JSON, a
 missing `type`, a field of the wrong type, a missing required field, bad base64 or an unknown `response.status` is
 a `protocol` error that names the event type only, never the payload. Only the fields of a consumed type are read,
 so an ignored or unknown event is never refused for the shape of a field the package does not consume.
@@ -82,7 +91,11 @@ implementations accept and refuse the same documents whatever their JSON librari
 - in a string map (`metadata`), two names that are canonically equivalent (`\u00e9` and `e\u0301`) are invalid,
   because Swift's `String`-keyed map cannot hold both; so is a name with a run of more than 30 combining marks
   (non-starters, counted in each character's canonical decomposition), the stream-safe bound beyond which Go's
-  normaliser inserts U+034F and the two implementations would compare names differently;
+  normaliser inserts U+034F and the two implementations would compare names differently; and so is a name with a
+  character not assigned in Unicode 15.0 (unassigned code points and noncharacters; private-use characters are
+  assigned). Unicode 15.0 is the Swift runtime's version on the oldest supported systems (macOS 14, iOS 17). A
+  character's canonical combining class and decomposition never change once it is assigned, so for the characters
+  left, every table from 15.0 on (Go's are 17.0) counts marks and compares names alike;
 - a field of the wrong type in a consumed event is a `protocol` error that names the event type.
 
 Go reads through `encoding/json/jsontext`; Swift has its own validator, because `JSONSerialization` folds none of

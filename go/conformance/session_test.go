@@ -27,6 +27,9 @@ type sessionCase struct {
 	ReadLimit    int64           `json:"readLimit"`
 	MessageBytes int             `json:"messageBytes"`
 	Raw          *string         `json:"raw"`
+	Types        int             `json:"types"`
+	TypeBytes    int             `json:"typeBytes"`
+	Rounds       int             `json:"rounds"`
 	Expect       map[string]any  `json:"expect"`
 }
 
@@ -53,6 +56,8 @@ func TestSession(t *testing.T) {
 			return outcome(checkError(ee.Err, sc.Expect))
 		case "size":
 			return outcome(checkSize(t, sc))
+		case "unknown-types":
+			return outcome(checkUnknownTypes(t, sc))
 		case "event":
 			if sc.Raw == nil {
 				return fixtures.Fail, "event case without raw"
@@ -125,6 +130,65 @@ func checkSize(t *testing.T, sc sessionCase) []string {
 		return nil
 	}
 	return checkError(err, sc.Expect)
+}
+
+// driftType is the fixtures' unknown type i: "drift.<i>." padded with "a" to size bytes.
+func driftType(i, size int) string {
+	head := fmt.Sprintf("drift.%d.", i)
+	return head + strings.Repeat("a", max(0, size-len(head)))
+}
+
+// checkUnknownTypes sends Rounds rounds of Types distinct unknown types and compares what is delivered and counted,
+// and the error that ends the session, if any, with the budget.
+func checkUnknownTypes(t *testing.T, sc sessionCase) []string {
+	hs := fakeopenai.WebSocket(t, func(c *websocket.Conn) {
+		for range sc.Rounds {
+			for i := range sc.Types {
+				if c.Write(context.Background(), websocket.MessageText, []byte(`{"type":"`+driftType(i, sc.TypeBytes)+`"}`)) != nil {
+					return
+				}
+			}
+		}
+		_, _, _ = c.Read(context.Background())
+	}, nil)
+	client, base := fakeopenai.Client(t, hs.URL)
+	s, err := realtime.Dial(context.Background(), realtime.DialConfig{
+		Client: client, URL: realtime.WebSocketURL(base, "m"), Secret: secret.NewClientSecret("ek_conformance", time.Unix(1800000000, 0)),
+		HandshakeTimeout: 5 * time.Second, ReadLimit: 1 << 20,
+	})
+	if err != nil {
+		return []string{"dial: " + err.Error()}
+	}
+	defer func() { _ = s.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	delivered := 0
+	for delivered < sc.Types*sc.Rounds {
+		if _, err = s.Next(ctx); err != nil {
+			break
+		}
+		delivered++
+	}
+	var p []string
+	if w := fmt.Sprint(sc.Expect["delivered"]); fmt.Sprint(delivered) != w {
+		p = append(p, fmt.Sprintf("delivered %d, want %s", delivered, w))
+	}
+	if w := fmt.Sprint(sc.Expect["distinct"]); fmt.Sprint(len(s.Unknown())) != w {
+		p = append(p, fmt.Sprintf("counted %d types, want %s", len(s.Unknown()), w))
+	}
+	if sc.Expect["class"] == nil {
+		if err != nil {
+			p = append(p, "ended: "+err.Error())
+		}
+		for typ, n := range s.Unknown() {
+			if n != sc.Rounds {
+				p = append(p, fmt.Sprintf("%s counted %d times, want %d", typ, n, sc.Rounds))
+				break
+			}
+		}
+		return p
+	}
+	return append(p, checkError(err, sc.Expect)...)
 }
 
 // observe flattens a decoded event into the fixture's expectation keys.

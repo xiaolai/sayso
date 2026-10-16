@@ -1,5 +1,5 @@
 {
- "count": 885,
+ "count": 900,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1292,6 +1292,54 @@
    "requires": []
   },
   {
+   "id": "event-metadata-unicode16-mark-run-31",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unicode16-mark",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unassigned",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-noncharacter",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-unicode15",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-decomposition-reordered",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-singleton-decomposition",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-metadata-distinct-marks",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
    "id": "mint-ok",
    "file": "mint/mint.json",
    "component": "mint",
@@ -1299,6 +1347,24 @@
   },
   {
    "id": "mint-expiry-beyond-double",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-beyond-time",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-int64-max",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-int64-min",
    "file": "mint/mint.json",
    "component": "mint",
    "requires": []
@@ -5363,6 +5429,30 @@
   },
   {
    "id": "ws-size-mib-over",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-at-count-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-past-count-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-at-byte-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-unknown-types-past-byte-budget",
    "file": "ws/ws.json",
    "component": "session",
    "requires": []

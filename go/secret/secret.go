@@ -201,15 +201,30 @@ func (Token) MarshalText() ([]byte, error) { return []byte(Redacted), nil }
 
 // ClientSecret is a minted ephemeral `ek_` realtime secret.
 type ClientSecret struct {
-	value     *sealed
+	value *sealed
+	// ExpiresAt is the expiry as a time.Time, which holds a Unix time only within about ±2⁶² s: beyond that it is
+	// clamped, keeping its side of now. ExpiresAtUnix keeps the exact value.
 	ExpiresAt time.Time
+	// ExpiresAtUnix is the expiry in Unix seconds exactly as minted (expires_at), as Swift keeps it.
+	ExpiresAtUnix int64
 }
 
-// NewClientSecret returns a ClientSecret and registers it with the scrubber.
+// NewClientSecret returns a ClientSecret and registers it with the scrubber. ExpiresAtUnix is expiresAt.Unix().
 func NewClientSecret(value string, expiresAt time.Time) ClientSecret {
 	Register(value)
-	return ClientSecret{value: seal(value), ExpiresAt: expiresAt}
+	return ClientSecret{value: seal(value), ExpiresAt: expiresAt, ExpiresAtUnix: expiresAt.Unix()}
 }
+
+// NewClientSecretUnix returns a ClientSecret that keeps expiresAtUnix exactly, and registers it with the scrubber.
+// ExpiresAt is expiresAtUnix clamped to ±2⁶² s, which a time.Time holds without wrapping.
+func NewClientSecretUnix(value string, expiresAtUnix int64) ClientSecret {
+	Register(value)
+	return ClientSecret{value: seal(value), ExpiresAt: time.Unix(max(min(expiresAtUnix, maxUnix), -maxUnix), 0),
+		ExpiresAtUnix: expiresAtUnix}
+}
+
+// maxUnix is a Unix time time.Time holds without wrapping: about 146 billion years either side of 1970.
+const maxUnix = 1 << 62
 
 // Bearer returns the secret. Call it only to build an Authorization header.
 func (s ClientSecret) Bearer() string { return s.value.get() }

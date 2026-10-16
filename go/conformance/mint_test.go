@@ -130,8 +130,8 @@ func checkMint(t *testing.T, mc mintCase) []string {
 		if w, ok := want["secret"]; ok && sec.Bearer() != w {
 			p = append(p, "secret differs")
 		}
-		if w, ok := want["expiresAt"]; ok && !sameExact(sec.ExpiresAt.Unix(), w) {
-			p = append(p, fmt.Sprintf("expiresAt %d, want %v", sec.ExpiresAt.Unix(), w))
+		if w, ok := want["expiresAt"]; ok && !sameExact(sec.ExpiresAtUnix, w) {
+			p = append(p, fmt.Sprintf("expiresAt %d, want %v", sec.ExpiresAtUnix, w))
 		}
 	} else {
 		p = append(p, checkError(err, map[string]any{"class": class})...)

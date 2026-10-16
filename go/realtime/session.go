@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 
@@ -27,6 +28,15 @@ const closeGrace = 2 * time.Second
 
 // ErrClosed is returned by Next and Send after Close.
 var ErrClosed = errors.New("realtime: session closed")
+
+// The unknown-type accounting budget, as in Swift (spec/session.md): at most MaxUnknownTypes distinct unknown types,
+// totalling at most MaxUnknownTypeBytes bytes, are counted. An event of one more ends the session as a protocol
+// error, undelivered, as a message over the read limit does: the provider chooses the types, and every one counted is
+// kept for the session's life.
+const (
+	MaxUnknownTypes     = 256
+	MaxUnknownTypeBytes = 64 << 10
+)
 
 // WebSocketURL is the realtime endpoint for model under base (openaihttp.APIBase in production). The https scheme is
 // kept: the library upgrades it, and the origin policy only knows https.
@@ -68,8 +78,9 @@ type Session struct {
 	readerDone chan struct{}
 	readErr    error // set by the reader before it closes events
 
-	unknownMu sync.Mutex
-	unknown   map[string]int
+	unknownMu    sync.Mutex
+	unknown      map[string]int
+	unknownBytes int
 
 	closeOnce sync.Once
 }
@@ -79,8 +90,15 @@ type item struct {
 	err error
 }
 
-// Open obtains a secret for session from src and dials with it; cfg.Secret is ignored.
+// Open obtains a secret for session from src and dials with it; cfg.Secret is ignored. The configuration and the
+// destination are checked first, so a programming error never costs a sign-in or a mint.
 func Open(ctx context.Context, src SecretSource, session any, cfg DialConfig) (*Session, error) {
+	if err := cfg.check(); err != nil {
+		return nil, err
+	}
+	if err := openaihttp.CheckOrigin(cfg.Client, cfg.URL); err != nil {
+		return nil, err
+	}
 	sec, err := src.Secret(ctx, session)
 	if err != nil {
 		return nil, err
@@ -89,15 +107,23 @@ func Open(ctx context.Context, src SecretSource, session any, cfg DialConfig) (*
 	return Dial(ctx, cfg)
 }
 
-// Dial opens the session with `Authorization: Bearer ek_…` within cfg.HandshakeTimeout.
-func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
+// check refuses a configuration no dial can use, a programming error.
+func (cfg DialConfig) check() error {
 	// math.MaxInt64 is refused: the library adds one to the limit, which would wrap and disable it.
 	if !openaihttp.Guarded(cfg.Client) || cfg.HandshakeTimeout <= 0 || cfg.ReadLimit <= 0 || cfg.ReadLimit == math.MaxInt64 {
-		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a client from openaihttp.NewClient, a HandshakeTimeout and a ReadLimit below math.MaxInt64"}
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a client from openaihttp.NewClient, a HandshakeTimeout and a ReadLimit below math.MaxInt64"}
 	}
 	// A scheme the library cannot dial is a configuration error, as in Swift, not a network failure.
 	if u, err := url.Parse(cfg.URL); err != nil || !dialable[u.Scheme] || u.Host == "" {
-		return nil, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a ws, wss, http or https URL"}
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: Dial needs a ws, wss, http or https URL"}
+	}
+	return nil
+}
+
+// Dial opens the session with `Authorization: Bearer ek_…` within cfg.HandshakeTimeout.
+func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
+	if err := cfg.check(); err != nil {
+		return nil, err
 	}
 	logger := cfg.Logger
 	if logger == nil {
@@ -169,8 +195,10 @@ func (s *Session) readLoop() {
 			s.trace("server", data)
 		}
 		ev, err := DecodeEvent(data)
-		if u, ok := ev.(Unknown); ok && err == nil {
-			s.countUnknown(u.Type) // delivered too: an app may read a type the package does not decode
+		if u, ok := ev.(Unknown); ok && err == nil && !s.countUnknown(u.Type) { // delivered too: an app may read it
+			s.readErr = &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "realtime: unknown event types exceed the accounting budget"}
+			_ = s.conn.CloseNow()
+			return
 		}
 		select {
 		case s.events <- item{ev: ev, err: err}:
@@ -181,14 +209,24 @@ func (s *Session) readLoop() {
 	}
 }
 
-func (s *Session) countUnknown(typ string) {
+// countUnknown counts one event of typ; false, counting nothing, when a new type would exceed the budget
+// (MaxUnknownTypes, MaxUnknownTypeBytes).
+func (s *Session) countUnknown(typ string) bool {
 	s.unknownMu.Lock()
+	if _, seen := s.unknown[typ]; !seen {
+		if len(s.unknown) >= MaxUnknownTypes || s.unknownBytes+len(typ) > MaxUnknownTypeBytes {
+			s.unknownMu.Unlock()
+			return false
+		}
+		s.unknownBytes += len(typ)
+	}
 	s.unknown[typ]++
 	n := s.unknown[typ]
 	s.unknownMu.Unlock()
 	if n == 1 {
 		s.logger.Debug("realtime: unknown event type", "type", secret.Scrub(typ))
 	}
+	return true
 }
 
 // Unknown returns how many events of each unknown type this session received: API drift (NET-04).
@@ -227,7 +265,9 @@ func (s *Session) Next(ctx context.Context) (Event, error) {
 	}
 }
 
-// Send writes one client event as JSON. Writes are serialised; waiting for an earlier write observes ctx and Close.
+// Send writes one client event as JSON, which must be valid UTF-8: a json.RawMessage is passed through as it is, and
+// invalid UTF-8 is an internal error that sends nothing. Writes are serialised; waiting for an earlier write observes
+// ctx and Close.
 func (s *Session) Send(ctx context.Context, event any) error {
 	if err := ctx.Err(); err != nil {
 		return err // cancelled before the call: nothing is encoded or sent, and the session is untouched
@@ -236,6 +276,10 @@ func (s *Session) Send(ctx context.Context, event any) error {
 	if err != nil {
 		// A fixed message: a custom marshaller's error text could carry anything.
 		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: the event does not encode"}
+	}
+	if !utf8.Valid(b) {
+		// A text message is UTF-8, as in Swift; the peer would refuse the frame, or read a different event.
+		return &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: the event is not valid UTF-8"}
 	}
 	select {
 	case <-s.closing:

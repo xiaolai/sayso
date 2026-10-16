@@ -70,12 +70,32 @@ public final class RealtimeSession: Sendable {
         task.cancel(with: .goingAway, reason: nil)
     }
 
-    /// Obtains a secret for `session` (an encoded JSON object) from `source` and opens the session with it.
+    /// Obtains a secret for `session` (an encoded JSON object) from `source` and opens the session with it. The
+    /// configuration and the destination are checked first, so a programming error never costs a sign-in or a mint.
     public static func open(
         client: HTTPClient, source: any SecretSource, session: Data, configuration: Configuration
     ) async throws -> RealtimeSession {
+        try check(configuration)
+        try client.policy.check(request(configuration, bearer: "ek_unminted"))
         let secret = try await source.secret(session: session)
         return try await open(client: client, secret: secret, configuration: configuration)
+    }
+
+    /// A programming error unless the handshake timeout is positive and finite and the read limit positive.
+    private static func check(_ configuration: Configuration) throws {
+        guard Deadline.nanoseconds(configuration.handshakeTimeout) != nil, configuration.readLimit > 0,
+            configuration.readLimit < Int.max
+        else {
+            throw RealtimeError(
+                .internal, message: "a realtime session needs a positive, finite handshake timeout and a read limit")
+        }
+    }
+
+    private static func request(_ configuration: Configuration, bearer: String) -> URLRequest {
+        var request = URLRequest(url: configuration.url)
+        request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = configuration.handshakeTimeout
+        return request
     }
 
     /// Opens the session with `Authorization: Bearer ek_…` within the handshake timeout. A refused handshake is
@@ -83,15 +103,8 @@ public final class RealtimeSession: Sendable {
     public static func open(client: HTTPClient, secret: ClientSecret, configuration: Configuration) async throws
         -> RealtimeSession
     {
-        guard Deadline.nanoseconds(configuration.handshakeTimeout) != nil, configuration.readLimit > 0,
-            configuration.readLimit < Int.max
-        else {
-            throw RealtimeError(
-                .internal, message: "a realtime session needs a positive, finite handshake timeout and a read limit")
-        }
-        var request = URLRequest(url: configuration.url)
-        request.setValue("Bearer " + secret.bearer, forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = configuration.handshakeTimeout
+        try check(configuration)
+        let request = request(configuration, bearer: secret.bearer)
         try client.policy.check(request)
         let task = client.session.webSocketTask(with: request)
         // One byte over the limit still arrives, so the session tells an oversize message from a broken connection.
@@ -133,28 +146,46 @@ public final class RealtimeSession: Sendable {
         try await inbox.take()
     }
 
-    /// Writes one client event, an encoded JSON object, as a text message. Writes are serialised, as in Go. A task
-    /// cancelled before its write starts, while it waits behind another write included, throws `CancellationError`,
-    /// sends nothing and leaves the session open. Cancelling a write in flight ends the session, as in Go: a message
-    /// partly handed to the transport cannot be withdrawn, and a stalled write must not hold the caller.
+    /// Writes one client event, an encoded JSON object in valid UTF-8, as a text message; invalid UTF-8 is
+    /// `internal` and sends nothing. Writes are serialised, as in Go, and ``close()`` releases every write still
+    /// waiting with ``Closed``. A task cancelled before its write starts, while it waits behind another write
+    /// included, throws `CancellationError`, sends nothing and leaves the session open. Cancelling a write in flight
+    /// ends the session, as in Go: a message partly handed to the transport cannot be withdrawn, and a stalled write
+    /// must not hold the caller.
     public func send(_ event: Data) async throws {
+        // A text message is UTF-8: a lenient decoding would replace bad bytes and send a different event.
+        let text = String(decoding: event, as: UTF8.self)
+        guard text.utf8.elementsEqual(event) else {
+            throw RealtimeError(.internal, message: "the event is not valid UTF-8")
+        }
         if inbox.isClosing { throw Closed() }
         try Task.checkCancellation()
         try await writes.acquire()
         defer { writes.release() }
         if inbox.isClosing { throw Closed() }  // closed while this write waited
-        try Task.checkCancellation()
         let task = self.task
         do {
-            try await withTaskCancellationHandler {
-                try await task.send(.string(String(decoding: event, as: UTF8.self)))
-            } onCancel: {
+            try await Self.admitted { try await task.send(.string(text)) } end: {
                 task.cancel(with: .goingAway, reason: nil)
             }
         } catch {
             if inbox.isClosing { throw Closed() }
-            if Task.isCancelled { throw CancellationError() }
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
             throw transportError(error, "realtime send")
+        }
+    }
+
+    /// Runs `write` unless the calling task is cancelled first, and calls `end` when it is cancelled once `write` has
+    /// started. Cancellation and the start are settled under one lock (``WriteAdmission``), so a cancellation that
+    /// comes first, even one that lands as the handler is installed, never touches the transport.
+    static func admitted(_ write: () async throws -> Void, end: @escaping @Sendable () -> Void) async throws {
+        let admission = WriteAdmission()
+        try await withTaskCancellationHandler {
+            guard admission.start() else { throw CancellationError() }
+            defer { admission.finish() }
+            try await write()
+        } onCancel: {
+            if admission.cancel() { end() }
         }
     }
 
@@ -172,7 +203,16 @@ public final class RealtimeSession: Sendable {
     /// How many events of each unknown type this session received, API drift: one entry per distinct type as sent,
     /// in the order first seen. Types are told apart by their UTF-8 bytes, as in Go: two canonically equivalent
     /// spellings are two types on the wire, so a `String`-keyed dictionary, which would merge them, is not used.
+    /// The accounting is bounded by ``maximumUnknownTypes`` and ``maximumUnknownTypeBytes``.
     public var unknownCounts: [UnknownTypeCount] { inbox.unknownCounts }
+
+    /// At most this many distinct unknown types are counted, as in Go (`MaxUnknownTypes`). An event of one more ends
+    /// the session as `protocol`, undelivered, as a message over the read limit does: the provider chooses the
+    /// types, and every one counted is kept for the session's life.
+    public static let maximumUnknownTypes = 256
+    /// At most this many bytes of distinct unknown types, in UTF-8, are counted, as in Go (`MaxUnknownTypeBytes`);
+    /// past it, as past ``maximumUnknownTypes``.
+    public static let maximumUnknownTypeBytes = 64 << 10
 
     /// Sends a normal close and drops the connection if the peer has not finished closing within 2 s, then waits for
     /// the transport to complete, as Go waits for its connection: a dropped task always completes. It waits for the
@@ -180,6 +220,7 @@ public final class RealtimeSession: Sendable {
     /// more than once.
     public func close() async {
         inbox.markClosing()
+        writes.close()
         task.cancel(with: .normalClosure, reason: nil)
         let reader = self.reader
         let task = self.task
@@ -203,6 +244,9 @@ public final class RealtimeSession: Sendable {
 
     /// Whether URLSession has reported the task complete; for tests.
     var transportCompleted: Bool { events.isComplete }
+
+    /// Whether the reader holds a message nobody has taken yet; for tests.
+    var holdsBufferedMessage: Bool { inbox.holdsBuffered }
 
     /// The error for a close frame received while more events were expected; the reason is scrubbed.
     public static func closeError(code: Int, reason: String) -> RealtimeError {
@@ -233,7 +277,12 @@ public final class RealtimeSession: Sendable {
             }
             do {
                 let decoded = try RealtimeMessage(raw: bytes)
-                if case .unknown(let type) = decoded.event { inbox.countUnknown(type) }
+                if case .unknown(let type) = decoded.event, !inbox.countUnknown(type) {
+                    inbox.finish(
+                        RealtimeError(.protocol, message: "realtime unknown event types exceed the accounting budget"))
+                    task.cancel(with: .policyViolation, reason: nil)
+                    return
+                }
                 inbox.push(.success(decoded))
             } catch {
                 inbox.push(.failure(error))
@@ -280,11 +329,15 @@ public struct UnknownTypeCount: Sendable, Equatable {
 }
 
 /// Serialises writes. A waiter cancelled before its turn leaves the queue and never writes; the transport is not
-/// touched, so a cancelled send queued behind a stalled one does not end the session.
+/// touched, so a cancelled send queued behind a stalled one does not end the session. Once closed, every waiter, now
+/// and later, gets ``RealtimeSession/Closed``, as Go's wait selects on the session closing.
 final class WriteGate: @unchecked Sendable {
     private let lock = NSLock()
     private var busy = false
-    private var queue: [(id: UInt64, c: CheckedContinuation<Void, Error>)] = []
+    private var closed = false
+    private var waiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
+    /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
+    private var order = FIFO<UInt64>()
     private var nextID: UInt64 = 0
 
     func acquire() async throws {
@@ -295,7 +348,10 @@ final class WriteGate: @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
                 lock.lock()
-                if Task.isCancelled {
+                if closed {
+                    lock.unlock()
+                    c.resume(throwing: RealtimeSession.Closed())
+                } else if Task.isCancelled {
                     lock.unlock()
                     c.resume(throwing: CancellationError())
                 } else if !busy {
@@ -303,29 +359,72 @@ final class WriteGate: @unchecked Sendable {
                     lock.unlock()
                     c.resume()
                 } else {
-                    queue.append((id, c))
+                    waiters[id] = c
+                    order.append(id)
                     lock.unlock()
                 }
             }
         } onCancel: {
-            lock.lock()
-            let at = queue.firstIndex { $0.id == id }
-            let waiter = at.map { queue.remove(at: $0).c }
-            lock.unlock()
+            let waiter = lock.withLock { waiters.removeValue(forKey: id) }
             waiter?.resume(throwing: CancellationError())
         }
     }
 
+    /// How many waiters are queued; for tests.
+    var waiting: Int { lock.withLock { waiters.count } }
+
     /// Hands the turn to the next waiter, or frees the gate.
     func release() {
         lock.lock()
-        if queue.isEmpty {
-            busy = false
-            lock.unlock()
-        } else {
-            let next = queue.removeFirst().c
-            lock.unlock()
-            next.resume()
+        while let id = order.popFirst() {
+            if let next = waiters.removeValue(forKey: id) {
+                lock.unlock()
+                next.resume()
+                return
+            }
+        }
+        busy = false
+        lock.unlock()
+    }
+
+    /// Ends the gate for ``RealtimeSession/close()``. The write in flight, if any, ends with the transport.
+    func close() {
+        lock.lock()
+        closed = true
+        var pending: [CheckedContinuation<Void, Error>] = []
+        while let id = order.popFirst() {
+            if let w = waiters.removeValue(forKey: id) { pending.append(w) }
+        }
+        lock.unlock()
+        for w in pending { w.resume(throwing: RealtimeSession.Closed()) }
+    }
+}
+
+/// Settles a write's start against its cancellation: whichever comes first under the lock decides whether the
+/// transport is touched.
+final class WriteAdmission: @unchecked Sendable {
+    private enum State { case waiting, writing, settled }
+    private let lock = NSLock()
+    private var state = State.waiting
+
+    /// True when the write may start: no cancellation came first.
+    func start() -> Bool {
+        lock.withLock {
+            guard state == .waiting else { return false }
+            state = .writing
+            return true
+        }
+    }
+
+    /// The write has returned; a later cancellation touches nothing.
+    func finish() { lock.withLock { state = .settled } }
+
+    /// True when a write is in flight and must be ended; otherwise no write starts after this.
+    func cancel() -> Bool {
+        lock.withLock {
+            let writing = state == .writing
+            if state == .waiting { state = .settled }
+            return writing
         }
     }
 }
@@ -338,11 +437,13 @@ final class Inbox: @unchecked Sendable {
     private var terminal: Error?
     private var closing = false
     private var waiters: [UInt64: CheckedContinuation<RealtimeMessage, Error>] = [:]
-    private var order: [UInt64] = []
+    /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
+    private var order = FIFO<UInt64>()
     private var nextID: UInt64 = 0
     private var space: CheckedContinuation<Bool, Never>?
     private var unknown: [UnknownTypeCount] = []
     private var unknownIndex: [[UInt8]: Int] = [:]
+    private var unknownBytes = 0
 
     var isClosing: Bool {
         lock.lock()
@@ -350,22 +451,40 @@ final class Inbox: @unchecked Sendable {
         return closing
     }
 
+    var holdsBuffered: Bool { lock.withLock { buffered != nil } }
+
     var unknownCounts: [UnknownTypeCount] {
         lock.lock()
         defer { lock.unlock() }
         return unknown
     }
 
-    func countUnknown(_ type: String) {
+    /// Counts one event of `type`; false, counting nothing, when a new type would exceed the budget
+    /// (``RealtimeSession/maximumUnknownTypes``, ``RealtimeSession/maximumUnknownTypeBytes``).
+    func countUnknown(_ type: String) -> Bool {
         let key = Array(type.utf8)
         lock.lock()
+        defer { lock.unlock() }
         if let at = unknownIndex[key] {
             unknown[at].count += 1
-        } else {
-            unknownIndex[key] = unknown.count
-            unknown.append(UnknownTypeCount(type: type, count: 1))
+            return true
         }
-        lock.unlock()
+        guard unknown.count < RealtimeSession.maximumUnknownTypes,
+            unknownBytes + key.count <= RealtimeSession.maximumUnknownTypeBytes
+        else { return false }
+        unknownBytes += key.count
+        unknownIndex[key] = unknown.count
+        unknown.append(UnknownTypeCount(type: type, count: 1))
+        return true
+    }
+
+    /// The waiters in arrival order, taken from the queue; called under the lock.
+    private func takeWaiters() -> [CheckedContinuation<RealtimeMessage, Error>] {
+        var pending: [CheckedContinuation<RealtimeMessage, Error>] = []
+        while let id = order.popFirst() {
+            if let w = waiters.removeValue(forKey: id) { pending.append(w) }
+        }
+        return pending
     }
 
     /// Ends the inbox for ``RealtimeSession/close()``: a buffered message is dropped, and every waiter, now and later,
@@ -376,8 +495,7 @@ final class Inbox: @unchecked Sendable {
         buffered = nil
         terminal = RealtimeSession.Closed()  // after close every call gets Closed, an earlier failure included, as in Go
         let error = terminal!
-        let pending = order.compactMap { waiters.removeValue(forKey: $0) }
-        order = []
+        let pending = takeWaiters()
         let s = space
         space = nil
         lock.unlock()
@@ -408,11 +526,12 @@ final class Inbox: @unchecked Sendable {
             lock.unlock()
             return
         }
-        if let id = order.first, let waiter = waiters.removeValue(forKey: id) {
-            order.removeFirst()
-            lock.unlock()
-            waiter.resume(with: result)
-            return
+        while let id = order.popFirst() {
+            if let waiter = waiters.removeValue(forKey: id) {
+                lock.unlock()
+                waiter.resume(with: result)
+                return
+            }
         }
         buffered = result
         lock.unlock()
@@ -423,8 +542,7 @@ final class Inbox: @unchecked Sendable {
         lock.lock()
         if terminal == nil { terminal = error }  // after close(), the reader's own error is not the session's
         let error = terminal!
-        let pending = order.compactMap { waiters.removeValue(forKey: $0) }
-        order = []
+        let pending = takeWaiters()
         let s = space
         space = nil
         lock.unlock()
@@ -462,7 +580,6 @@ final class Inbox: @unchecked Sendable {
         } onCancel: {
             lock.lock()
             let waiter = waiters.removeValue(forKey: id)
-            order.removeAll { $0 == id }
             lock.unlock()
             waiter?.resume(throwing: CancellationError())
         }

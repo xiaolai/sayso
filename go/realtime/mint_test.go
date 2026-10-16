@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,7 +80,8 @@ func TestMintRedirectHidesLocation(t *testing.T) {
 	}
 }
 
-// An expires_at at either end of int64 keeps its side of now; time.Unix would wrap it.
+// An expires_at at either end of int64 keeps its side of now in ExpiresAt, which time.Unix would wrap, and its exact
+// value in ExpiresAtUnix.
 func TestMintExpiryAtInt64Bounds(t *testing.T) {
 	for _, tc := range []struct {
 		expires string
@@ -97,6 +99,9 @@ func TestMintExpiryAtInt64Bounds(t *testing.T) {
 		}
 		if sec.ExpiresAt.After(time.Now()) != tc.future {
 			t.Fatalf("%s: expiry %v on the wrong side of now", tc.expires, sec.ExpiresAt)
+		}
+		if got := strconv.FormatInt(sec.ExpiresAtUnix, 10); got != tc.expires {
+			t.Fatalf("ExpiresAtUnix %s, want %s exactly", got, tc.expires)
 		}
 	}
 }

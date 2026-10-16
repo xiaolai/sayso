@@ -100,9 +100,9 @@ final class SessionCloseTests: XCTestCase {
 
     func testUnknownTypesAreCountedByTheirBytes() {
         let inbox = Inbox()
-        inbox.countUnknown("type.\u{00E9}")
-        inbox.countUnknown("type.e\u{0301}")
-        inbox.countUnknown("type.\u{00E9}")
+        XCTAssertTrue(inbox.countUnknown("type.\u{00E9}"))
+        XCTAssertTrue(inbox.countUnknown("type.e\u{0301}"))
+        XCTAssertTrue(inbox.countUnknown("type.\u{00E9}"))
         let counts = inbox.unknownCounts
         XCTAssertEqual(counts.count, 2)
         XCTAssertEqual(counts.map(\.count), [2, 1])
@@ -203,8 +203,10 @@ final class SessionCloseTests: XCTestCase {
         let server = try FakeClosingServer(code: nil, reason: "", greeting: #"{"type":"session.created"}"#)
         defer { server.stop() }
         let session = try await open(port: server.port)
-        // Let the greeting arrive, so the reader holds a buffered message when close starts.
-        try await Task.sleep(nanoseconds: 300_000_000)
+        // Wait until the greeting has arrived, so the reader holds a buffered message when close starts.
+        let deadline = Date().addingTimeInterval(5)
+        while !session.holdsBufferedMessage, Date() < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(session.holdsBufferedMessage, "the greeting never arrived")
         XCTAssertFalse(session.transportCompleted)
         let started = Date()
         await session.close()

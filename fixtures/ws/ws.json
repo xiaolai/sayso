@@ -476,5 +476,59 @@
   "expect": {
    "class": "protocol"
   }
+ },
+ {
+  "id": "ws-unknown-types-at-count-budget",
+  "component": "session",
+  "kind": "unknown-types",
+  "types": 256,
+  "typeBytes": 16,
+  "rounds": 2,
+  "expect": {
+   "delivered": 512,
+   "distinct": 256
+  },
+  "note": "256 distinct unknown types are within the accounting budget (spec/session.md); a type already counted is counted again. Type i is \"drift.<i>.\" padded with \"a\" to typeBytes bytes; the server sends every type once per round, in order, as {\"type\": <type>}."
+ },
+ {
+  "id": "ws-unknown-types-past-count-budget",
+  "component": "session",
+  "kind": "unknown-types",
+  "types": 257,
+  "typeBytes": 16,
+  "rounds": 1,
+  "expect": {
+   "delivered": 256,
+   "distinct": 256,
+   "class": "protocol"
+  },
+  "note": "The 257th distinct unknown type ends the session as protocol, undelivered and uncounted. Type i is \"drift.<i>.\" padded with \"a\" to typeBytes bytes; the server sends every type once per round, in order, as {\"type\": <type>}."
+ },
+ {
+  "id": "ws-unknown-types-at-byte-budget",
+  "component": "session",
+  "kind": "unknown-types",
+  "types": 64,
+  "typeBytes": 1024,
+  "rounds": 1,
+  "expect": {
+   "delivered": 64,
+   "distinct": 64
+  },
+  "note": "64 distinct types of 1024 bytes are exactly the 64 KiB byte budget. Type i is \"drift.<i>.\" padded with \"a\" to typeBytes bytes; the server sends every type once per round, in order, as {\"type\": <type>}."
+ },
+ {
+  "id": "ws-unknown-types-past-byte-budget",
+  "component": "session",
+  "kind": "unknown-types",
+  "types": 65,
+  "typeBytes": 1024,
+  "rounds": 1,
+  "expect": {
+   "delivered": 64,
+   "distinct": 64,
+   "class": "protocol"
+  },
+  "note": "One more type past the 64 KiB byte budget ends the session as protocol. Type i is \"drift.<i>.\" padded with \"a\" to typeBytes bytes; the server sends every type once per round, in order, as {\"type\": <type>}."
  }
 ]

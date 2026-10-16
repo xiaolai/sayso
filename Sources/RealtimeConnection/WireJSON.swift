@@ -22,32 +22,65 @@ package enum WireJSON {
             var v = Validator(bytes)
             return (try? v.document()) != nil
         }()
-        bytes.withUnsafeMutableBytes { raw in
-            if let base = raw.baseAddress { _ = memset_s(base, raw.count, 0, raw.count) }
-        }
+        wipe(&bytes)
         return valid
     }
 
+    /// Zeroes `bytes` in place and returns where they were, which differs from where they were before the call when
+    /// another reference shared the storage: the write then copied it first and cleared only the copy.
+    @discardableResult
+    static func wipe(_ bytes: inout [UInt8]) -> UInt {
+        bytes.withUnsafeMutableBytes { raw in
+            if let base = raw.baseAddress { _ = memset_s(base, raw.count, 0, raw.count) }
+            return UInt(bitPattern: raw.baseAddress)
+        }
+    }
+
     /// Validates `data` as one strict JSON value, whitespace around it allowed, and returns its root.
-    static func parse(_ data: Data) throws -> Node {
-        let doc = Document(Array(data))
-        var v = Validator(doc.bytes)
-        let range = try v.document()
+    /// The document's copy of the bytes is wiped once its last node is released, or at once when it is refused:
+    /// the mint reply and app-server events hold secrets.
+    static func parse<C: Collection>(_ data: C) throws -> Node where C.Element == UInt8 {
+        let doc = Document(copying: data)
+        // The validator's copy of the bytes ends inside the document's lifetime, so the wipe finds them unshared.
+        let range = try withExtendedLifetime(doc) { () throws -> Range<Int> in
+            var v = Validator(doc.bytes)
+            return try v.document()
+        }
         return Node(doc: doc, range: range)
     }
 
     /// The exact bytes of the member `name` of the JSON object `data`, as the sender wrote them; nil when absent.
     /// Throws ``Invalid`` unless `data` is one strict JSON object. For the other modules of this package, which
     /// cannot see ``Node``: CodexAuth hands an app-server event's params on byte for byte, as Go does.
-    package static func memberBytes(_ data: Data, _ name: String) throws -> Data? {
+    package static func memberBytes<C: Collection>(_ data: C, _ name: String) throws -> Data? where C.Element == UInt8 {
         let root = try parse(data)
         guard let n = try root.members()[Array(name.utf8)] else { return nil }
-        return Data(root.doc.bytes[n.range])
+        return n.data
     }
 
-    final class Document: Sendable {
-        let bytes: [UInt8]
-        init(_ bytes: [UInt8]) { self.bytes = bytes }
+    /// A validated document's bytes, shared by its nodes and wiped when the last of them is released. Unchecked
+    /// Sendable: `bytes` is written only by `deinit`, when no other reference to the document is left.
+    final class Document: @unchecked Sendable {
+        private(set) var bytes: [UInt8]
+        private let address: UInt
+
+        /// Copies `source` into storage of the document's own: `Array(source)` can share a whole-buffer slice's
+        /// storage with the caller, whose copy the wipe would then leave behind.
+        init<C: Collection>(copying source: C) where C.Element == UInt8 {
+            var owned: [UInt8] = []
+            owned.reserveCapacity(source.count)
+            owned.append(contentsOf: source)
+            bytes = owned
+            address = owned.withUnsafeBytes { UInt(bitPattern: $0.baseAddress) }
+        }
+
+        deinit {
+            // A reader that kept a copy of `bytes` beyond the document would make the wipe clear a fresh copy and
+            // leave the original behind; every reader's copy ends before its node does.
+            let wiped = WireJSON.wipe(&bytes)
+            assert(wiped == address, "a copy of a parsed document outlived it, so its wipe cleared only a copy")
+            assert(!bytes.contains { $0 != 0 }, "a parsed document was not wiped")
+        }
     }
 
     /// One JSON value: its exact bytes, as received. Only a validated document's nodes exist, so reading one never
@@ -65,6 +98,10 @@ package enum WireJSON {
         }
 
         var isNull: Bool { kind == UInt8(ascii: "n") }
+
+        /// The value's exact bytes. Read through a node, every copy of the document's bytes ends while the node
+        /// still holds the document.
+        var data: Data { Data(bytes[range]) }
 
         /// The value's exact text.
         var raw: String { String(decoding: bytes[range], as: UTF8.self) }
@@ -146,13 +183,14 @@ package enum WireJSON {
 
         /// An object whose values are strings, null being "". Two names that are canonically equivalent are
         /// invalid: a `String`-keyed result cannot hold both, and Go refuses them too (spec/session.md, wire JSON). So
-        /// is a name with a run of more than 30 combining marks, where Go's normaliser and Swift's equality disagree.
+        /// is a name with a run of more than 30 combining marks, where Go's normaliser and Swift's equality disagree,
+        /// and a name with a character not assigned in ``pinnedUnicode``, which this runtime's tables may not know.
         func stringMap(_ name: String) throws -> [String: String]? {
             guard let o = try object(name) else { return nil }
             var out: [String: String] = [:]
             for (k, n) in o.members {
                 let key = String(decoding: k, as: UTF8.self)
-                guard !longMarkRun(key) else { throw Invalid() }
+                guard WireJSON.pinned(key), !longMarkRun(key) else { throw Invalid() }
                 guard out[key] == nil else { throw Invalid() }
                 out[key] = n.isNull ? "" : try n.string()
             }
@@ -163,6 +201,21 @@ package enum WireJSON {
         func code(_ name: String) throws -> String {
             guard let n = field(name) else { return "" }
             return n.kind == UInt8(ascii: "\"") ? try n.string() : n.raw
+        }
+    }
+
+    /// The Unicode version a metadata name's characters must be assigned in: that of the Swift runtime on the oldest
+    /// supported systems (macOS 14, iOS 17), as in Go (`wire.PinnedUnicode`). A character's canonical combining class
+    /// and decomposition never change once it is assigned, so for these characters this runtime's tables, whatever
+    /// their version, count marks and compare names as Go's Unicode 17 tables do.
+    static let pinnedUnicode = (major: 15, minor: 0)
+
+    /// Whether every character of `s` is assigned in ``pinnedUnicode``, private-use ones included. A noncharacter has
+    /// an age but no assignment, so it is refused, as Go's table refuses it.
+    static func pinned(_ s: String) -> Bool {
+        s.unicodeScalars.allSatisfy { u in
+            guard let age = u.properties.age, u.properties.generalCategory != .unassigned else { return false }
+            return (age.major, age.minor) <= pinnedUnicode
         }
     }
 

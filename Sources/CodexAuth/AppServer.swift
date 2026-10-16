@@ -1022,7 +1022,7 @@ final class AppServerCore: @unchecked Sendable {
     private func queueEvent<C: Collection>(_ m: [String: Any], line: C, serverRequest: Bool) where C.Element == UInt8 {
         guard onEvent != nil, let method = m["method"] as? String else { return }
         // The line was validated, so this reads.
-        let params = (try? WireJSON.memberBytes(Data(line), "params")) ?? nil
+        let params = (try? WireJSON.memberBytes(line, "params")) ?? nil
         let event = AppServerEvent(method: method, params: params ?? Data(), isServerRequest: serverRequest)
         let size = Self.size(event)
         let over = lock.withLock { () -> Bool? in
@@ -1149,7 +1149,9 @@ func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
     // encoding/json each settle their own way; Codex's serde refuses both. The depth bound comes before the grammar,
     // whose parser recurses. The bytes are copied once and every check reads them contiguously: a generic collection
     // is read element by element, which is slow for a long line.
-    let data = Data(bytes)
+    // The copy is wiped: a reply can hold a token.
+    var data = Data(bytes)
+    defer { data.resetBytes(in: 0..<data.count) }
     return data.withUnsafeBytes { raw in
         !raw.contains(0) && !raw.starts(with: [0xEF, 0xBB, 0xBF]) && withinBounds(raw, maxCodexJSONDepth)
     } && WireJSON.isValid(data)
@@ -1217,37 +1219,3 @@ private func bool(_ v: Any) -> Bool? {
     return n.boolValue
 }
 #endif
-
-/// A first-in, first-out queue that lets go of each element as it is taken, so what it holds is only what it still
-/// queues: a consumed slot is emptied at once, and the emptied front is cut off once it is most of the storage, which
-/// keeps taking O(1) amortised.
-struct FIFO<Element> {
-    private var slots: [Element?] = []
-    private var head = 0
-
-    var count: Int { slots.count - head }
-
-    var first: Element? { head < slots.count ? slots[head] : nil }
-
-    mutating func append(_ e: Element) { slots.append(e) }
-
-    mutating func popFirst() -> Element? {
-        guard head < slots.count else { return nil }
-        let e = slots[head]
-        slots[head] = nil
-        head += 1
-        if head == slots.count {
-            slots = []
-            head = 0
-        } else if head > 1024 && head * 2 > slots.count {
-            slots.removeFirst(head)
-            head = 0
-        }
-        return e
-    }
-
-    mutating func removeAll() {
-        slots = []
-        head = 0
-    }
-}

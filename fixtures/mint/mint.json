@@ -129,6 +129,201 @@
   "note": "expires_at is kept as the exact integer minted: 2^53 + 1 has no Double, so a Date alone would report 2^53."
  },
  {
+  "id": "mint-expiry-beyond-time",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 4611686018427387905,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "expiresAt": 4611686018427387905,
+   "requests": 1,
+   "refreshCalls": 0,
+   "request": {
+    "method": "POST",
+    "path": "/v1/realtime/client_secrets",
+    "authorization": "Bearer $token",
+    "contentType": "application/json",
+    "body": {
+     "session": {
+      "type": "realtime",
+      "model": "gpt-realtime",
+      "output_modalities": [
+       "audio"
+      ]
+     },
+     "expires_after": {
+      "anchor": "created_at",
+      "seconds": 600
+     }
+    }
+   }
+  },
+  "note": "expires_at beyond 2^62 is kept exactly: Go's time.Time holds a Unix time only within about ±2^62 s, so the exact integer is kept beside it."
+ },
+ {
+  "id": "mint-expiry-int64-max",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 9223372036854775807,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "expiresAt": 9223372036854775807,
+   "requests": 1,
+   "refreshCalls": 0,
+   "request": {
+    "method": "POST",
+    "path": "/v1/realtime/client_secrets",
+    "authorization": "Bearer $token",
+    "contentType": "application/json",
+    "body": {
+     "session": {
+      "type": "realtime",
+      "model": "gpt-realtime",
+      "output_modalities": [
+       "audio"
+      ]
+     },
+     "expires_after": {
+      "anchor": "created_at",
+      "seconds": 600
+     }
+    }
+   }
+  },
+  "note": "The largest signed 64-bit expires_at is kept exactly."
+ },
+ {
+  "id": "mint-expiry-int64-min",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": -9223372036854775808,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "expiresAt": -9223372036854775808,
+   "requests": 1,
+   "refreshCalls": 0,
+   "request": {
+    "method": "POST",
+    "path": "/v1/realtime/client_secrets",
+    "authorization": "Bearer $token",
+    "contentType": "application/json",
+    "body": {
+     "session": {
+      "type": "realtime",
+      "model": "gpt-realtime",
+      "output_modalities": [
+       "audio"
+      ]
+     },
+     "expires_after": {
+      "anchor": "created_at",
+      "seconds": 600
+     }
+    }
+   }
+  },
+  "note": "The smallest signed 64-bit expires_at is kept exactly."
+ },
+ {
   "id": "mint-missing-value",
   "component": "mint",
   "setup": {
