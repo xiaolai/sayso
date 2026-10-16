@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -57,6 +58,12 @@ type Config struct {
 	// Guard, if set, runs before the executable is started; an error refuses the start. A consumer uses it to keep
 	// unit tests away from a real Codex.
 	Guard func(bin string) error
+	// OnEvent, when set, receives every notification and every server request (already refused), in the order the
+	// child wrote them, one at a time from a goroutine of its own: the reader never waits for it. A reply may reach
+	// its caller before OnEvent has seen the events written before it. Events still queued beyond 8 MiB (a handler
+	// that does not keep up) are a codex-error, which fails the client. After a failure the events already queued
+	// are still delivered; after Close, none that has not started. Unset, notifications are ignored.
+	OnEvent func(Event)
 }
 
 // String names the executable only: Env may hold credentials.
@@ -128,6 +135,13 @@ type core struct {
 	refusals     [][]byte
 	refusalBytes int
 	refusalWake  chan struct{} // one pending wake-up for refuseLoop
+	// events wait for onEvent, delivered in order by eventLoop; eventBytes is their size, at most eventCap. Guarded by
+	// mu. closing is set by Close, so no event starts after it.
+	onEvent    func(Event)
+	events     []Event
+	eventBytes int
+	eventWake  chan struct{}
+	closing    atomic.Bool
 
 	stderrDone chan struct{} // closed when the stderr copy ends
 	mu         sync.Mutex
@@ -176,6 +190,8 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		writeSem:    make(chan struct{}, 1),
 		stderrDone:  make(chan struct{}),
 		refusalWake: make(chan struct{}, 1),
+		onEvent:     cfg.OnEvent,
+		eventWake:   make(chan struct{}, 1),
 	}
 	c := &Client{k: k}
 	if k.logger == nil {
@@ -212,6 +228,9 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	// The goroutines hold the core only, so an unclosed Client can be collected, and its cleanup ends the child.
 	go k.readLoop(outR)
 	go k.refuseLoop()
+	if k.onEvent != nil {
+		go k.eventLoop()
+	}
 	go func() {
 		_, _ = io.Copy(&k.stderr, errR)
 		close(k.stderrDone)
@@ -255,7 +274,7 @@ func closeAll(files ...*os.File) {
 }
 
 // readLoop matches replies to pending calls until the child's stdout ends or misbehaves. A server request is
-// answered with an error and never acted on.
+// answered with an error and never acted on; it and every notification are queued for OnEvent when one is set.
 func (k *core) readLoop(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), maxLine+1) // a line of exactly maxLine bytes fits with its newline
@@ -294,8 +313,8 @@ func trimJSONSpace(b []byte) []byte {
 }
 
 // handle reads one line (spec/credentials.md, messages); false when it is not JSON-RPC. A message is classified
-// before its reply fields are read: a notification (no id) is ignored whatever else it holds, and a message with a
-// method, even "", is a server request. Keys are exact.
+// before its reply fields are read: a notification (no id) is ignored whatever else it holds, unless OnEvent takes
+// it, and a message with a method, even "", is a server request. Keys are exact.
 func (k *core) handle(line []byte) bool {
 	if len(line) == 0 {
 		return true
@@ -316,6 +335,7 @@ func (k *core) handle(line []byte) bool {
 	}
 	id, hasID := m.Field("id")
 	if !hasID {
+		k.queueEvent(m, false)
 		return true // a notification, whatever else it holds
 	}
 	_, hasMethod, err := m.String("method")
@@ -324,6 +344,7 @@ func (k *core) handle(line []byte) bool {
 	}
 	if hasMethod {
 		k.refuse(id)
+		k.queueEvent(m, true)
 		return true
 	}
 	var resp response
@@ -576,6 +597,7 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 
 func (k *core) close() error {
 	k.closeMu.Do(func() {
+		k.closing.Store(true) // before fail wakes eventLoop, so no further event starts
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid

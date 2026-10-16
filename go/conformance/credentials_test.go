@@ -39,6 +39,7 @@ type credSetup struct {
 	Retry         *credFile         `json:"retry"`
 	TimeoutMs     int64             `json:"timeoutMs"`
 	Server        json.RawMessage   `json:"server"`
+	Client        *clientSetup      `json:"client"`
 }
 
 type credFile struct {
@@ -94,6 +95,9 @@ func TestCredentials(t *testing.T) {
 		w, err := build(t, cc.Setup, python, fake)
 		if err != nil {
 			return fixtures.Fail, "setup: " + err.Error()
+		}
+		if cc.Setup.Client != nil {
+			return outcome(w.client(t, cc.Setup.Client, cc.Expect))
 		}
 		if cc.Steps != nil {
 			return outcome(w.timeline(cc))

@@ -68,7 +68,16 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
   JSON-RPC error and never acted on. The answers are queued and written in order by a writer of their own, so the
   reader never waits on the child's input; answers still queued beyond 8 MiB (a child sending requests without
-  reading the answers) are `codex-error`; any other is a reply, matched to a call by its integer `id`. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+  reading the answers) are `codex-error`; any other is a reply, matched to a call by its integer `id`.
+- **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
+  a string, and every server request after its refusal was queued, as an event: the method, the `params` member as
+  JSON (absent when the message had none; `null` when it was null) and whether it was a server request. Events are
+  delivered one at a time, in the order the child wrote them, from a thread or goroutine of the client's own, so the
+  reader never waits for the handler; a reply may reach its caller before the handler has seen the events written
+  before it. Events still queued beyond 8 MiB (a handler that does not keep up) are `codex-error`, which fails the
+  client. Once the client has failed nothing more is queued, but what was queued is still delivered; after close
+  begins, no event that has not started is delivered. Formatting an event shows its kind, its scrubbed method and the
+  size of its params, never the params. Without a handler, notifications are ignored as before. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.

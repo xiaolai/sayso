@@ -1,5 +1,5 @@
 {
- "count": 778,
+ "count": 783,
  "fixtures": [
   {
    "id": "app-ready",
@@ -430,6 +430,36 @@
   {
    "id": "app-refresh-method-missing",
    "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-events-in-order",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-many-events-in-order",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-no-handler",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-handler-overflow",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-event-shapes",
+   "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []
   },

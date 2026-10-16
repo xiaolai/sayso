@@ -26,7 +26,10 @@ Scenario keys (all optional):
                        {"result": ...} | {"error": {"code", "message"}} | {"raw": "line"} | {"exit": code} |
                        {"rawLineBytes": n} (one line of n bytes, then a newline) |
                        {"rawThenExit": "text"} (the text with no newline, then exit 0: a last line ended by EOF),
-                       optionally with "delayMs". A method with no steps answers -32601.
+                       optionally with "delayMs", "notify" (messages sent before the reply) and "notifyAfter" (sent
+                       after it). A message is {"method", "params"} (a notification) or carries an "id" too (a server
+                       request); "repeat": n sends it n times with "$i" in a params string value replaced by the index
+                       (a number), and "padBytes": n adds a params member "pad" of n "x". A method with no steps answers -32601.
   byParams             {method: [{"when": {param: value}, "steps": [...]}]}: the first entry whose `when` matches the
                        call's params, by equality of each named key, is used instead of `methods`; each entry
                        counts its own calls, across starts like `methods`
@@ -101,6 +104,29 @@ def send(message: dict) -> None:
     sys.stdout.flush()
 
 
+def indexed(value, i: int):
+    """value with every string "$i" replaced by i."""
+    if isinstance(value, dict):
+        return {k: indexed(v, i) for k, v in value.items()}
+    if isinstance(value, list):
+        return [indexed(v, i) for v in value]
+    if value == "$i":
+        return i
+    return value
+
+
+def notify(messages: list) -> None:
+    """Sends a step's scripted notifications and server requests, in order."""
+    for spec in messages:
+        spec = dict(spec)
+        repeat, pad = int(spec.pop("repeat", 1)), int(spec.pop("padBytes", 0))
+        for i in range(repeat):
+            message = indexed(spec, i)
+            if pad:
+                message["params"] = dict(message.get("params") or {}, pad="x" * pad)
+            send(message)
+
+
 def main() -> int:
     with open(os.environ["SAYSO_FAKE_SCENARIO"], encoding="utf-8") as f:
         scenario = json.load(f)
@@ -152,6 +178,7 @@ def main() -> int:
         step = steps[min(n, len(steps) - 1)]
         if step.get("delayMs"):
             time.sleep(step["delayMs"] / 1000)
+        notify(step.get("notify", []))
         if method == "getAuthStatus" and pending_server_request:
             send(pending_server_request)
             pending_server_request = None
@@ -171,6 +198,7 @@ def main() -> int:
             send({"id": msg["id"], "error": step["error"]})
         else:
             send({"id": msg["id"], "result": step.get("result", {})})
+        notify(step.get("notifyAfter", []))
     if scenario.get("holdAfterEOF"):
         time.sleep(30)
     return 0
