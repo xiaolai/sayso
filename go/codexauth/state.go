@@ -6,6 +6,8 @@ package codexauth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -62,6 +64,17 @@ func (e Error) String() string { return e.Error() }
 
 // GoString is Error: %#v would otherwise print Mode and the cause unscrubbed.
 func (e Error) GoString() string { return e.Error() }
+
+// Format prints Error for every verb, on the value and through a pointer: a verb that calls no String method (%d,
+// say) would otherwise print the fields, Mode and CodexVersion unscrubbed.
+func (e Error) Format(f fmt.State, verb rune) {
+	switch verb {
+	case 'q':
+		_, _ = f.Write([]byte(strconv.Quote(e.Error())))
+	default:
+		_, _ = f.Write([]byte(e.Error()))
+	}
+}
 
 // MarshalJSON encodes the state, the mode and the version, scrubbed, and the cause as its scrubbed text.
 func (e Error) MarshalJSON() ([]byte, error) {
