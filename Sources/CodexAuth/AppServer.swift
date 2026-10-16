@@ -364,6 +364,11 @@ public final class AppServerClient: @unchecked Sendable {
         core.setTestSeams(refusalAdmitted: refusalAdmitted, eventAdmitted: eventAdmitted, recordAdmissions: recordAdmissions)
     }
 
+    /// Stand in for the probe of the child's group and for the signals close sends it, for tests.
+    func setProcessSeams(liveGroup: (@Sendable () -> Bool)?, signal: (@Sendable (Int32) -> Void)?) {
+        core.setProcessSeams(liveGroup: liveGroup, signal: signal)
+    }
+
     /// The messages admitted since recording began, in admission order, for tests.
     var admittedMessages: [Data] { core.admittedMessages }
 
@@ -425,6 +430,9 @@ final class AppServerCore: @unchecked Sendable {
     /// Bounds the number of events held, whatever their size.
     private static let maxEvents = 1 << 16
     private let exited = DispatchSemaphore(value: 0)
+    /// Set before `exited` is signalled: the kernel reaped the child itself (the host ignores SIGCHLD), so its ID, and
+    /// its group ID, may name another process and nothing is signalled. Guarded by `lock`.
+    private var lost = false
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
 
@@ -461,6 +469,9 @@ final class AppServerCore: @unchecked Sendable {
     private var testRefusalAdmitted: (@Sendable () -> Void)?
     private var testEventAdmitted: (@Sendable () -> Void)?
     private var admissions: [Outbound]?
+    /// Stand in for the probe of the child's group and for the signals close sends it.
+    private var testLiveGroup: (@Sendable () -> Bool)?
+    private var testSignal: (@Sendable (Int32) -> Void)?
     /// Signalled when the event thread ends.
     private let eventLoopEnded = DispatchSemaphore(value: 0)
 
@@ -472,6 +483,13 @@ final class AppServerCore: @unchecked Sendable {
             testRefusalAdmitted = refusalAdmitted
             testEventAdmitted = eventAdmitted
             admissions = recordAdmissions ? [] : nil
+        }
+    }
+
+    func setProcessSeams(liveGroup: (@Sendable () -> Bool)?, signal: (@Sendable (Int32) -> Void)?) {
+        lock.withLock {
+            testLiveGroup = liveGroup
+            testSignal = signal
         }
     }
 
@@ -554,10 +572,11 @@ final class AppServerCore: @unchecked Sendable {
             stderrDone.signal()
         }
         // Waits for the exit without reaping: a zombie keeps its process ID, and so its group ID, ours, so close can
-        // signal the group without reaching one that reused the ID. close reaps it last.
+        // signal the group without reaching one that reused the ID. close reaps it last. waitid fails, with ECHILD,
+        // when the kernel reaped the child itself.
         Self.thread { [self] in
-            var info = siginfo_t()
-            while waitid(P_PID, id_t(childPID), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
+            let held = Self.waitid(childPID, WEXITED | WNOWAIT)
+            lock.withLock { lost = !held }
             exited.signal()
         }
     }
@@ -637,9 +656,9 @@ final class AppServerCore: @unchecked Sendable {
         writeGate.signal()
         // Once the child has exited and its group is empty nothing is signalled. The child is not reaped until the end
         // of close, so its group ID cannot name another group meanwhile.
-        if !gone() { _ = kill(-pid, SIGTERM) }
+        if !gone() { signalGroup(SIGTERM) }
         if !waitGroup(until: .now() + AppServerClient.killGrace) {
-            _ = kill(-pid, SIGKILL)  // the group was alive a moment ago, so its ID is still ours
+            signalGroup(SIGKILL)  // the group was alive a moment ago, so its ID is still ours
             if !reaped(by: .now() + AppServerClient.reapGrace) {
                 log?("codex app-server was not reaped within the grace; abandoning it (pid \(pid))")
             }
@@ -698,8 +717,35 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
-    /// Whether the child has exited and no live member of its process group remains.
-    private func gone() -> Bool { reaped(by: .now()) && !groupAlive() }
+    /// Whether the child has exited and no live member of its process group remains. Once the kernel has reaped the
+    /// child, a group with its ID is not ours, so the answer is yes.
+    private func gone() -> Bool {
+        guard reaped(by: .now()) else { return false }
+        let (lost, liveGroup) = lock.withLock { (lost, testLiveGroup) }
+        return lost || !(liveGroup?() ?? groupAlive())
+    }
+
+    /// Sends `sig` to the child's process group while the child is our unreaped child, whose ID, and so the group ID,
+    /// cannot name another group. A child the kernel reaped itself is not signalled: its ID may already be another
+    /// process's.
+    private func signalGroup(_ sig: Int32) {
+        guard Self.waitid(pid, WEXITED | WNOWAIT | WNOHANG) else {
+            log?("codex app-server was reaped by the system; its group is not signalled (pid \(pid))")
+            return
+        }
+        if let testSignal = lock.withLock({ testSignal }) { return testSignal(sig) }
+        _ = kill(-pid, sig)
+    }
+
+    /// waitid(P_PID, pid) with `options`, retried on EINTR; false when it fails, as it does with ECHILD for a
+    /// process that is not our unreaped child.
+    private static func waitid(_ pid: pid_t, _ options: Int32) -> Bool {
+        var info = siginfo_t()
+        while true {
+            if Darwin.waitid(P_PID, id_t(pid), &info, options) == 0 { return true }
+            if errno != EINTR { return false }
+        }
+    }
 
     /// While the leader is an unreaped zombie, kill(-pgid, 0) fails with EPERM once no live member remains (measured
     /// on macOS), and succeeds while one does.

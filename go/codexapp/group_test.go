@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -108,5 +110,47 @@ func TestGroupAliveIgnoresTheZombieLeader(t *testing.T) {
 	}
 	if groupAlive(c.PID()) {
 		t.Error("a group holding only the zombie leader counts as alive")
+	}
+}
+
+// A host that ignores SIGCHLD has the kernel reap the child at exit, so by the time Close runs its ID, and its group
+// ID, may be another process's: Close then signals nothing, even when a group with that ID is alive.
+func TestCloseSignalsNothingOnceTheSystemReapedTheChild(t *testing.T) {
+	if os.Getenv("SAYSO_TEST_SIGCHLD_IGNORED") != "1" {
+		// Ignoring SIGCHLD is process-wide, and signal.Reset does not undo it (the runtime keeps its own handler for
+		// SIGCHLD), so the case runs in a test process of its own.
+		cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+		cmd.Env = append(os.Environ(), "SAYSO_TEST_SIGCHLD_IGNORED=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "--- PASS: "+t.Name()) {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		return
+	}
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	signal.Ignore(syscall.SIGCHLD)
+	c, err := Start(t.Context(), Config{Bin: fakeCodex(t, "os._exit(0)\n"), Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := c.PID()
+	select {
+	case <-c.k.exited:
+	case <-time.After(8 * time.Second):
+		t.Fatal("the child did not exit")
+	}
+	if held(pid) {
+		t.Fatal("the child is still held: SIGCHLD was not ignored")
+	}
+	var sent []syscall.Signal
+	c.k.testLiveGroup = func(int) bool { return true } // another process's group, under the reused ID
+	c.k.testSignal = func(_ int, sig syscall.Signal) { sent = append(sent, sig) }
+	start := time.Now()
+	_ = c.Close()
+	if len(sent) > 0 {
+		t.Errorf("Close signalled a group that is not ours: %v", sent)
+	}
+	if d := time.Since(start); d >= killGrace {
+		t.Errorf("Close waited %v on a group that is not ours", d)
 	}
 }

@@ -4,26 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"os/exec"
 	"strconv"
 	"syscall"
-	"unsafe"
 )
 
-// waitExit returns when the child has exited, leaving it a zombie: waitid(P_PID, pid, WEXITED|WNOWAIT).
-// A zombie keeps its process ID, and so its group ID, ours: Close can signal the group without reaching a group that
-// reused the ID, and reaps the child last.
-func waitExit(cmd *exec.Cmd) {
-	const pPID, wExited, wNoWait = 1, 0x4, 0x1000000
-	var info [128]byte // siginfo_t, 128 bytes on Linux; unread
-	for {
-		_, _, e := syscall.Syscall6(syscall.SYS_WAITID, pPID, uintptr(cmd.Process.Pid),
-			uintptr(unsafe.Pointer(&info[0])), wExited|wNoWait, 0, 0)
-		if e != syscall.EINTR {
-			return
-		}
-	}
-}
+// wNoWait is Linux's WNOWAIT.
+const wNoWait = 0x1000000
 
 // groupAlive reports a live member of the group. Linux counts a zombie leader as a member, so kill(-pgid, 0) cannot
 // tell a group holding only our unreaped child from one with a live member: /proc decides, a member being live

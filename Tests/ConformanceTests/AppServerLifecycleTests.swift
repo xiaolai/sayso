@@ -61,6 +61,29 @@ final class AppServerLifecycleTests: XCTestCase {
         }
     }
 
+    /// A host that ignores SIGCHLD has the kernel reap the child at exit, so by the time close runs its ID, and its
+    /// group ID, may be another process's: close then signals nothing, even when a group with that ID is alive.
+    func testCloseSignalsNothingOnceTheSystemReapedTheChild() throws {
+        let (script, cleanup) = try fakeCodex("import os\nos._exit(0)\n")
+        defer { cleanup() }
+        signal(SIGCHLD, SIG_IGN)
+        defer { signal(SIGCHLD, SIG_DFL) }
+        let c = try start(script, timeout: 5, nil)
+        waitFor("the child to exit") { c.hasExited }
+        var info = siginfo_t()
+        XCTAssertNotEqual(waitid(P_PID, id_t(c.pid), &info, WEXITED | WNOWAIT | WNOHANG), 0, "SIGCHLD was not ignored")
+        final class Sent: @unchecked Sendable {
+            let lock = NSLock()
+            var signals: [Int32] = []
+        }
+        let sent = Sent()
+        c.setProcessSeams(liveGroup: { true }, signal: { sig in sent.lock.withLock { sent.signals.append(sig) } })
+        let start = Date()
+        c.close()
+        XCTAssertEqual(sent.lock.withLock { sent.signals }, [], "close signalled a group that is not ours")
+        XCTAssertLessThan(Date().timeIntervalSince(start), AppServerClient.killGrace, "close waited on a group that is not ours")
+    }
+
     /// After an ordinary failure (here malformed output), the events queued before it are still delivered, in order;
     /// nothing read after it is.
     func testEventsQueuedBeforeAFailureAreDelivered() throws {

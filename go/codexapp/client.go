@@ -161,13 +161,19 @@ type core struct {
 	failure    error         // set once the child is unusable
 	dead       chan struct{} // closed when the reader stops
 	exited     chan struct{} // closed when the child has exited (on macOS and Linux it stays unreaped until Close)
-	closeMu    sync.Once
+	// lost is set before exited is closed, and read after: the kernel reaped the child itself (the host ignores
+	// SIGCHLD), so its ID, and its group ID, may name another process and nothing is signalled.
+	lost    bool
+	closeMu sync.Once
 
 	// Test seams, nil outside this package's tests: testRefusalAdmitted runs after an answer's slot is admitted and
 	// before its bytes are encoded, testEventAdmitted after an event is admitted and before the handler is called.
 	testRefusalAdmitted func()
 	testEventAdmitted   func()
 	testWriterWaiting   func() // runs when writeLoop stops at an answer still being encoded
+	// testLiveGroup stands in for the probe of the child's group, testSignal for the signals Close sends it.
+	testLiveGroup func(pgid int) bool
+	testSignal    func(pgid int, sig syscall.Signal)
 }
 
 type response struct {
@@ -259,7 +265,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		close(k.stderrDone)
 	}()
 	go func() {
-		waitExit(cmd)
+		k.lost = !waitExit(cmd)
 		close(k.exited)
 	}()
 	runtime.AddCleanup(c, func(k *core) { _ = k.close() }, k)
@@ -775,10 +781,10 @@ func (k *core) close() error {
 		// Once the child has exited and its group is empty nothing is signalled. The child is not reaped until the end
 		// of Close, so its group ID cannot name another group meanwhile.
 		if !k.gone(pid) {
-			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			k.signalGroup(pid, syscall.SIGTERM)
 		}
 		if !k.waitGroup(pid, time.Now().Add(killGrace)) {
-			_ = syscall.Kill(-pid, syscall.SIGKILL) // the group was alive a moment ago, so its ID is still ours
+			k.signalGroup(pid, syscall.SIGKILL) // the group was alive a moment ago, so its ID is still ours
 			select {
 			case <-k.exited:
 			case <-time.After(reapGrace):
@@ -808,10 +814,32 @@ func (k *core) close() error {
 	return nil
 }
 
-// gone reports whether the child has exited and no live member of its process group remains.
+// signalGroup sends sig to the child's process group while the child is our unreaped child, whose ID, and so the
+// group ID, cannot name another group. A child the kernel reaped itself is not signalled: its ID may already be
+// another process's.
+func (k *core) signalGroup(pid int, sig syscall.Signal) {
+	if !held(pid) {
+		k.logger.Debug("codex app-server was reaped by the system; its group is not signalled", "pid", pid)
+		return
+	}
+	if k.testSignal != nil {
+		k.testSignal(pid, sig)
+		return
+	}
+	_ = syscall.Kill(-pid, sig)
+}
+
+// gone reports whether the child has exited and no live member of its process group remains. Once the kernel has
+// reaped the child, a group with its ID is not ours, so the answer is yes.
 func (k *core) gone(pid int) bool {
 	select {
 	case <-k.exited:
+		if k.lost {
+			return true
+		}
+		if k.testLiveGroup != nil {
+			return !k.testLiveGroup(pid)
+		}
 		return !groupAlive(pid)
 	default:
 		return false

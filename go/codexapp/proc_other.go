@@ -8,5 +8,6 @@ package codexapp
 var _ = codexappBuildsOnMacOSAndLinuxOnly
 
 // Declared so the name above is the only error a build here reports.
-func waitExit(any)        {}
+func waitExit(any) bool   { return false }
+func held(int) bool       { return false }
 func groupAlive(int) bool { return true }
