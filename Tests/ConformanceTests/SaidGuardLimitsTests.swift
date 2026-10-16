@@ -35,6 +35,11 @@ final class SaidGuardLimitsTests: XCTestCase {
                 String(repeating: "email dot e mail dot ", count: 2000) + "x"
             ),
             ("quotation-marks", String(repeating: "‘a’ b ", count: 6000), String(repeating: "a’ b ", count: 5999) + "x"),
+            // A sentence's final punctuation looks past the run that follows it for a closing mark: once, not per mark.
+            ("sentence-punctuation", String(repeating: "!", count: 65535) + "a", "wrong"),
+            ("sentence-punctuation-mark", String(repeating: ".", count: 65533) + "’", "wrong"),
+            ("free-dashes", String(repeating: "a - ", count: 16384), String(repeating: "a ", count: 16383) + "x"),
+            ("number-word-codes", String(repeating: "TEN ", count: 16384), "wrong"),
             ("spellout-words", String(repeating: "vingt et un ", count: 5000), "wrong"),
             ("spellout-groups", String(repeating: "1 000 ", count: 10000), "wrong"),
             ("spellout-long-group", "1" + String(repeating: " 000", count: 16000), "wrong"),

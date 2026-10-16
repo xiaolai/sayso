@@ -4253,5 +4253,392 @@
   "language": "en",
   "expect": false,
   "note": "Control for the long case: the last word differs."
+ },
+ {
+  "id": "r9-dash-han-sign",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "5",
+  "language": "zh",
+  "expect": false,
+  "note": "A free '-' before a Han numeral is its sign: a transcript that drops it is refused."
+ },
+ {
+  "id": "r9-dash-han-sign-kept",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "-五",
+  "language": "zh",
+  "expect": true,
+  "note": "Identity: the sign before a Han numeral is a symbol on both sides."
+ },
+ {
+  "id": "r9-dash-expression",
+  "component": "said-guard",
+  "script": "x - y = z",
+  "transcript": "x y equals z",
+  "language": "en",
+  "expect": false,
+  "note": "A spaced dash in a run of words holding an arithmetic operator is a minus, never silent."
+ },
+ {
+  "id": "r9-dash-expression-minus",
+  "component": "said-guard",
+  "script": "x - y = z",
+  "transcript": "x minus y equals z",
+  "language": "en",
+  "expect": true,
+  "note": "The dash in an expression of words read as minus."
+ },
+ {
+  "id": "r9-dash-expression-identity",
+  "component": "said-guard",
+  "script": "x - y = z",
+  "transcript": "x - y = z",
+  "language": "en",
+  "expect": true,
+  "note": "Identity: the transcript keeps the free dash as a token."
+ },
+ {
+  "id": "r9-dash-words-silent",
+  "component": "said-guard",
+  "script": "Monday - Friday",
+  "transcript": "Monday Friday",
+  "language": "en",
+  "expect": true,
+  "note": "A dash between words outside an expression may be unspoken."
+ },
+ {
+  "id": "r9-dash-words-to",
+  "component": "said-guard",
+  "script": "Monday - Friday",
+  "transcript": "Monday to Friday",
+  "language": "en",
+  "expect": true,
+  "note": "A dash between words read as to."
+ },
+ {
+  "id": "r9-dash-suspended",
+  "component": "said-guard",
+  "script": "pre- and post-war",
+  "transcript": "pre and post war",
+  "language": "en",
+  "expect": true,
+  "note": "A suspended hyphen is a free dash that may be unspoken."
+ },
+ {
+  "id": "r9-dash-sign-word",
+  "component": "said-guard",
+  "script": "Set it to -x.",
+  "transcript": "Set it to x.",
+  "language": "en",
+  "expect": false,
+  "note": "A free dash against a word after a space is a sign: dropping it is refused."
+ },
+ {
+  "id": "r9-dash-sign-word-minus",
+  "component": "said-guard",
+  "script": "Set it to -x.",
+  "transcript": "Set it to minus x.",
+  "language": "en",
+  "expect": true,
+  "note": "A sign before a word read as minus."
+ },
+ {
+  "id": "r9-dash-transcript-gain",
+  "component": "said-guard",
+  "script": "Monday, Friday",
+  "transcript": "Monday - Friday",
+  "language": "en",
+  "expect": false,
+  "note": "Accepted false mismatch: a free dash the transcript adds is a token the script lacks."
+ },
+ {
+  "id": "r9-quote-sentence-close",
+  "component": "said-guard",
+  "script": "‘Wait!’ The students’ books.",
+  "transcript": "Wait! The students books.",
+  "language": "en",
+  "expect": false,
+  "note": "The sentence ends after the closer that follows its final punctuation, so the next sentence's possessive is an apostrophe."
+ },
+ {
+  "id": "r9-quote-sentence-close-kept",
+  "component": "said-guard",
+  "script": "‘Wait!’ The students’ books.",
+  "transcript": "Wait! The students’ books.",
+  "language": "en",
+  "expect": true,
+  "note": "The quoted sentence's marks are unspoken; the possessive is kept."
+ },
+ {
+  "id": "r9-quote-nested-close",
+  "component": "said-guard",
+  "script": "‘He said “wait!”’ The dogs’ bones.",
+  "transcript": "He said wait! The dogs bones.",
+  "language": "en",
+  "expect": false,
+  "note": "The closers after a sentence's final punctuation may follow other quotation marks."
+ },
+ {
+  "id": "r9-elision-prefix",
+  "component": "said-guard",
+  "script": "Say ‘n-gram’.",
+  "transcript": "Say n gram.",
+  "language": "en",
+  "expect": true,
+  "note": "A word starting like an elision ('n') is no elision before a joining hyphen, so its mark may be an opener."
+ },
+ {
+  "id": "r9-elision-prefix-joined",
+  "component": "said-guard",
+  "script": "Say ‘n-gram’.",
+  "transcript": "Say ngram.",
+  "language": "en",
+  "expect": true,
+  "note": "The hyphenated word in quotation marks read joined."
+ },
+ {
+  "id": "r9-elision-kept",
+  "component": "said-guard",
+  "script": "rock ’n’ roll",
+  "transcript": "rock n roll",
+  "language": "en",
+  "expect": false,
+  "note": "Control: 'n' alone is an elision, its marks are apostrophes."
+ },
+ {
+  "id": "r9-number-apostrophe",
+  "component": "said-guard",
+  "script": "Height 5'",
+  "transcript": "Height 5",
+  "language": "en",
+  "expect": false,
+  "note": "An apostrophe after a number that is no quotation mark (feet, minutes) is a spoken symbol."
+ },
+ {
+  "id": "r9-number-apostrophe-kept",
+  "component": "said-guard",
+  "script": "Height 5’",
+  "transcript": "Height 5'",
+  "language": "en",
+  "expect": true,
+  "note": "The mark after a number, however written, matches itself."
+ },
+ {
+  "id": "r9-number-apostrophe-inches",
+  "component": "said-guard",
+  "script": "He is 5'10.",
+  "transcript": "He is 5’10.",
+  "language": "en",
+  "expect": true,
+  "note": "Feet and inches: the mark between the numbers is a symbol on both sides."
+ },
+ {
+  "id": "r9-number-apostrophe-inches-dropped",
+  "component": "said-guard",
+  "script": "He is 5'10.",
+  "transcript": "He is 5 10.",
+  "language": "en",
+  "expect": false,
+  "note": "The mark between the numbers may not be dropped."
+ },
+ {
+  "id": "r9-number-apostrophe-words",
+  "component": "said-guard",
+  "script": "Height 5'",
+  "transcript": "Height 5 feet",
+  "language": "en",
+  "expect": false,
+  "note": "Accepted false mismatch: the mark is not read as feet."
+ },
+ {
+  "id": "r9-number-apostrophe-quoted",
+  "component": "said-guard",
+  "script": "Say ‘5’ now.",
+  "transcript": "Say 5 now.",
+  "language": "en",
+  "expect": true,
+  "note": "A mark after a number that closes a quotation is unspoken."
+ },
+ {
+  "id": "r9-number-apostrophe-possessive",
+  "component": "said-guard",
+  "script": "the 1990's",
+  "transcript": "the 1990's",
+  "language": "en",
+  "expect": true,
+  "note": "An apostrophe between a number and a letter stays a word's."
+ },
+ {
+  "id": "r9-quote-abbrev",
+  "component": "said-guard",
+  "script": "Say ‘Dr. Smith’.",
+  "transcript": "Say Dr. Smith.",
+  "language": "en",
+  "expect": true,
+  "note": "An abbreviation's dot does not end the sentence, so the quotation marks pair across it."
+ },
+ {
+  "id": "r9-quote-abbrev-expanded",
+  "component": "said-guard",
+  "script": "Say ‘Dr. Smith’.",
+  "transcript": "Say Doctor Smith.",
+  "language": "en",
+  "expect": true,
+  "note": "The title in quotation marks expanded."
+ },
+ {
+  "id": "r9-quote-eg",
+  "component": "said-guard",
+  "script": "Write ‘e.g.’ here.",
+  "transcript": "Write e.g. here.",
+  "language": "en",
+  "expect": true,
+  "note": "The dot after e.g does not end the sentence."
+ },
+ {
+  "id": "r9-quote-eg-expanded",
+  "component": "said-guard",
+  "script": "Write ‘e.g.’ here.",
+  "transcript": "Write for example here.",
+  "language": "en",
+  "expect": true,
+  "note": "The abbreviation in quotation marks expanded."
+ },
+ {
+  "id": "r9-quote-etc-ends",
+  "component": "said-guard",
+  "script": "‘Done etc.’ The dogs’ bones.",
+  "transcript": "Done etc. The dogs bones.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: etc. ends a sentence, so the next sentence's possessive is an apostrophe."
+ },
+ {
+  "id": "r9-number-caps-code",
+  "component": "said-guard",
+  "script": "Press TEN now.",
+  "transcript": "Press T E N now.",
+  "language": "en",
+  "expect": true,
+  "note": "A number word keeps its ordinary readings: a capital code letter by letter."
+ },
+ {
+  "id": "r9-number-hyphen-joined",
+  "component": "said-guard",
+  "script": "forty-two",
+  "transcript": "fortytwo",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated number word keeps its joined reading."
+ },
+ {
+  "id": "r9-number-hyphen-joined-digits",
+  "component": "said-guard",
+  "script": "forty-two",
+  "transcript": "42",
+  "language": "en",
+  "expect": true,
+  "note": "And still reads as the number."
+ },
+ {
+  "id": "r9-number-hyphen-wrong",
+  "component": "said-guard",
+  "script": "forty-two",
+  "transcript": "forty three",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different number word."
+ },
+ {
+  "id": "r9-marks-joined",
+  "component": "said-guard",
+  "script": "Say ‘e-mail’ now.",
+  "transcript": "Say email’ now.",
+  "language": "en",
+  "expect": true,
+  "note": "A joined reading takes the trailing mark as an apostrophe."
+ },
+ {
+  "id": "r9-marks-joined-misplaced",
+  "component": "said-guard",
+  "script": "Say ‘e-mail’ now.",
+  "transcript": "Say ema’il now.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a mark inside the word."
+ },
+ {
+  "id": "r9-marks-code",
+  "component": "said-guard",
+  "script": "Use the ‘API’ now.",
+  "transcript": "Use the A P I’ now.",
+  "language": "en",
+  "expect": true,
+  "note": "A spelled code takes the trailing mark on its last letter."
+ },
+ {
+  "id": "r9-marks-code-misplaced",
+  "component": "said-guard",
+  "script": "Use the ‘API’ now.",
+  "transcript": "Use the A’ P I now.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the mark on another letter."
+ },
+ {
+  "id": "r9-marks-abbrev-multi",
+  "component": "said-guard",
+  "script": "Use ‘e.g.’ here.",
+  "transcript": "Use for example’ here.",
+  "language": "en",
+  "expect": true,
+  "note": "A multi-word expansion takes the trailing mark on its last word."
+ },
+ {
+  "id": "r9-marks-abbrev-multi-misplaced",
+  "component": "said-guard",
+  "script": "Use ‘e.g.’ here.",
+  "transcript": "Use for’ example here.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the mark on the first word."
+ },
+ {
+  "id": "r9-marks-number-words",
+  "component": "said-guard",
+  "script": "Say ‘forty-two’ now.",
+  "transcript": "Say 42 now.",
+  "language": "en",
+  "expect": true,
+  "note": "A number word in quotation marks read as digits."
+ },
+ {
+  "id": "r9-marks-number-wrong",
+  "component": "said-guard",
+  "script": "Say ‘forty-two’ now.",
+  "transcript": "Say 43 now.",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different number."
+ },
+ {
+  "id": "r9-dash-han-sign-digits",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "-5",
+  "language": "zh",
+  "expect": false,
+  "note": "Accepted false mismatch: the sign before a Han numeral is its own token, so a signed number in digits does not match."
+ },
+ {
+  "id": "r9-number-apostrophe-transcript-mark",
+  "component": "said-guard",
+  "script": "Say ‘42’ now.",
+  "transcript": "Say 42’ now.",
+  "language": "en",
+  "expect": false,
+  "note": "Accepted false mismatch: a number's mark the transcript keeps without its opener is a symbol the script's quotation marks lack."
  }
 ]

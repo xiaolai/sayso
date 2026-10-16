@@ -3,7 +3,7 @@
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
 tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
-revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 7), raised whenever a change makes the guard refuse a
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 9), raised whenever a change makes the guard refuse a
 reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
@@ -32,13 +32,17 @@ the results was tried and abandoned: every rewrite rule could map two different 
    language's rules (`tr`, `az`); apostrophes unified and **kept**, except single quotation marks around words
    (`Say ‘hello’.`, `'yes'`), which are unspoken. Which mark closes which is not decided: in `‘the students’ books’`
    the middle mark may be a possessive. An opener stands at a word start; a closer at a word end, possibly after the
-   punctuation that ends the quoted words (`‘hello!’`, `‘yes,’`, `‘done.’`). Within one sentence, which ends at its
-   final punctuation only where no closer follows it, every opener with a closer after it and every closer with an
+   punctuation that ends the quoted words (`‘hello!’`, `‘yes,’`, `‘done.’`); an opener may also stand before a digit
+   (`‘5’`). Within one sentence, which ends at its final punctuation or, where closers follow that, right after them
+   (`‘Wait!’ The students’ books.` is two sentences), every opener with a closer after it and every closer with an
    opener before it may be a quotation mark, and each side reads the word beside such a mark both without it and with
    it as an apostrophe; the transcript selects. Each mark is a local choice of its word, so the readings stay linear in
    the marks. Any other mark is an apostrophe (`’tis`, `students’` with no opener before it), and so is a mark before
    a leading elision, which is never an opener (`svElisions`, a closed list: `’tis`, `’twas`, `’em`, `’n’`, `’cause`,
-   …), so `’Tis the students’ books` keeps both. **Only unspoken punctuation is deleted**, and that
+   …), so `’Tis the students’ books` keeps both. An elision is a whole word: `n` in `‘n-gram’` is none. A `.` ends no
+   sentence when a letter or digit follows it (`e.g`, `3.5`, `x.com`) or when it closes `Mr Mrs Ms Dr St Jr Sr vs e.g.
+   i.e.` (`Say ‘Dr. Smith’.` is one quotation); `etc.` ends one. An apostrophe after a number that is no quotation mark
+   (`5'`, `5’10`) is a spoken symbol `'` on both sides. **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`
@@ -47,7 +51,11 @@ the results was tried and abandoned: every rewrite rule could map two different 
    touching the right one (`5 -2`), between Han numerals (`五 - 二`), or before a signed or decimal operand (`5 - +2`,
    `5 - ,2`), is a symbol, silent-able only when tight and outside an expression (`3-4`, `1-0` may be read with no word; `5-2=3`
    and `3 - 4` may not). An expression is a run of numbers and symbols joined only by spaces that holds another
-   operator; punctuation ends it (`1-0. #1` holds none). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
+   operator; punctuation ends it (`1-0. #1` holds none). Any other `-` that is not glued between letters or digits
+   (`JIRA-10442` stays silent) is a free dash and a symbol on both sides: a sign before a word, number or Han numeral
+   after a space, punctuation or the start (`-x`, `-五`) is never silent, and any other free dash (`Monday - Friday`,
+   `pre- and post-war`) may be read with no word, except in a run of words, numbers and symbols joined only by spaces
+   that holds an arithmetic operator `= + − × ÷ < > ≠ * ^` (`x - y = z`). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
    both sides. A number keeps its
    sign (start, after space or punctuation, before `.5` or `,5`, or an exponent `1e-3`), its `. , / :` between digits and an
    ordinal suffix; a leading `,` starts a number only after a space (`,5` is a French decimal, `Yes,3` is a word and a
@@ -78,7 +86,7 @@ the results was tried and abandoned: every rewrite rule could map two different 
    | number, another language | as written; the locale's spell-out where the implementation has one (Swift: ICU), else none (`requires: spellout:<lang>`); `,` and `.` are not interpreted (they are locale-specific) |
    | number with `/` or `:` | as written only |
    | Han numeral run, `zh` | as written; if it round-trips (above), its value in digits, with commas, and its other spellings. A run of digits only is a digit string (`二〇二四` = `2024`) when it has one digit or three or more without 两; two digits are an approximation (`两三天`, `三五天`) and have no digit reading |
-   | English number in words | `[minus] cardinal [point digits] [percent]`, or a cardinal ending in an ordinal word (`twenty-first`, also `zeroth`), parsed strictly as the longest prefix of at most 48 words with no punctuation inside: as written, plus every reading of the number it names (`forty-two` = `42`, `minus seven` = `-7`, `three point five percent` = `3.5%`). "zero" is a cardinal only alone (`one thousand zero` is two numbers), and "and" only before a number under the scale word before it (`one hundred and thousand` is not a number) |
+   | English number in words | `[minus] cardinal [point digits] [percent]`, or a cardinal ending in an ordinal word (`twenty-first`, also `zeroth`), parsed strictly as the longest prefix of at most 48 words with no punctuation inside: as written and in every ordinary reading of its words (`TEN` = `T E N`, `forty-two` = `fortytwo`; as written only beyond 64 combined readings), plus every reading of the number it names (`forty-two` = `42`, `minus seven` = `-7`, `three point five percent` = `3.5%`). "zero" is a cardinal only alone (`one thousand zero` is two numbers), and "and" only before a number under the scale word before it (`one hundred and thousand` is not a number) |
    | `oh` / `O`, `en` | `oh`, `o`, `zero`, `0`, only in a run of digits and number words with no punctuation inside (`oh oh seven`, `X O 4`; not `Oh, one more`) |
    | run of single letters | spaced; joined (`I B M` = `IBM`) when it has three letters or more, or none of `a`, `I` (`a T` ≠ `at`) |
    | all-capital code | letter by letter if 2–3 letters, or up to 6 with no vowel (`HTML`), or up to 6 against a number (`JIRA-10442`); never a common short word in capitals (`ON`, `NO`, `GO`: a closed list, `svCapsWords`), and never beside a capital word (`STOP NOW` is shouting; `API URL` are two codes) |
@@ -110,8 +118,10 @@ spell-out, a reverse year (`nineteen ninety-nine` ≠ `1999`), `Lakers VS Celtic
 seventh`, currency in words (`$5` ≠ `five dollars`: the reading reorders, deferred until a script needs it; `$` is a
 token, so an omitted currency is detected), `pages 3 - 4` ≠ `pages 3 4` (a spaced dash is spoken), a two-digit Han
 string (`一二` ≠ `12`), a Japanese numeral in kanji read back as digits (`四十二` ≠ `42`: Japanese numerals also
-spell words, `一緒`, `七夕`, so a run is not read as a value), and a character newer than the platform's Unicode
-tables (a Unicode 16 digit on macOS 14 reads as a symbol in Swift; the same table difference can only refuse, since
+spell words, `一緒`, `七夕`, so a run is not read as a value), a free dash the transcript adds (`Monday, Friday` ≠
+`Monday - Friday`), a number's apostrophe in words (`5'` ≠ `5 feet`), a sign before a Han numeral read back as a
+signed number (`-五` ≠ `-5`: the sign is its own token), a number's mark kept by the transcript where the script's
+was a quotation mark (`‘42’` ≠ `42’`), and a character newer than the platform's Unicode tables (a Unicode 16 digit on macOS 14 reads as a symbol in Swift; the same table difference can only refuse, since
 an unknown character is a token that matches only itself). An emphasised short word missing from `svCapsWords` is the opposite case: it is accepted letter
 by letter, a residual false acceptance (see the threat model).
 

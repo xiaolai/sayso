@@ -24,6 +24,11 @@ func TestBounds(t *testing.T) {
 		{"dash-chain", strings.Repeat("1-", 32767) + "1", "wrong"},
 		{"domain-hyphen-labels", strings.Repeat("e-mail.", 4000) + "com", strings.Repeat("email dot e mail dot ", 2000) + "x"},
 		{"quotation-marks", strings.Repeat("‘a’ b ", 6000), strings.Repeat("a’ b ", 5999) + "x"},
+		// A sentence's final punctuation looks past the run that follows it for a closing mark: once, not per mark.
+		{"sentence-punctuation", strings.Repeat("!", 65535) + "a", "wrong"},
+		{"sentence-punctuation-mark", strings.Repeat(".", 65533) + "’", "wrong"},
+		{"free-dashes", strings.Repeat("a - ", 16384), strings.Repeat("a ", 16383) + "x"},
+		{"number-word-codes", strings.Repeat("TEN ", 16384), "wrong"},
 	}
 	for _, c := range cases {
 		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {

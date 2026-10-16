@@ -4,6 +4,10 @@ import Foundation
 
 enum SvKind { case word, number, unspacedChar, hanRun, symbol }
 
+/// A free dash (``svFreeDash(_:_:)``): a sign ("-x", "-五"), or a dash the script side may read with no word outside an
+/// expression ("Monday - Friday").
+enum SvFreeDash { case sign, silentable }
+
 struct SvRaw {
     let text: String
     let kind: SvKind
@@ -13,6 +17,8 @@ struct SvRaw {
     /// mark may as well be an apostrophe, so the word may also be read with it ("‘the students’ books’").
     var optLead = false
     var optTrail = false
+    /// Set on a symbol that is a free dash, nil on any other raw.
+    var freeDash: SvFreeDash?
 
     /// Something other than space separates this raw from the one before ("Oh, one").
     var punctBefore: Bool { !trimSpace(gap).isEmpty }
@@ -95,10 +101,11 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     let (rs, dropped) = svUnquote(Array(s.unicodeScalars))
     var out: [SvRaw] = []
     var prevEnd = 0
-    func emit(_ kind: SvKind, _ i: Int, _ j: Int) {
-        // One sign, however written: "−5" reads as "-5".
-        let text = kind == .number && rs[i] == "−" ? "-" + svString(rs[i + 1..<j]) : svString(rs[i..<j])
-        var raw = SvRaw(text: text, kind: kind, gap: svString(rs[prevEnd..<i]))
+    func emit(_ kind: SvKind, _ i: Int, _ j: Int, freeDash: SvFreeDash? = nil) {
+        // One sign, however written: "−5" reads as "-5"; one apostrophe, however written, as a symbol.
+        var text = kind == .number && rs[i] == "−" ? "-" + svString(rs[i + 1..<j]) : svString(rs[i..<j])
+        if kind == .symbol && isApostrophe(rs[i]) { text = "'" }
+        var raw = SvRaw(text: text, kind: kind, gap: svString(rs[prevEnd..<i]), freeDash: freeDash)
         if kind == .word {
             raw.optLead = i > 0 && dropped[i - 1]
             raw.optTrail = j < rs.count && dropped[j]
@@ -132,6 +139,14 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
         } else if svSpokenSymbol(r) || (svMinus(r) && svBetweenNumbers(rs, i)) {
             emit(.symbol, i, i + 1)
             i += 1
+        } else if svFreeDash(rs, i) {
+            emit(.symbol, i, i + 1, freeDash: svFreeSign(rs, i) ? .sign : .silentable)
+            i += 1
+        } else if isApostrophe(r) && i > 0 && svDigit(rs[i - 1]) && !(i + 1 < rs.count && svLetter(rs[i + 1])) {
+            // A mark after a number that svUnquote(_:) kept is no quotation mark but feet or minutes ("5'", "5’10"):
+            // a spoken symbol on both sides, so a transcript cannot drop it.
+            emit(.symbol, i, i + 1)
+            i += 1
         } else if hanNumbers && isHanNumeral(r) && !(i + 1 < rs.count && isMark(rs[i + 1])) {
             // A numeral carrying a mark is a character like any other ("一́"), as the transcript side reads it.
             var j = i
@@ -155,7 +170,10 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
             {
                 emit(.word, i, i + 3)
                 i += 3
-                if i < rs.count && rs[i] == "." { i += 1 }
+                if i < rs.count && rs[i] == "." {
+                    i += 1
+                    out[out.count - 1].optTrail = i < rs.count && dropped[i]  // the dot is the abbreviation's: "‘e.g.’"
+                }
                 continue
             }
             var j = i
@@ -182,8 +200,55 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     return out
 }
 
+/// A '-' the lexer read as no sign, no minus between numbers and no joiner inside a word, unless it is glued between
+/// a letter or digit and a letter or digit ("JIRA-10442"), which stays silent: a dash between words ("Monday -
+/// Friday", "x - y = z"), a suspended hyphen ("pre- and post-war") or a sign before a word or Han numeral ("-x",
+/// "-五"). It is a spoken symbol on both sides, so a transcript cannot drop the one an expression or a sign needs.
+func svFreeDash(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
+    guard rs[i] == "-" else { return false }
+    let glued = i > 0 && i + 1 < rs.count && (svLetter(rs[i - 1]) || svDigit(rs[i - 1]) || isMark(rs[i - 1]))
+        && (svLetter(rs[i + 1]) || svDigit(rs[i + 1]))
+    return !glued
+}
+
+/// A free dash that is a sign: after a space, punctuation or the start, and against a word, a number or an unspaced
+/// character ("-x", "-五"). Read only as written or "minus", never silent.
+func svFreeSign(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
+    let after = i > 0 && (svLetter(rs[i - 1]) || svDigit(rs[i - 1]) || isMark(rs[i - 1]))
+    return !after && i + 1 < rs.count && (svLetter(rs[i + 1]) || svDigit(rs[i + 1]) || isUnspaced(rs[i + 1]))
+}
+
 private let svQuoteOpeners = Set("([{\"“«".unicodeScalars)
 private let svSentenceEndScalars = Set(".!?。".unicodeScalars)
+private let svDotAbbreviations: Set<String> = ["mr", "mrs", "ms", "dr", "st", "jr", "sr", "vs"]
+
+/// Whether rs[i] ends a sentence: "!", "?" and "。" always, and "." unless a letter or digit follows it ("e.g",
+/// "3.5", "x.com") or it closes an abbreviation that is mostly followed by more of the sentence (Mr, Mrs, Ms, Dr, St,
+/// Jr, Sr, vs, e.g., i.e.; "etc." mostly ends one). It looks at most four letters back, so the work is linear.
+func svSentenceEndAt(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
+    let r = rs[i]
+    guard svSentenceEndScalars.contains(r) else { return false }
+    if r != "." { return true }
+    if i + 1 < rs.count && (svLetter(rs[i + 1]) || svDigit(rs[i + 1])) { return false }
+    var b = i
+    while b > 0 && i - b < 4 && svLetter(rs[b - 1]) { b -= 1 }
+    if b == i || (b > 0 && (svLetter(rs[b - 1]) || svDigit(rs[b - 1]))) { return true }  // "1st.", a longer word
+    let w = svASCIILower(rs[b..<i])
+    if svDotAbbreviations.contains(w) && (b == 0 || rs[b - 1] != ".") { return false }
+    // The dot after "e.g" and "i.e", not inside a domain ("x.e.g.").
+    if w.count == 1 && b >= 2 && rs[b - 1] == "." && svLetter(rs[b - 2]) {
+        let pair = svASCIILower(rs[b - 2..<b - 1]) + "." + w
+        return !((pair == "e.g" || pair == "i.e") && (b == 2 || (!svLetter(rs[b - 3]) && rs[b - 3] != ".")))
+    }
+    return true
+}
+
+/// The ASCII letters of `rs` in lower case; any other scalar is kept as it is.
+private func svASCIILower(_ rs: ArraySlice<Unicode.Scalar>) -> String {
+    var out = ""
+    for r in rs { out.unicodeScalars.append(r.value >= 0x41 && r.value <= 0x5A ? Unicode.Scalar(r.value + 0x20)! : r) }
+    return out
+}
 
 /// The English words written with a leading apostrophe for dropped letters ("’tis", "’em", "’n’"). A mark before one
 /// is an apostrophe, never an opening quotation mark: a closed list, as the guard's other word lists.
@@ -192,7 +257,8 @@ let svElisions: Set<String> = [
     "tween", "twixt", "scuse", "nuff",
 ]
 
-/// Whether the letters starting at rs[i], in any case, are a whole word of ``svElisions``.
+/// Whether the letters starting at rs[i], in any case, are a whole word of ``svElisions``: not a word's prefix
+/// before a mark, or before a joiner or an apostrophe and a letter ("n-gram", "n'est").
 func svElisionAt(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
     var b = ""
     var i = start
@@ -203,7 +269,12 @@ func svElisionAt(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
         b.unicodeScalars.append(Unicode.Scalar(v)!)
         i += 1
     }
-    return (i == rs.count || !isMark(rs[i])) && svElisions.contains(b)
+    if i < rs.count
+        && (isMark(rs[i]) || ((svJoiner(rs[i]) || isApostrophe(rs[i])) && i + 1 < rs.count && svLetter(rs[i + 1])))
+    {
+        return false
+    }
+    return svElisions.contains(b)
 }
 
 /// Finds the single marks that may be quotation marks around words ("Say ‘hello’.", "'yes'") and replaces each with an
@@ -213,10 +284,11 @@ func svElisionAt(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
 /// opener stands at a word start after a space, an opening bracket or the start, and never before a leading elision
 /// (``svElisions``: "’Tis the students’ books" holds two apostrophes); a closer at a word end, after any punctuation
 /// that ends the quoted words ("‘hello!’", "‘yes,’"), before a space, punctuation or the end. Within one sentence,
-/// which ends at its final punctuation only where no closer follows it ("‘Wait.’" is one quotation), an opener with a
-/// closer after it, and a closer with an opener before it, may be quotation marks; every other mark is an apostrophe
-/// ("’tis", "the students’ books", "rock ’n’ roll"). The candidates of a sentence are kept in a list, so the work is
-/// linear.
+/// which ends at its final punctuation (``svSentenceEndAt(_:_:)``) or, where closers follow that, right after them
+/// ("‘Wait.’" is one quotation, and "‘Wait!’ The students’ books." two sentences), an opener with a closer after
+/// it, and a closer with an opener before it, may be quotation marks; every other mark is an apostrophe ("’tis", "the
+/// students’ books", "rock ’n’ roll"). The candidates of a sentence are kept in a list, and the next scalar that is
+/// no inner punctuation is found in one reverse pass, so the work is linear.
 func svUnquote(_ input: [Unicode.Scalar]) -> ([Unicode.Scalar], [Bool]) {
     var rs = input
     var dropped = [Bool](repeating: false, count: rs.count)
@@ -230,10 +302,18 @@ func svUnquote(_ input: [Unicode.Scalar]) -> ([Unicode.Scalar], [Bool]) {
         openers.removeAll(keepingCapacity: true)
         closers.removeAll(keepingCapacity: true)
     }
+    // next[i]: the first index from i on that holds no ``svInnerPunct(_:)``, rs.count at the end.
+    var next = [Int](repeating: rs.count, count: rs.count + 1)
+    for i in rs.indices.reversed() { next[i] = svInnerPunct(rs[i]) ? next[i + 1] : i }
+    func markFrom(_ i: Int) -> Int? { next[i] < rs.count && isApostrophe(rs[next[i]]) ? next[i] : nil }
+    // The mark after a sentence's final punctuation: the sentence ends after it, or before it when it closes nothing.
+    var pending: Int?
     for i in rs.indices {
         let r = rs[i]
         if !isApostrophe(r) {
-            if svSentenceEndScalars.contains(r), !svApostropheAfterPunct(rs, i + 1) { flush() }
+            if svSentenceEndAt(rs, i) {
+                if let m = markFrom(i + 1) { pending = m } else { flush() }
+            }
             continue
         }
         var k = i - 1
@@ -242,7 +322,16 @@ func svUnquote(_ input: [Unicode.Scalar]) -> ([Unicode.Scalar], [Bool]) {
             && (i + 1 == rs.count || isSpace(rs[i + 1])
                 || (svUnspokenPunct.contains(rs[i + 1]) && !isApostrophe(rs[i + 1])))
         let opener = (i == 0 || isSpace(rs[i - 1]) || svQuoteOpeners.contains(rs[i - 1])) && i + 1 < rs.count
-            && svLetter(rs[i + 1]) && !svElisionAt(rs, i + 1)
+            && (svLetter(rs[i + 1]) || svDigit(rs[i + 1])) && !svElisionAt(rs, i + 1)
+        if pending == i {
+            pending = nil
+            if closer {
+                closers.append(i)
+                if let m = markFrom(i + 1) { pending = m } else { flush() }
+                continue
+            }
+            flush()
+        }
         if closer {
             closers.append(i)
         } else if opener {
@@ -257,13 +346,6 @@ func svUnquote(_ input: [Unicode.Scalar]) -> ([Unicode.Scalar], [Bool]) {
 /// Unspoken punctuation that may stand between quoted words and their closing mark ("hello!’"): anything unspoken but
 /// a space or another apostrophe.
 func svInnerPunct(_ r: Unicode.Scalar) -> Bool { svUnspokenPunct.contains(r) && !isApostrophe(r) }
-
-/// Whether the first scalar from rs[i] on that is not ``svInnerPunct`` is an apostrophe.
-func svApostropheAfterPunct(_ rs: [Unicode.Scalar], _ start: Int) -> Bool {
-    var i = start
-    while i < rs.count && svInnerPunct(rs[i]) { i += 1 }
-    return i < rs.count && isApostrophe(rs[i])
-}
 
 // --- transcript side: normalisation only ---
 

@@ -30,7 +30,7 @@ type svUnit []svSeq // the alternative readings of one script unit
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
 // reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
-const Version = 8
+const Version = 9
 
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
@@ -146,7 +146,18 @@ type svRaw struct {
 	// A word whose first or last letter touches a mark svUnquote dropped as a possible quotation mark: the mark may
 	// as well be an apostrophe, so the word may also be read with it ("‘the students’ books’").
 	optLead, optTrail bool
+	dash              svDash // set on a symbol that is a free dash (svFreeDash)
 }
+
+// svDash tells a free dash (svFreeDash) from any other raw: a sign ("-x", "-五"), or a dash the script side may read
+// with no word outside an expression ("Monday - Friday").
+type svDash int
+
+const (
+	svDashNone svDash = iota
+	svDashSign
+	svDashSilentable
+)
 
 // punctBefore: something other than space separates this raw from the one before ("Oh, one").
 func (r svRaw) punctBefore() bool { return strings.TrimSpace(r.gap) != "" }
@@ -248,12 +259,15 @@ func svLex(s string, hanNumbers bool) []svRaw {
 	rs, dropped := svUnquote([]rune(s))
 	var out []svRaw
 	prevEnd := 0
-	emit := func(kind svKind, i, j int) {
+	emit := func(kind svKind, i, j int, dash svDash) {
 		text := string(rs[i:j])
-		if kind == svNumber && rs[i] == '−' {
+		switch {
+		case kind == svNumber && rs[i] == '−':
 			text = "-" + string(rs[i+1:j]) // one sign, however written: "−5" reads as "-5"
+		case kind == svSymbol && isApostrophe(rs[i]):
+			text = "'" // one apostrophe, however written
 		}
-		raw := svRaw{text: text, kind: kind, start: i, end: j, gap: string(rs[prevEnd:i])}
+		raw := svRaw{text: text, kind: kind, start: i, end: j, gap: string(rs[prevEnd:i]), dash: dash}
 		if kind == svWord {
 			raw.optLead = i > 0 && dropped[i-1]
 			raw.optTrail = j < len(rs) && dropped[j]
@@ -286,10 +300,22 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			if j < len(rs) && rs[j] == '%' {
 				j++
 			}
-			emit(svNumber, i, j)
+			emit(svNumber, i, j, svDashNone)
 			i = j
 		case svSpokenSymbol(r) || svMinus(r) && svBetweenNumbers(rs, i):
-			emit(svSymbol, i, i+1)
+			emit(svSymbol, i, i+1, svDashNone)
+			i++
+		case svFreeDash(rs, i):
+			dash := svDashSilentable
+			if svFreeSign(rs, i) {
+				dash = svDashSign
+			}
+			emit(svSymbol, i, i+1, dash)
+			i++
+		case isApostrophe(r) && i > 0 && svDigit(rs[i-1]) && !(i+1 < len(rs) && svLetter(rs[i+1])):
+			// A mark after a number that svUnquote kept is no quotation mark but feet or minutes ("5'", "5’10"): a
+			// spoken symbol on both sides, so a transcript cannot drop it.
+			emit(svSymbol, i, i+1, svDashNone)
 			i++
 		case hanNumbers && isHanNumeral(r) && !(i+1 < len(rs) && unicode.IsMark(rs[i+1])):
 			// A numeral carrying a mark is a character like any other ("一́"), as the transcript side reads it.
@@ -297,24 +323,25 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			for j < len(rs) && isHanNumeral(rs[j]) && !(j+1 < len(rs) && unicode.IsMark(rs[j+1])) {
 				j++
 			}
-			emit(svHanRun, i, j)
+			emit(svHanRun, i, j, svDashNone)
 			i = j
 		case isUnspaced(r):
 			j := i + 1
 			for j < len(rs) && unicode.IsMark(rs[j]) {
 				j++
 			}
-			emit(svUnspacedChar, i, j)
+			emit(svUnspacedChar, i, j, svDashNone)
 			i = j
 		case svLetter(r) || isApostrophe(r) && i+1 < len(rs) && svLetter(rs[i+1]):
 			// "e.g." and "i.e." are one word, also at a sentence start ("E.g."). With a capital second letter they are
 			// initials ("E.G. White"), lexed letter by letter like any other.
 			if m := strings.ToLower(string(rs[i:min(i+4, len(rs))])); (strings.HasPrefix(m, "e.g") || strings.HasPrefix(m, "i.e")) && !unicode.IsUpper(rs[i+2]) && (i == 0 || !svLetter(rs[i-1]) && rs[i-1] != '.') && (i+3 >= len(rs) || !svLetter(rs[i+3])) && !(i+4 < len(rs) && rs[i+3] == '.' && svLetter(rs[i+4])) {
 				// Not inside a domain ("www.e.g.com"), where its letters are labels.
-				emit(svWord, i, i+3)
+				emit(svWord, i, i+3, svDashNone)
 				i += 3
 				if i < len(rs) && rs[i] == '.' {
 					i++
+					out[len(out)-1].optTrail = i < len(rs) && dropped[i] // the dot is the abbreviation's: "‘e.g.’"
 				}
 				continue
 			}
@@ -334,7 +361,7 @@ func svLex(s string, hanNumbers bool) []svRaw {
 				}
 				break
 			}
-			emit(svWord, i, j)
+			emit(svWord, i, j, svDashNone)
 			i = j
 		default:
 			i++
@@ -350,9 +377,11 @@ func svLex(s string, hanNumbers bool) []svRaw {
 // opener stands at a word start after a space, an opening bracket or the start, and never before a leading elision
 // (svElisions: "’Tis the students’ books" holds two apostrophes); a closer at a word end, after any punctuation that
 // ends the quoted words ("‘hello!’", "‘yes,’"), before a space, punctuation or the end. Within one sentence, which ends
-// at its final punctuation only where no closer follows it ("‘Wait.’" is one quotation), an opener with a closer after
-// it, and a closer with an opener before it, may be quotation marks; every other mark is an apostrophe ("’tis", "the
-// students’ books", "rock ’n’ roll"). The candidates of a sentence are kept in a list, so the work is linear.
+// at its final punctuation (svSentenceEndAt) or, where closers follow that, right after them ("‘Wait.’" is one
+// quotation, and "‘Wait!’ The students’ books." two sentences), an opener with a closer after it, and a closer with an
+// opener before it, may be quotation marks; every other mark is an apostrophe ("’tis", "the students’ books", "rock
+// ’n’ roll"). The candidates of a sentence are kept in a list, and the next scalar that is no inner punctuation is
+// found in one reverse pass, so the work is linear.
 func svUnquote(rs []rune) ([]rune, []bool) {
 	dropped := make([]bool, len(rs))
 	var openers, closers []int
@@ -368,10 +397,31 @@ func svUnquote(rs []rune) ([]rune, []bool) {
 		}
 		openers, closers = openers[:0], closers[:0]
 	}
+	// next[i]: the first index from i on that holds no svInnerPunct, len(rs) at the end.
+	next := make([]int, len(rs)+1)
+	next[len(rs)] = len(rs)
+	for i := len(rs) - 1; i >= 0; i-- {
+		next[i] = i
+		if svInnerPunct(rs[i]) {
+			next[i] = next[i+1]
+		}
+	}
+	// markFrom is the index of the first scalar from i on that is no inner punctuation, if it is an apostrophe.
+	markFrom := func(i int) int {
+		if next[i] < len(rs) && isApostrophe(rs[next[i]]) {
+			return next[i]
+		}
+		return -1
+	}
+	// pending: the mark after a sentence's final punctuation. The sentence ends after it, or before it when it closes
+	// nothing.
+	pending := -1
 	for i, r := range rs {
 		if !isApostrophe(r) {
-			if strings.ContainsRune(svSentenceEnds, r) && !isApostrophe(svAfterPunct(rs, i+1)) {
-				flush()
+			if svSentenceEndAt(rs, i) {
+				if pending = markFrom(i + 1); pending < 0 {
+					flush()
+				}
 			}
 			continue
 		}
@@ -381,8 +431,19 @@ func svUnquote(rs []rune) ([]rune, []bool) {
 		}
 		closer := k >= 0 && (svLetter(rs[k]) || unicode.IsMark(rs[k]) || svDigit(rs[k])) &&
 			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
-		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1]) &&
+		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && (svLetter(rs[i+1]) || svDigit(rs[i+1])) &&
 			!svElisionAt(rs, i+1)
+		if pending == i {
+			pending = -1
+			if closer {
+				closers = append(closers, i)
+				if pending = markFrom(i + 1); pending < 0 {
+					flush()
+				}
+				continue
+			}
+			flush()
+		}
 		switch {
 		case closer:
 			closers = append(closers, i)
@@ -405,15 +466,73 @@ func svInnerPunct(r rune) bool {
 	return strings.ContainsRune(svUnspokenPunct, r) && !isApostrophe(r)
 }
 
-// svAfterPunct is the first scalar from rs[i] on that is not svInnerPunct, or 0 at the end.
-func svAfterPunct(rs []rune, i int) rune {
-	for i < len(rs) && svInnerPunct(rs[i]) {
-		i++
+// svFreeDash: a '-' the lexer read as no sign, no minus between numbers and no joiner inside a word, unless it is
+// glued between a letter or digit and a letter or digit ("JIRA-10442"), which stays silent: a dash between words
+// ("Monday - Friday", "x - y = z"), a suspended hyphen ("pre- and post-war") or a sign before a word or Han numeral
+// ("-x", "-五"). It is a spoken symbol on both sides, so a transcript cannot drop the one an expression or a sign
+// needs.
+func svFreeDash(rs []rune, i int) bool {
+	if rs[i] != '-' {
+		return false
 	}
-	if i == len(rs) {
-		return 0
+	glued := i > 0 && i+1 < len(rs) && (svLetter(rs[i-1]) || svDigit(rs[i-1]) || unicode.IsMark(rs[i-1])) &&
+		(svLetter(rs[i+1]) || svDigit(rs[i+1]))
+	return !glued
+}
+
+// svFreeSign: a free dash that is a sign, after a space, punctuation or the start, and against a word, a number or an
+// unspaced character ("-x", "-五"). Read only as written or "minus", never silent.
+func svFreeSign(rs []rune, i int) bool {
+	after := i > 0 && (svLetter(rs[i-1]) || svDigit(rs[i-1]) || unicode.IsMark(rs[i-1]))
+	return !after && i+1 < len(rs) && (svLetter(rs[i+1]) || svDigit(rs[i+1]) || isUnspaced(rs[i+1]))
+}
+
+var svDotAbbreviations = map[string]bool{"mr": true, "mrs": true, "ms": true, "dr": true, "st": true, "jr": true, "sr": true, "vs": true}
+
+// svSentenceEndAt reports whether rs[i] ends a sentence: "!", "?" and "。" always, and "." unless a letter or digit
+// follows it ("e.g", "3.5", "x.com") or it closes an abbreviation that is mostly followed by more of the sentence
+// (Mr, Mrs, Ms, Dr, St, Jr, Sr, vs, e.g., i.e.; "etc." mostly ends one). It looks at most four letters back, so the
+// work is linear.
+func svSentenceEndAt(rs []rune, i int) bool {
+	r := rs[i]
+	if !strings.ContainsRune(svSentenceEnds, r) {
+		return false
 	}
-	return rs[i]
+	if r != '.' {
+		return true
+	}
+	if i+1 < len(rs) && (svLetter(rs[i+1]) || svDigit(rs[i+1])) {
+		return false
+	}
+	b := i
+	for b > 0 && i-b < 4 && svLetter(rs[b-1]) {
+		b--
+	}
+	if b == i || b > 0 && (svLetter(rs[b-1]) || svDigit(rs[b-1])) { // "1st.", a longer word
+		return true
+	}
+	w := svASCIILower(rs[b:i])
+	if svDotAbbreviations[w] && (b == 0 || rs[b-1] != '.') {
+		return false
+	}
+	// The dot after "e.g" and "i.e", not inside a domain ("x.e.g.").
+	if len(w) == 1 && b >= 2 && rs[b-1] == '.' && svLetter(rs[b-2]) {
+		pair := svASCIILower(rs[b-2:b-1]) + "." + w
+		return !((pair == "e.g" || pair == "i.e") && (b == 2 || !svLetter(rs[b-3]) && rs[b-3] != '.'))
+	}
+	return true
+}
+
+// svASCIILower is rs with its ASCII letters in lower case; any other rune is kept as it is.
+func svASCIILower(rs []rune) string {
+	out := make([]rune, len(rs))
+	for i, r := range rs {
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		out[i] = r
+	}
+	return string(out)
 }
 
 // svElisions are the English words written with a leading apostrophe for dropped letters ("’tis", "’em", "’n’"). A
@@ -424,7 +543,8 @@ var svElisions = map[string]bool{
 	"scuse": true, "nuff": true,
 }
 
-// svElisionAt reports whether the letters starting at rs[i], in any case, are a whole word of svElisions.
+// svElisionAt reports whether the letters starting at rs[i], in any case, are a whole word of svElisions: not a
+// word's prefix before a mark, or before a joiner or an apostrophe and a letter ("n-gram", "n'est").
 func svElisionAt(rs []rune, i int) bool {
 	var b []byte
 	for ; i < len(rs) && svLetter(rs[i]); i++ {
@@ -437,7 +557,10 @@ func svElisionAt(rs []rune, i int) bool {
 		}
 		b = append(b, byte(r))
 	}
-	return (i == len(rs) || !unicode.IsMark(rs[i])) && svElisions[string(b)]
+	if i < len(rs) && (unicode.IsMark(rs[i]) || (svJoiner(rs[i]) || isApostrophe(rs[i])) && i+1 < len(rs) && svLetter(rs[i+1])) {
+		return false
+	}
+	return svElisions[string(b)]
 }
 
 func svNormApostrophes(s string) string {
@@ -1263,7 +1386,7 @@ func svScriptUnits(s, language string) []svUnit {
 		return word(k) && k > 0 && svIsCapitalised(raws[k].text) && !strings.ContainsAny(raws[k].gap, svSentenceEnds+":")
 	}
 	nextCapital := func(k int) bool { return word(k+1) && svIsCapitalised(raws[k+1].text) }
-	inExpression := svExpressions(raws)
+	inExpression, inWordExpression := svExpressions(raws, false), svExpressions(raws, true)
 
 	// Spoken zeros: "oh" or "o" in a run of digits and number words with no punctuation inside ("oh oh seven",
 	// "X O 4"), English only.
@@ -1329,8 +1452,10 @@ func svScriptUnits(s, language string) []svUnit {
 				continue
 			}
 			unit := svSymbolUnit(r.text, english)
-			if r.text == "-" && r.gap == "" && k+1 < len(raws) && raws[k+1].gap == "" && !inExpression[k] {
+			if r.text == "-" && r.dash == svDashNone && r.gap == "" && k+1 < len(raws) && raws[k+1].gap == "" && !inExpression[k] {
 				unit = append(unit, svSeq{}) // a range or score ("3-4", "1-0") is often read with no word for the dash
+			} else if r.dash == svDashSilentable && !inWordExpression[k] {
+				unit = append(unit, svSeq{}) // a dash between words ("Monday - Friday", "pre- and post-war") may be unspoken
 			}
 			units = append(units, unit)
 			continue
@@ -1406,7 +1531,21 @@ func svScriptUnits(s, language string) []svUnit {
 			found := false
 			for l := len(ends); l > 0 && !found; l-- {
 				if digits, ok := svParseEnglishPhrase(words[:ends[l-1]]); ok {
-					unit := append(svUnit{lit(words[:ends[l-1]]...)}, svNumberUnits(digits, language)[0]...)
+					// The words keep their ordinary readings ("TEN" = "T E N", "forty-two" = "fortytwo") beside the
+					// number's, up to svMaxProduct of them; a longer phrase is read as written and as a number.
+					plain := make([]svUnit, l)
+					for m := range plain {
+						plain[m] = svWordUnit(raws, k+m, lower(k+m), english, innerCapital, nextCapital)
+					}
+					unit, ok := svProduct(plain)
+					if !ok {
+						unit = svUnit{lit(words[:ends[l-1]]...)}
+					}
+					for _, reading := range svNumberUnits(digits, language)[0] {
+						if !svUnitHas(unit, reading) {
+							unit = append(unit, reading)
+						}
+					}
 					units = append(units, unit)
 					k += l - 1
 					found = true
@@ -1588,26 +1727,71 @@ func svWithCodeReadings(unit svUnit, raws []svRaw, k int, low string) svUnit {
 	return unit
 }
 
+// svMaxProduct is the most readings a phrase's words keep beside the number they spell (svProduct).
+const svMaxProduct = 64
+
+// svProduct is every concatenation of one reading per unit, or false beyond svMaxProduct readings.
+func svProduct(units []svUnit) (svUnit, bool) {
+	out := svUnit{svSeq{}}
+	for _, u := range units {
+		var next svUnit
+		for _, a := range out {
+			for _, b := range u {
+				next = append(next, append(append(svSeq{}, a...), b...))
+				if len(next) > svMaxProduct {
+					return nil, false
+				}
+			}
+		}
+		out = next
+	}
+	return out, true
+}
+
+// svUnitHas reports whether unit already holds the reading seq.
+func svUnitHas(unit svUnit, seq svSeq) bool {
+	for _, r := range unit {
+		if slices.EqualFunc(r, seq, slices.Equal[svAlt]) {
+			return true
+		}
+	}
+	return false
+}
+
+// svMathOperators make a run holding words an expression (svExpressions).
+var svMathOperators = map[string]bool{"=": true, "+": true, "−": true, "×": true, "÷": true, "<": true, ">": true, "≠": true, "*": true, "^": true}
+
 // svExpressions marks each raw that sits in an expression: a run of numbers and symbols joined by nothing but space
-// that holds an operator other than "-" ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so in
-// "1-0. #1" the score's dash is not in one. One pass over the raws, so a long chain costs its length.
-func svExpressions(raws []svRaw) []bool {
+// that holds an operator other than "-" or a number's "'" ("5-2=3"). A dash there is a spoken minus. Punctuation ends
+// a run, so in "1-0. #1" the score's dash is not in one. withWords lets words into the run but counts only the
+// arithmetic operators (svMathOperators): in "x - y = z" the free dash is a minus, in "Tom & Jerry - live" it may be
+// silent. One pass over the raws, so a long chain costs its length.
+func svExpressions(raws []svRaw, withWords bool) []bool {
 	in := make([]bool, len(raws))
 	part := func(k int) bool {
-		return raws[k].kind == svNumber || raws[k].kind == svHanRun || raws[k].kind == svSymbol
+		return raws[k].kind == svNumber || raws[k].kind == svHanRun || raws[k].kind == svSymbol || withWords && raws[k].kind == svWord
+	}
+	op := func(k int) bool {
+		if raws[k].kind != svSymbol {
+			return false
+		}
+		if withWords {
+			return svMathOperators[raws[k].text]
+		}
+		return raws[k].text != "-" && raws[k].text != "'"
 	}
 	for i := 0; i < len(raws); {
 		if !part(i) {
 			i++
 			continue
 		}
-		j, op := i, false
+		j, holds := i, false
 		for j < len(raws) && part(j) && (j == i || !raws[j].punctBefore()) {
-			op = op || raws[j].kind == svSymbol && raws[j].text != "-"
+			holds = holds || op(j)
 			j++
 		}
 		for m := i; m < j; m++ {
-			in[m] = op
+			in[m] = holds
 		}
 		i = j
 	}
