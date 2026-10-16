@@ -35,21 +35,26 @@ final class SessionCloseTests: XCTestCase {
         }
     }
 
+    /// A refusal the caller's cancellation cut short is cancelled, not the HTTP refusal it looks like. The request
+    /// cancels its own caller and then throws the refusal at once, so the refusal ends the race with the deadline's
+    /// timer, which the cancellation wakes on another thread: no sleep decides the order.
     func testCallerCancellationIsCancelledNotAnHTTPRefusal() async {
+        let caller = TaskBox()
+        let ready = DispatchSemaphore(value: 0)
         let task = Task { () async throws -> Int in
-            try await withDeadline(seconds: 30, what: "request") { () async throws -> Int in
-                // An error body cut short by the cancellation, still classified by its status.
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            _ = ready.waited()
+            return try await withDeadline(seconds: 30, what: "request") { () async throws -> Int in
+                caller.task?.cancel()
                 throw RealtimeError(.authExpired, status: 401)
             }
         }
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        task.cancel()
+        caller.task = task
+        ready.signal()
         do {
             _ = try await task.value
             XCTFail("a cancelled request succeeded")
         } catch let e as RealtimeError {
-            XCTAssertEqual(e.errorClass, .cancelled)
+            XCTAssertEqual(e.errorClass, .cancelled, "\(e)")
         } catch {
             XCTFail("\(error)")
         }
@@ -291,6 +296,15 @@ private final class FakeClosingServer: @unchecked Sendable {
     }
 
     func stop() { listener.cancel() }
+}
+
+private final class TaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Task<Int, Error>?
+    var task: Task<Int, Error>? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
 }
 
 private final class OrderBox: @unchecked Sendable {

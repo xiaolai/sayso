@@ -221,7 +221,8 @@ final class SessionDeadlineTests: XCTestCase {
             configuration: .init(
                 url: RealtimeSession.url(model: "m", base: URL(string: "ws://127.0.0.1:\(server.port)")!),
                 handshakeTimeout: 5, readLimit: 1 << 20))
-        try await Task.sleep(nanoseconds: 300_000_000)  // the reader buffers the message
+        let buffered = await eventually { session.holdsBufferedMessage }
+        XCTAssertTrue(buffered, "the message never arrived")
         await session.close()
         for _ in 0..<2 {
             do {

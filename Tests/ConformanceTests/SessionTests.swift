@@ -1,5 +1,5 @@
 import Foundation
-import RealtimeConnection
+@testable import RealtimeConnection
 import XCTest
 
 final class SessionTests: XCTestCase {
@@ -231,7 +231,10 @@ final class SessionBehaviourTests: XCTestCase {
         let server = try FakeWebSocketServer(message: raw)
         defer { server.stop() }
         let session = try await open(server, readLimit: 1 << 20)
-        // Cancelled before it calls next(), so the outcome does not depend on when the message arrives.
+        // The message is buffered first, so the cancelled wait has one to steal; and the wait is cancelled before it
+        // calls next(), so its outcome does not depend on timing.
+        let buffered = await eventually { session.holdsBufferedMessage }
+        XCTAssertTrue(buffered, "the message never arrived")
         let waiter = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await session.next()
