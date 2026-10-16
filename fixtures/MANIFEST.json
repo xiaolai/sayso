@@ -1,5 +1,5 @@
 {
- "count": 1016,
+ "count": 1026,
  "fixtures": [
   {
    "id": "app-ready",
@@ -6157,6 +6157,66 @@
   },
   {
    "id": "ws-unknown-types-past-byte-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-401",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-403",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-404",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-429",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-500",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-200",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-302",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-302-malformed",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-101-malformed",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-silent",
    "file": "ws/ws.json",
    "component": "session",
    "requires": []

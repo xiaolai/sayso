@@ -55,7 +55,7 @@ class Schema(unittest.TestCase):
         self.assertEqual(manifest.unknown_members(with_member(PCM, "", "hex")), ["case: hex"])
 
     def test_a_selector_without_a_schema_is_refused(self):
-        self.assertEqual(manifest.unknown_members({**SESSION, "kind": "handshake"}), ["kind: 'handshake' has no schema"])
+        self.assertEqual(manifest.unknown_members({**SESSION, "kind": "telepathy"}), ["kind: 'telepathy' has no schema"])
 
 
 if __name__ == "__main__":

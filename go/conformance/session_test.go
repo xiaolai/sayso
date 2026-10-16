@@ -31,7 +31,11 @@ type sessionCase struct {
 	Types        int             `json:"types"`
 	TypeBytes    int             `json:"typeBytes"`
 	Rounds       int             `json:"rounds"`
-	Expect       map[string]any  `json:"expect"`
+	// handshake: the fake server's answer to the upgrade request, or none, and the handshake timeout
+	Reply              *handshakeReply `json:"reply"`
+	Silent             bool            `json:"silent"`
+	HandshakeTimeoutMs int64           `json:"handshakeTimeoutMs"`
+	Expect             map[string]any  `json:"expect"`
 }
 
 func TestSession(t *testing.T) {
@@ -65,6 +69,8 @@ func TestSession(t *testing.T) {
 			return outcome(checkSize(t, sc))
 		case "unknown-types":
 			return outcome(checkUnknownTypes(t, sc))
+		case "handshake":
+			return outcome(checkHandshake(t, sc))
 		case "event":
 			if sc.Raw == nil {
 				return fixtures.Fail, "event case without raw"
@@ -85,6 +91,7 @@ var sessionMembers = map[string][]string{
 	"size":          {"readLimit", "messageBytes"},
 	"unknown-types": {"types", "typeBytes", "rounds"},
 	"event":         {"raw"},
+	"handshake":     {"reply", "silent", "handshakeTimeoutMs"},
 }
 
 // sessionExpect lists, per kind, the expectation keys its check reads.
@@ -93,6 +100,7 @@ var sessionExpect = map[string][]string{
 	"error-event":   errorKeys,
 	"size":          errorKeys,
 	"unknown-types": append([]string{"delivered", "distinct"}, errorKeys...),
+	"handshake":     {"class", "status", "requestId", "code", "withinMs", "request", "notInDescription"},
 	"event": {"type", "sessionType", "model", "responseId", "metadata", "pcmHex", "delta", "status", "statusReason",
 		"usage", "limits", "exhausted", "class", "code", "param", "itemId", "transcript", "ignored", "unknown",
 		"protocolError", "notInDescription"},

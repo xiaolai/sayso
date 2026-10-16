@@ -137,6 +137,75 @@ final class FakeHTTPServer: @unchecked Sendable {
     }
 }
 
+/// A TCP server that reads one HTTP request head, records it, and answers it with `reply` as raw bytes, closing the
+/// connection unless `hold`; with no reply it never answers. Every connection it holds ends with ``stop()``.
+final class FakeHandshakeServer: @unchecked Sendable {
+    /// What the connection handler records, made before the listener so its handler can hold it.
+    private final class Record: @unchecked Sendable {
+        let lock = NSLock()
+        var head: String?
+        var held: [NWConnection] = []
+    }
+
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "fake-openai-handshake")
+    private let record = Record()
+    let port: UInt16
+
+    init(reply: Data?, hold: Bool) throws {
+        listener = try NWListener(using: FakeOpenAI.loopbackParameters(.tcp))
+        let (queue, record) = (self.queue, self.record)
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: queue)
+            Self.receive(connection, Data(), record, reply: reply, hold: hold)
+        }
+        port = try FakeOpenAI.waitReady(listener, queue: queue)
+    }
+
+    private static func receive(_ connection: NWConnection, _ buffer: Data, _ record: Record, reply: Data?, hold: Bool) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { data, _, complete, error in
+            var buffer = buffer
+            if let data { buffer.append(data) }
+            guard let end = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                if complete || error != nil {
+                    connection.cancel()
+                } else {
+                    receive(connection, buffer, record, reply: reply, hold: hold)
+                }
+                return
+            }
+            record.lock.withLock {
+                record.head = String(decoding: buffer[buffer.startIndex..<end.lowerBound], as: UTF8.self)
+                record.held.append(connection)
+            }
+            guard let reply else { return }  // silent: held until stop
+            connection.send(content: reply, completion: .contentProcessed { _ in if !hold { connection.cancel() } })
+        }
+    }
+
+    private var lines: [String] { record.lock.withLock { record.head }?.components(separatedBy: "\r\n") ?? [] }
+
+    /// The request line's target, once a request has arrived.
+    var target: String? {
+        let parts = lines.first?.split(separator: " ") ?? []
+        return parts.count >= 2 ? String(parts[1]) : nil
+    }
+
+    /// The request's Authorization header.
+    var authorization: String? {
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":"), line[..<colon].lowercased() == "authorization" else { continue }
+            return line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    func stop() {
+        listener.cancel()
+        for connection in record.lock.withLock({ record.held }) { connection.cancel() }
+    }
+}
+
 /// A WebSocket server that, on each connection, sends `message` as one text frame and then waits for the client.
 final class FakeWebSocketServer: @unchecked Sendable {
     private let listener: NWListener

@@ -14,6 +14,10 @@ enum SessionCheck {
         "error-event": (["event"], FakeOpenAI.errorKeys),
         "size": (["readLimit", "messageBytes"], FakeOpenAI.errorKeys),
         "unknown-types": (["types", "typeBytes", "rounds"], FakeOpenAI.errorKeys.union(["delivered", "distinct"])),
+        "handshake": (
+            ["reply", "silent", "handshakeTimeoutMs"],
+            ["class", "status", "requestId", "code", "withinMs", "request", "notInDescription"]
+        ),
         "event": (
             ["raw"],
             [
@@ -49,9 +53,65 @@ enum SessionCheck {
         case "unknown-types":
             return try unknownTypes(
                 types: c["types"] as? Int ?? 0, size: c["typeBytes"] as? Int ?? 0, rounds: c["rounds"] as? Int ?? 0, want)
+        case "handshake":
+            return try handshake(c, want)
         default:
             return ["unknown kind \(c["kind"] ?? "nil")"]
         }
+    }
+
+    /// The reply as both harnesses write it: the status line, the headers in name order, a Content-Length when there
+    /// is a body, and Connection: close unless the reply is held.
+    static func replyBytes(_ r: [String: Any]) -> Data {
+        var head = "HTTP/1.1 \(r["status"] as? Int ?? 0) Fixture\r\n"
+        let headers = r["headers"] as? [String: String] ?? [:]
+        for name in headers.keys.sorted(by: { $0.utf8.lexicographicallyPrecedes($1.utf8) }) {
+            head += "\(name): \(headers[name]!)\r\n"
+        }
+        let body = r["body"] as? String
+        if let body { head += "Content-Length: \(body.utf8.count)\r\n" }
+        if r["hold"] as? Bool != true { head += "Connection: close\r\n" }
+        return Data((head + "\r\n" + (body ?? "")).utf8)
+    }
+
+    /// Opens a session against a fake server that reads the upgrade request and answers it with the case's reply,
+    /// or never (silent), and compares the refusal and the request with the expectation.
+    static func handshake(_ c: [String: Any], _ want: [String: Any]) throws -> [String] {
+        let reply = c["reply"] as? [String: Any]
+        guard (reply == nil) == (c["silent"] as? Bool == true) else {
+            return ["a handshake case has either a reply or silent: true"]
+        }
+        let server = try FakeHandshakeServer(reply: reply.map(replyBytes), hold: reply?["hold"] as? Bool == true)
+        defer { server.stop() }
+        let client = try FakeOpenAI.client(port: server.port)
+        let configuration = RealtimeSession.Configuration(
+            url: RealtimeSession.url(model: "m", base: URL(string: "ws://127.0.0.1:\(server.port)")!),
+            handshakeTimeout: Double(c["handshakeTimeoutMs"] as? Int ?? 5000) / 1000, readLimit: 1 << 20)
+        let secret = ClientSecret(bearer: "ek_conformance", expiresAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let start = Date()
+        let result = FakeOpenAI.blocking { () async throws -> Bool in
+            let session = try await RealtimeSession.open(client: client, secret: secret, configuration: configuration)
+            await session.close()
+            return true
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        guard case .failure(let error) = result else { return ["the handshake opened a session"] }
+        guard let e = error as? RealtimeError else { return ["not a classified error: \(error)"] }
+        var p: [String] = []
+        let fields: [(String, Any)] = [
+            ("class", e.errorClass.rawValue), ("status", e.status), ("requestId", e.requestID), ("code", e.code),
+        ]
+        for (key, got) in fields {
+            if let w = want[key], !FakeOpenAI.same(got, w) { p.append("\(key) \(got), want \(w)") }
+        }
+        if let ms = want["withinMs"] as? Int, elapsed > Double(ms) / 1000 { p.append("took \(elapsed) s, limit \(ms) ms") }
+        if let w = want["request"] as? [String: Any] {
+            let got: [String: Any] = ["target": server.target ?? "", "authorization": server.authorization ?? ""]
+            for (key, v) in w where !FakeOpenAI.same(got[key], v) { p.append("request \(key) \(got[key] ?? ""), want \(v)") }
+        }
+        var description = ""
+        dump(e, to: &description)
+        return p + FakeOpenAI.leaks(FakeOpenAI.strings(want["notInDescription"]), "\(e) \(description)")
     }
 
     /// The probe message of exactly `bytes` bytes, and the length of its delta.

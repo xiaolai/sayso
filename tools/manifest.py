@@ -67,6 +67,12 @@ SCHEMA = {
                 "type", "sessionType", "model", "responseId", "metadata", "pcmHex", "delta", "status",
                 "statusReason", "usage", "limits", "exhausted", "class", "code", "param", "itemId", "transcript",
                 "ignored", "unknown", "protocolError", "notInDescription"}},
+            "handshake": {
+                "": {"reply", "silent", "handshakeTimeoutMs"},
+                "reply": {"status", "headers", "body", "hold"},
+                "expect": {"class", "status", "requestId", "code", "withinMs", "request", "notInDescription"},
+                "expect.request": {"target", "authorization"},
+            },
         },
     },
     "pcm16": {
