@@ -191,3 +191,9 @@ error or a log line carries from Codex, a file or the network passes through it,
 whole when formatted. A reported mode is filtered to printable characters before it is scrubbed, because removing
 a character can join a secret's pieces. Token values and the inherited environment are never part of a type's
 printed, reflected or encoded form.
+
+The debug log (Go `Config.Logger`, Swift `log`) names each decision: a fetch (`codexauth: fetched a token`, or
+`codexauth: fetch failed` with the state and class), a refresh (`codexauth: refreshed the token`, `codexauth: refresh
+failed` with the state, the backoff and the retry time, `codexauth: refresh cancelled; no backoff spent`) and a call
+the backoff holds back (`codexauth: refresh held back by the backoff`). A line carries the source, state, class and
+times only, never a token or the child's output.

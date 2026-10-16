@@ -94,6 +94,7 @@ with more room for an instrumented or debug build.
 | `refreshCalls` | `getAuthStatus` calls with `refreshToken: true` so far |
 | `notInDescription` | strings that no error description or log line may contain |
 | `inDescription` | strings the error description must contain |
+| `inLog` | strings some debug line so far must contain |
 | `retryAt` | when the error says the next refresh may run, in Unix seconds (`null`: it names no time) |
 
 A client case has `setup.client` and drives the app-server client itself, started with the fake at

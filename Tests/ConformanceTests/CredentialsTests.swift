@@ -364,6 +364,10 @@ final class CredentialWorld {
                 for s in v as? [String] ?? [] where texts.contains(where: { $0.contains(s) }) {
                     p.append("\(s.debugDescription) leaked")
                 }
+            case "inLog":  // strings some log line so far must contain
+                for s in v as? [String] ?? [] where !logs.value.contains(where: { $0.contains(s) }) {
+                    p.append("no log line names \(s.debugDescription)")
+                }
             case "inDescription":
                 for s in v as? [String] ?? [] where !description.contains(s) {
                     p.append("the description does not name \(s.debugDescription): \(description)")

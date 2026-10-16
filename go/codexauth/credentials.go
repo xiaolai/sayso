@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xiaolai/sayso/go/codexapp"
+	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -262,6 +263,7 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		return secret.Token{}, fail(StateExpired, "the token in auth.json is expiring, and the file source cannot refresh", nil)
 	}
 	if c.cfg.Now().Before(c.retryAt) {
+		c.cfg.Logger.Debug("codexauth: refresh held back by the backoff", "retryAt", c.retryAt)
 		e := fail(StateExpired, "the last refresh failed; the next attempt waits for the backoff", c.lastFailure)
 		e.RetryAt = c.retryAt
 		return secret.Token{}, e
@@ -274,6 +276,7 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		if ctx.Err() != nil {
 			// The caller gave up; Codex did not fail, so no backoff is spent. The caller's cancellation is joined to
 			// the cause, which may be the timeout or the failure it produced.
+			c.cfg.Logger.Debug("codexauth: refresh cancelled; no backoff spent")
 			return secret.Token{}, fail(StateExpired, "the refresh was cancelled", errors.Join(err, ctx.Err()))
 		}
 		if c.backoff == 0 {
@@ -283,6 +286,7 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		}
 		c.retryAt = c.cfg.Now().Add(c.backoff) // from the failure, so a slow attempt does not use up the wait
 		c.lastFailure = err
+		c.cfg.Logger.Debug("codexauth: refresh failed", "state", StateOf(err), "backoff", c.backoff, "retryAt", c.retryAt)
 		var e *Error
 		if errors.As(err, &e) && signInChanged(e.State) {
 			return secret.Token{}, e // the refresh reply named another sign-in: classified as in step 3
@@ -292,6 +296,7 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		return secret.Token{}, failed
 	}
 	c.backoff, c.retryAt, c.lastFailure, c.refused = 0, time.Time{}, nil, ""
+	c.cfg.Logger.Debug("codexauth: refreshed the token")
 	c.cur = &tok
 	c.refreshes.Add(1)
 	return tok, nil
@@ -312,8 +317,11 @@ func (c *Credentials) fetchLocked(ctx context.Context) error {
 	tok, refreshable, e := c.fetch(ctx)
 	if e != nil {
 		e.CodexVersion = c.info.CodexVersion
+		c.cfg.Logger.Debug("codexauth: fetch failed", "source", c.info.Source, "state", e.State,
+			"class", openaihttp.Classify(e))
 		return e
 	}
+	c.cfg.Logger.Debug("codexauth: fetched a token", "source", c.info.Source, "refreshable", refreshable)
 	c.cur, c.refreshable = &tok, refreshable
 	return nil
 }

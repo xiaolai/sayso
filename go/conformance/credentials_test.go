@@ -549,6 +549,12 @@ func (w *world) check(want map[string]any, state string, err error, tok secret.T
 			}
 		case "notInDescription":
 			p = append(p, leaks(strings_(v), desc, w.logs.String())...)
+		case "inLog": // strings some log line so far must contain
+			for _, s := range strings_(v) {
+				if !strings.Contains(w.logs.String(), s) {
+					p = append(p, fmt.Sprintf("no log line names %q", s))
+				}
+			}
 		case "inDescription":
 			for _, s := range strings_(v) {
 				if !strings.Contains(desc, s) {

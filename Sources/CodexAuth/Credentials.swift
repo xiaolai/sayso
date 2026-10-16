@@ -258,6 +258,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
                 .expired, message: "the token in auth.json is expiring, and the file source cannot refresh")
         }
         if let retryAt, cfg.now() < retryAt {
+            cfg.log?("codexauth: refresh held back by the backoff (until \(Self.stamp(retryAt)))")
             var e = CodexAuthError(
                 .expired, message: "the last refresh failed; the next attempt waits for the backoff", cause: lastFailure)
             e.retryAt = retryAt
@@ -272,17 +273,22 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             retryAt = nil
             lastFailure = ""
             refused = nil
+            cfg.log?("codexauth: refreshed the token")
             current = tok
             refreshes.increment()
             return tok
         } catch {
             if op.isCancelled {
                 // The caller gave up; Codex did not fail, so no backoff is spent.
+                cfg.log?("codexauth: refresh cancelled; no backoff spent")
                 throw CodexAuthError(.expired, message: "the refresh was cancelled", cause: String(describing: error))
             }
             backoff = backoff == 0 ? Self.backoffStart : min(2 * backoff, Self.backoffMax)
             retryAt = cfg.now().addingTimeInterval(backoff)  // from the failure, so a slow attempt keeps the wait
             lastFailure = String(describing: error)
+            cfg.log?(
+                "codexauth: refresh failed (state \(CodexAuthError.state(of: error).rawValue), backoff \(Int(backoff)) s, "
+                    + "until \(Self.stamp(retryAt!)))")
             // The refresh reply named another sign-in: classified as in step 3 (spec/credentials.md), not expired.
             if let e = error as? CodexAuthError,
                 [.notSignedIn, .apiKey, .unsupportedAuth, .providerWithoutOpenAIAuth].contains(e.state)
@@ -300,10 +306,22 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             let (tok, canRefresh) = try fetch(op)
             current = tok
             refreshable = canRefresh
+            cfg.log?("codexauth: fetched a token (source \(latest.source?.rawValue ?? ""), refreshable \(canRefresh))")
         } catch var e as CodexAuthError {
             e.codexVersion = latest.codexVersion
+            let cls = op.isCancelled ? ErrorClass.cancelled : e.errorClass
+            cfg.log?(
+                "codexauth: fetch failed (source \(latest.source?.rawValue ?? ""), state \(e.state.rawValue), "
+                    + "class \(cls.rawValue))")
             throw e
         }
+    }
+
+    /// A time as the debug lines print it: RFC 3339, in UTC.
+    private static func stamp(_ t: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f.string(from: t)
     }
 
     private func fetch(_ op: Operation) throws -> (Token, Bool) {
