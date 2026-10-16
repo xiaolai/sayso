@@ -227,6 +227,50 @@ final class CredentialsUnitTests: XCTestCase {
         let tok = try? AuthFile.read(loc, onRetry: nil)
         XCTAssertNotEqual(tok?.bearer, "outside-token", "the read followed the swapped folder")
     }
+
+    /// A folder of the resolved path replaced by a link after resolution, an ancestor as well as CODEX_HOME itself,
+    /// fails the open: the path is walked from "/" without following a link, so it cannot leave the confining folder.
+    func testResolvedPathIsOpenedWithoutFollowingALink() throws {
+        let base = try XCTUnwrap(realpath(NSTemporaryDirectory(), nil).map { p in defer { free(p) }; return String(cString: p) })
+        let home = base + "/sayso-walk-\(UUID().uuidString)"
+        let outside = base + "/sayso-walk-out-\(UUID().uuidString)"
+        defer {
+            try? FileManager.default.removeItem(atPath: home)
+            try? FileManager.default.removeItem(atPath: outside)
+        }
+        let codexHome = home + "/a/b/codex"
+        for d in [codexHome, outside + "/b/codex"] {
+            try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+        }
+        let fd = try XCTUnwrap(AuthFile.openResolved(codexHome), "a resolved path holding no link opens")
+        Darwin.close(fd)
+        // The ancestor "a" swapped for a link to a look-alike tree outside the confining folder.
+        try FileManager.default.moveItem(atPath: home + "/a", toPath: home + "/a.old")
+        try FileManager.default.createSymbolicLink(atPath: home + "/a", withDestinationPath: outside)
+        XCTAssertNil(AuthFile.openResolved(codexHome), "the walk followed a swapped ancestor")
+        // CODEX_HOME itself swapped for a link.
+        try FileManager.default.removeItem(atPath: home + "/a")
+        try FileManager.default.moveItem(atPath: home + "/a.old", toPath: home + "/a")
+        try FileManager.default.moveItem(atPath: codexHome, toPath: codexHome + ".old")
+        try FileManager.default.createSymbolicLink(atPath: codexHome, withDestinationPath: outside + "/b/codex")
+        XCTAssertNil(AuthFile.openResolved(codexHome), "the walk followed a swapped CODEX_HOME")
+        XCTAssertNil(AuthFile.openResolved("a/b"), "a relative path is refused")
+        XCTAssertNil(AuthFile.openResolved(home + "/a/../a/b"), "a path with .. is refused")
+    }
+
+    /// A FIFO named as CODEX_HOME is refused at once instead of blocking the open.
+    func testFIFOAsCodexHomeIsRefusedWithoutBlocking() throws {
+        let base = try XCTUnwrap(realpath(NSTemporaryDirectory(), nil).map { p in defer { free(p) }; return String(cString: p) })
+        let home = base + "/sayso-fifo-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        XCTAssertEqual(mkfifo(home + "/codex", 0o600), 0)
+        for confine in [home, nil] {
+            XCTAssertThrowsError(try AuthFile.location(codexHome: home + "/codex", home: home, confine: confine)) {
+                XCTAssertEqual(($0 as? CodexAuthError)?.state, .codexError)
+            }
+        }
+    }
 }
 
 private final class Clock: @unchecked Sendable {

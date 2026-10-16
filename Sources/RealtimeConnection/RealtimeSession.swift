@@ -50,14 +50,17 @@ public final class RealtimeSession: Sendable {
     /// Kept so its URLSession, which owns the connection, lives as long as the session.
     private let client: HTTPClient
     private let task: URLSessionWebSocketTask
+    /// The task's delegate: it reports when the transport has completed.
+    private let events: Handshake
     private let inbox: Inbox
     private let writes = WriteGate()
     private let reader: Task<Void, Never>
 
-    private init(client: HTTPClient, task: URLSessionWebSocketTask, readLimit: Int) {
+    private init(client: HTTPClient, task: URLSessionWebSocketTask, events: Handshake, readLimit: Int) {
         let inbox = Inbox()
         self.client = client
         self.task = task
+        self.events = events
         self.inbox = inbox
         self.reader = Task.detached { await Self.read(task, inbox, readLimit) }
     }
@@ -122,7 +125,7 @@ public final class RealtimeSession: Sendable {
             }
             throw error
         }
-        return RealtimeSession(client: client, task: task, readLimit: configuration.readLimit)
+        return RealtimeSession(client: client, task: task, events: handshake, readLimit: configuration.readLimit)
     }
 
     /// The next message. Cancelling the calling task ends the wait, not the session, and loses no message.
@@ -171,39 +174,35 @@ public final class RealtimeSession: Sendable {
     /// spellings are two types on the wire, so a `String`-keyed dictionary, which would merge them, is not used.
     public var unknownCounts: [UnknownTypeCount] { inbox.unknownCounts }
 
-    /// Sends a normal close and drops the connection if the peer has not finished closing within 2 s, then waits up
-    /// to 1 s more for the transport to complete. It waits for the reader, so nothing outlives it. It runs to the end
-    /// even when the calling task is cancelled. Safe to call more than once.
+    /// Sends a normal close and drops the connection if the peer has not finished closing within 2 s, then waits for
+    /// the transport to complete, as Go waits for its connection: a dropped task always completes. It waits for the
+    /// reader too, so nothing outlives it. It runs to the end even when the calling task is cancelled. Safe to call
+    /// more than once.
     public func close() async {
         inbox.markClosing()
         task.cancel(with: .normalClosure, reason: nil)
         let reader = self.reader
         let task = self.task
-        // An unstructured task does not inherit the caller's cancellation, so its sleeps really wait: in a cancelled
-        // caller every Task.sleep would throw at once and the polling below would spin.
+        let events = self.events
+        // An unstructured task does not inherit the caller's cancellation, so the grace really waits: in a cancelled
+        // caller Task.sleep would throw at once and drop the connection without a close handshake.
         await Task {
-            let clock = ContinuousClock()
-            let grace = clock.now.advanced(by: Deadline.duration(Self.closeGrace) ?? .zero)
             let dropped = Task {
+                let clock = ContinuousClock()
+                let grace = clock.now.advanced(by: Deadline.duration(Self.closeGrace) ?? .zero)
                 try? await Task.sleep(until: grace, clock: clock)
                 if !Task.isCancelled { task.cancel() }
             }
-            await reader.value
-            // The reader can end before the transport does (a buffered message releases it at once), so the close
-            // handshake keeps its grace until the task completes; then it is dropped and given 1 s to complete.
-            while task.state != .completed, clock.now < grace {
-                try? await Task.sleep(nanoseconds: 20_000_000)
-            }
+            // The deadline runs until URLSession reports the task complete, not until the reader ends: a buffered
+            // message releases the reader at once, before the peer has answered the close.
+            await events.completion()
             dropped.cancel()
-            if task.state != .completed {
-                task.cancel()
-                let drop = clock.now.advanced(by: .seconds(1))
-                while task.state != .completed, clock.now < drop {
-                    try? await Task.sleep(nanoseconds: 20_000_000)
-                }
-            }
+            await reader.value
         }.value
     }
+
+    /// Whether URLSession has reported the task complete; for tests.
+    var transportCompleted: Bool { events.isComplete }
 
     /// The error for a close frame received while more events were expected; the reason is scrubbed.
     public static func closeError(code: Int, reason: String) -> RealtimeError {
@@ -470,11 +469,30 @@ final class Inbox: @unchecked Sendable {
     }
 }
 
-/// Settles the opening handshake: open, or the task's completion with an error. Redirects are refused.
+/// The task's delegate. It settles the opening handshake (open, or the task's completion with an error), reports the
+/// task's completion to ``RealtimeSession/close()``, and refuses redirects.
 private final class Handshake: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<Void, Error>?
     private var waiter: CheckedContinuation<Void, Error>?
+    private var completed = false
+    private var completionWaiters: [CheckedContinuation<Void, Never>] = []
+
+    var isComplete: Bool { lock.withLock { completed } }
+
+    /// Returns once URLSession has reported the task complete.
+    func completion() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if completed {
+                lock.unlock()
+                c.resume()
+            } else {
+                completionWaiters.append(c)
+                lock.unlock()
+            }
+        }
+    }
 
     private func settle(_ r: Result<Void, Error>) {
         lock.lock()
@@ -512,6 +530,12 @@ private final class Handshake: NSObject, URLSessionWebSocketDelegate, @unchecked
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         settle(.failure(error ?? RealtimeError(.protocol, message: "realtime handshake ended without opening")))
+        lock.lock()
+        completed = true
+        let waiters = completionWaiters
+        completionWaiters = []
+        lock.unlock()
+        for w in waiters { w.resume() }
     }
 
     func urlSession(

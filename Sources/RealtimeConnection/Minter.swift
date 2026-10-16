@@ -110,6 +110,6 @@ public struct Minter: SecretSource {
         guard let value = try? fields.string("value"), !value.isEmpty, value.utf8.count <= Self.maximumSecretBytes else {
             throw refuse("mint reply value is missing, empty or longer than 4096 bytes")
         }
-        return ClientSecret(bearer: value, expiresAt: Date(timeIntervalSince1970: TimeInterval(expires)))
+        return ClientSecret(bearer: value, expiresAtUnix: expires)
     }
 }

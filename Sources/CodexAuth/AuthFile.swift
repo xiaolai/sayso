@@ -27,8 +27,8 @@ enum AuthFile {
     static let fileName = "auth.json"
 
     /// Locates `$CODEX_HOME/auth.json` when `codexHome` resolves, after following links, to a folder the user owns,
-    /// inside `confine` when that is set; `~/.codex/auth.json` when `codexHome` is unset. A set CODEX_HOME that
-    /// fails is codex-error.
+    /// inside `confine` when that is set; `~/.codex/auth.json` when `codexHome` is unset. Both are resolved once and
+    /// the folder is then opened along the resolved path. A set CODEX_HOME that fails is codex-error.
     static func location(codexHome: String?, home: String, confine: String?) throws -> AuthLocation {
         guard let codexHome, !codexHome.isEmpty else { return AuthLocation(dir: -1, path: join(home, ".codex/auth.json")) }
         guard !codexHome.utf8.contains(0), !(confine ?? "").utf8.contains(0) else {
@@ -38,7 +38,7 @@ enum AuthFile {
         guard let real = realPath(codexHome) else {
             throw CodexAuthError(.codexError, message: "CODEX_HOME does not resolve")
         }
-        let dir: Int32
+        var confined = false
         if let confine, !confine.isEmpty {
             guard let root = realPath(confine) else {
                 throw CodexAuthError(.codexError, message: "the folder CODEX_HOME is confined to does not resolve")
@@ -46,16 +46,14 @@ enum AuthFile {
             guard real == root || real.utf8.starts(with: (root == "/" ? "/" : root + "/").utf8) else {
                 throw CodexAuthError(.codexError, message: "CODEX_HOME is outside the folder it is confined to")
             }
-            // Opened from the confining folder one component at a time, never following a link, so a path changed
-            // since it was resolved cannot leave the folder.
-            guard let d = openBeneath(root, String(decoding: real.utf8.dropFirst(root.utf8.count), as: UTF8.self)) else {
-                throw CodexAuthError(
-                    .codexError, message: "CODEX_HOME is not a folder inside the folder it is confined to")
-            }
-            dir = d
-        } else {
-            dir = open(real, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-            guard dir >= 0 else { throw CodexAuthError(.codexError, message: "CODEX_HOME is not a folder") }
+            confined = true
+        }
+        // The resolved path holds no link, so it is opened from "/" one folder at a time, never following one: a
+        // folder of the path replaced since it was resolved (by a link elsewhere, say) fails the open instead of
+        // redirecting it, and the folder opened is the one the confinement above was checked on.
+        guard let dir = openResolved(real) else {
+            let what = confined ? "CODEX_HOME is not a folder inside the folder it is confined to" : "CODEX_HOME is not a folder"
+            throw CodexAuthError(.codexError, message: what)
         }
         // Checked on the open folder, the one every read goes through.
         var st = stat()
@@ -70,14 +68,27 @@ enum AuthFile {
         return AuthLocation(dir: dir, path: join(real, fileName))
     }
 
-    /// `rel` (folders separated by "/") opened beneath the folder `root`, without following a link; nil on failure.
-    private static func openBeneath(_ root: String, _ rel: String) -> Int32? {
-        var fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    /// The folder at `path`, an absolute path holding no link, opened from "/" one component at a time without
+    /// following a link and without blocking on a FIFO, each component checked to be a folder on its own descriptor;
+    /// nil on failure.
+    static func openResolved(_ path: String) -> Int32? {
+        let flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+        guard path.utf8.first == 0x2F, !path.utf8.contains(0) else { return nil }
+        var fd = open("/", flags)
         guard fd >= 0 else { return nil }
-        for part in rel.utf8.split(separator: 0x2F).map({ String(decoding: $0, as: UTF8.self) }) {
-            let next = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        for part in path.utf8.split(separator: 0x2F).map({ String(decoding: $0, as: UTF8.self) }) {
+            guard part != ".", part != ".." else {  // a resolved path has neither; refused rather than walked
+                Darwin.close(fd)
+                return nil
+            }
+            let next = openat(fd, part, flags)
             Darwin.close(fd)
             guard next >= 0 else { return nil }
+            var st = stat()
+            guard fstat(next, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else {
+                Darwin.close(next)
+                return nil
+            }
             fd = next
         }
         return fd

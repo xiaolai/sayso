@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -43,6 +44,34 @@ func leaks(notIn []string, texts ...string) []string {
 		}
 	}
 	return out
+}
+
+// exact re-encodes v through JSON keeping every number as written, so an integer beyond 2^53 compares exactly
+// rather than as the nearest float64.
+func exact(v any) any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("unencodable %T", v)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	var out any
+	_ = d.Decode(&out)
+	return out
+}
+
+// sameExact reports whether got and want have the same JSON meaning, numbers compared as written. want must come from
+// decodeExact.
+func sameExact(got, want any) bool { return reflect.DeepEqual(exact(got), exact(want)) }
+
+// decodeExact is decode with numbers kept as written (json.Number), for comparison with sameExact.
+func decodeExact(c fixtures.Case, v any) error {
+	d := json.NewDecoder(bytes.NewReader(c.Raw))
+	d.UseNumber()
+	if err := d.Decode(v); err != nil {
+		return fmt.Errorf("fixture does not decode: %w", err)
+	}
+	return nil
 }
 
 // decode unmarshals a case's raw JSON into v.

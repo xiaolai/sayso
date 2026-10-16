@@ -66,7 +66,7 @@ type seenRequest struct {
 func TestMint(t *testing.T) {
 	run(t, "mint", func(t *testing.T, c fixtures.Case) (fixtures.Outcome, string) {
 		var mc mintCase
-		if err := decode(c, &mc); err != nil {
+		if err := decodeExact(c, &mc); err != nil {
 			return fixtures.Fail, err.Error()
 		}
 		return outcome(checkMint(t, mc))
@@ -130,7 +130,7 @@ func checkMint(t *testing.T, mc mintCase) []string {
 		if w, ok := want["secret"]; ok && sec.Bearer() != w {
 			p = append(p, "secret differs")
 		}
-		if w, ok := want["expiresAt"]; ok && !same(sec.ExpiresAt.Unix(), w) {
+		if w, ok := want["expiresAt"]; ok && !sameExact(sec.ExpiresAt.Unix(), w) {
 			p = append(p, fmt.Sprintf("expiresAt %d, want %v", sec.ExpiresAt.Unix(), w))
 		}
 	} else {
@@ -138,7 +138,7 @@ func checkMint(t *testing.T, mc mintCase) []string {
 		var e *openaihttp.Error
 		if errors.As(err, &e) {
 			for key, got := range map[string]any{"status": e.Status, "type": e.Type, "code": e.Code, "param": e.Param, "requestId": e.RequestID} {
-				if w, ok := want[key]; ok && !same(got, w) {
+				if w, ok := want[key]; ok && !sameExact(got, w) {
 					p = append(p, fmt.Sprintf("%s %v, want %v", key, got, w))
 				}
 			}
@@ -147,10 +147,10 @@ func checkMint(t *testing.T, mc mintCase) []string {
 			p = append(p, leaks(strings_(want["notInDescription"]), err.Error())...)
 		}
 	}
-	if w, ok := want["requests"]; ok && !same(len(requests), w) {
+	if w, ok := want["requests"]; ok && !sameExact(len(requests), w) {
 		p = append(p, fmt.Sprintf("requests %d, want %v", len(requests), w))
 	}
-	if w, ok := want["refreshCalls"]; ok && !same(creds.refreshes, w) {
+	if w, ok := want["refreshCalls"]; ok && !sameExact(creds.refreshes, w) {
 		p = append(p, fmt.Sprintf("refreshCalls %d, want %v", creds.refreshes, w))
 	}
 	if w, ok := want["request"].(map[string]any); ok {
@@ -166,7 +166,7 @@ func checkMint(t *testing.T, mc mintCase) []string {
 				if key == "authorization" {
 					v = auth
 				}
-				if !same(got[key], v) {
+				if !sameExact(got[key], v) {
 					p = append(p, fmt.Sprintf("request %s = %v, want %v", key, normal(got[key]), v))
 				}
 			}

@@ -1,5 +1,5 @@
 {
- "count": 750,
+ "count": 752,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1148,6 +1148,12 @@
    "requires": []
   },
   {
+   "id": "event-usage-counts-int64-range",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
    "id": "event-metadata-equivalent-names-typed",
    "file": "events/events.json",
    "component": "session",
@@ -1173,6 +1179,12 @@
   },
   {
    "id": "mint-ok",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-beyond-double",
    "file": "mint/mint.json",
    "component": "mint",
    "requires": []

@@ -33,7 +33,7 @@ type sessionCase struct {
 func TestSession(t *testing.T) {
 	run(t, "session", func(t *testing.T, c fixtures.Case) (fixtures.Outcome, string) {
 		var sc sessionCase
-		if err := decode(c, &sc); err != nil {
+		if err := decodeExact(c, &sc); err != nil {
 			return fixtures.Fail, err.Error()
 		}
 		switch sc.Kind {
@@ -141,7 +141,7 @@ func observe(ev realtime.Event) map[string]any {
 		m["responseId"], m["delta"] = e.ResponseID, e.Delta
 	case realtime.ResponseDone:
 		m["responseId"], m["status"], m["statusReason"], m["metadata"] = e.ResponseID, string(e.Status), e.StatusReason, e.Metadata
-		m["usage"] = map[string]int{
+		m["usage"] = map[string]int64{
 			"inputTokens": e.Usage.InputTokens, "outputTokens": e.Usage.OutputTokens, "inputTextTokens": e.Usage.InputTextTokens,
 			"outputTextTokens": e.Usage.OutputTextTokens, "outputAudioTokens": e.Usage.OutputAudioTokens,
 		}
@@ -195,7 +195,7 @@ func checkEvent(raw string, want map[string]any) []string {
 		if key == "notInDescription" {
 			continue
 		}
-		if !same(got[key], w) {
+		if !sameExact(got[key], w) {
 			p = append(p, fmt.Sprintf("%s = %v, want %v", key, normal(got[key]), w))
 		}
 	}

@@ -448,10 +448,7 @@ func decodeUsage(u wire.Object) (TokenUsage, error) {
 	if err != nil {
 		return t, err
 	}
-	if !fitsInt(in) || !fitsInt(out) {
-		return t, wire.ErrInvalid
-	}
-	t.InputTokens, t.OutputTokens = int(in), int(out)
+	t.InputTokens, t.OutputTokens = in, out
 	if d, ok, err := u.Object("input_token_details"); err != nil {
 		return t, err
 	} else if ok {
@@ -459,10 +456,7 @@ func decodeUsage(u wire.Object) (TokenUsage, error) {
 		if err != nil {
 			return t, err
 		}
-		if !fitsInt(text) {
-			return t, wire.ErrInvalid
-		}
-		t.InputTextTokens = int(text)
+		t.InputTextTokens = text
 	}
 	if d, ok, err := u.Object("output_token_details"); err != nil {
 		return t, err
@@ -475,16 +469,10 @@ func decodeUsage(u wire.Object) (TokenUsage, error) {
 		if err != nil {
 			return t, err
 		}
-		if !fitsInt(text) || !fitsInt(audio) {
-			return t, wire.ErrInvalid
-		}
-		t.OutputTextTokens, t.OutputAudioTokens, t.Detailed = int(text), int(audio), true
+		t.OutputTextTokens, t.OutputAudioTokens, t.Detailed = text, audio, true
 	}
 	return t, nil
 }
-
-// fitsInt reports whether v survives conversion to int, which is 32 bits on some platforms.
-func fitsInt(v int64) bool { return int64(int(v)) == v }
 
 // decodeError reads the event's error object; a missing error or error.type is a protocol error.
 func decodeError(typ string, w wire.Object) (*openaihttp.Error, error) {
@@ -526,12 +514,13 @@ const (
 )
 
 // TokenUsage is the response.done usage: the totals and, when the server sends input_token_details /
-// output_token_details, their text and audio parts.
+// output_token_details, their text and audio parts. Counts are signed 64-bit on every platform, as the wire allows
+// and as Swift keeps them: int is 32 bits on some.
 type TokenUsage struct {
-	InputTokens, OutputTokens int
-	InputTextTokens           int
-	OutputTextTokens          int
-	OutputAudioTokens         int
+	InputTokens, OutputTokens int64
+	InputTextTokens           int64
+	OutputTextTokens          int64
+	OutputAudioTokens         int64
 	// Detailed is set when output_token_details was present, so a zero audio count is real.
 	Detailed bool
 }

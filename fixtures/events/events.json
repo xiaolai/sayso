@@ -735,6 +735,25 @@
   "note": "A token count beyond int64 is refused, naming the type."
  },
  {
+  "id": "event-usage-counts-int64-range",
+  "component": "session",
+  "kind": "event",
+  "raw": "{\"type\": \"response.done\", \"response\": {\"id\": \"r\", \"status\": \"completed\", \"usage\": {\"input_tokens\": 2147483648, \"output_tokens\": 9223372036854775807, \"input_token_details\": {\"text_tokens\": 4294967296}, \"output_token_details\": {\"text_tokens\": 2147483647, \"audio_tokens\": 9223372036854775806}}}}",
+  "expect": {
+   "type": "response.done",
+   "responseId": "r",
+   "status": "completed",
+   "usage": {
+    "inputTokens": 2147483648,
+    "outputTokens": 9223372036854775807,
+    "inputTextTokens": 4294967296,
+    "outputTextTokens": 2147483647,
+    "outputAudioTokens": 9223372036854775806
+   }
+  },
+  "note": "Token counts are signed 64-bit on every platform: one beyond 32 bits, and the largest int64, are kept exactly, never narrowed."
+ },
+ {
   "id": "event-metadata-equivalent-names-typed",
   "component": "session",
   "kind": "event",

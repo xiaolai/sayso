@@ -197,6 +197,22 @@ final class SessionCloseTests: XCTestCase {
         } catch is RealtimeSession.Closed {}
     }
 
+    /// With a message buffered, close releases the reader at once; it still returns only once URLSession has reported
+    /// the task complete, the transport's own end, with the peer never answering the close.
+    func testCloseWaitsForTheTransportNotTheReader() async throws {
+        let server = try FakeClosingServer(code: nil, reason: "", greeting: #"{"type":"session.created"}"#)
+        defer { server.stop() }
+        let session = try await open(port: server.port)
+        // Let the greeting arrive, so the reader holds a buffered message when close starts.
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertFalse(session.transportCompleted)
+        let started = Date()
+        await session.close()
+        let wall = Date().timeIntervalSince(started)
+        XCTAssertTrue(session.transportCompleted, "close returned before URLSession reported the task complete")
+        XCTAssertLessThan(wall, RealtimeSession.closeGrace + 1, "close outlived its grace")
+    }
+
     private func open(port: UInt16) async throws -> RealtimeSession {
         let client = try FakeOpenAI.client(port: port)
         return try await RealtimeSession.open(
@@ -215,13 +231,13 @@ final class SessionCloseTests: XCTestCase {
 }
 
 /// A WebSocket server that sends one close frame with `code` and `reason` when a client connects, or, with no code,
-/// reads nothing, so a close is never answered.
+/// reads nothing, so a close is never answered. A `greeting` is sent first, as a text message.
 private final class FakeClosingServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "fake-closing-ws")
     let port: UInt16
 
-    init(code: UInt16?, reason: String) throws {
+    init(code: UInt16?, reason: String, greeting: String? = nil) throws {
         let parameters = FakeOpenAI.loopbackParameters(NWParameters(tls: nil, tcp: .init()))
         let options = NWProtocolWebSocket.Options()
         options.autoReplyPing = true
@@ -231,6 +247,12 @@ private final class FakeClosingServer: @unchecked Sendable {
         listener.newConnectionHandler = { connection in
             connection.stateUpdateHandler = { state in
                 guard case .ready = state else { return }
+                if let greeting {
+                    let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+                    let context = NWConnection.ContentContext(identifier: "greeting", metadata: [metadata])
+                    connection.send(
+                        content: Data(greeting.utf8), contentContext: context, isComplete: true, completion: .idempotent)
+                }
                 if let code {
                     let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
                     if code >= 3000 {

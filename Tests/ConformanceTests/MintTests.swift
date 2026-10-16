@@ -68,7 +68,7 @@ enum MintCheck {
             case .failure(let error): return ["mint failed: \(error)"]
             case .success(let secret):
                 if let w = want["secret"], !FakeOpenAI.same(secret.bearer, w) { p.append("secret differs") }
-                let at = Int(secret.expiresAt.timeIntervalSince1970)
+                let at = secret.expiresAtUnix
                 if let w = want["expiresAt"], !FakeOpenAI.same(at, w) { p.append("expiresAt \(at), want \(w)") }
             }
         } else {

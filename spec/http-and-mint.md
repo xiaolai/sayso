@@ -23,7 +23,7 @@ Tests reach a fake server only through an origin injected explicitly as a test o
 - Reply: at most 1 MiB; JSON with `value`, a non-empty string of at most 4,096 UTF-8 bytes, and `expires_at`, an
   integer (Unix seconds), read with the [wire JSON](session.md#wire-json) rules. Anything else is `protocol`, with
   the reply's status and request id. The secret is registered with the scrubber before it is
-  returned, with its expiry.
+  returned, with its expiry kept as that exact integer (beyond 2^53 a double cannot hold it).
 - **`auth-expired` once.** On an `auth-expired` reply the minter asks the credential source to refresh after that
   token ([credentials](credentials.md)) and retries once. A second `auth-expired` is returned as `auth-expired`,
   with the second refusal's status and provider fields.
