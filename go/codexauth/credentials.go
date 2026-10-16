@@ -71,9 +71,12 @@ type Info struct {
 // concurrent use and lives as long as the caller wants; Codex runs only during a fetch or a refresh.
 type Credentials struct {
 	// cfg sits behind a pointer, so formatting a struct that holds Credentials in an unexported field (which fmt
-	// prints by reflection, without the redacting methods) shows an address, never the environment it holds.
-	cfg  *Config // never changed after New
-	path string  // PATH of the inherited environment
+	// prints by reflection, without the redacting methods) shows an address. Its Env is nil: the environment is in env.
+	cfg *Config // never changed after New
+	// env returns a copy of the child's environment. The variables live in a closure, which fmt prints as an address
+	// and reflection cannot read, so neither formatting nor reflection on Credentials reaches them.
+	env  func() []string
+	path string // PATH of the inherited environment
 
 	lock chan struct{} // held across a fetch or refresh
 	// The mutable state sits behind a pointer, so formatting a copy of the value (the redacting methods take the
@@ -140,7 +143,10 @@ func New(cfg Config) (*Credentials, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	c := &Credentials{cfg: &cfg, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
+	held := cfg.Env
+	cfg.Env = nil
+	env := func() []string { return slices.Clone(held) }
+	c := &Credentials{cfg: &cfg, env: env, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
 	c.refresh = c.refreshCodex
 	return c, nil
 }
@@ -344,7 +350,7 @@ func (c *Credentials) fallbackState(e *Error, fallback bool) *Error {
 
 func (c *Credentials) start(ctx context.Context, bin string) (*codexapp.Client, *Error) {
 	cl, err := codexapp.Start(ctx, codexapp.Config{
-		Bin: bin, CodexHome: c.cfg.CodexHome, Env: codexapp.EnvOf(c.cfg.Env), Timeout: c.cfg.Timeout, Logger: c.cfg.Logger,
+		Bin: bin, CodexHome: c.cfg.CodexHome, Env: codexapp.EnvOf(c.env()), Timeout: c.cfg.Timeout, Logger: c.cfg.Logger,
 		ClientName: c.cfg.ClientName, Guard: c.cfg.Guard,
 	})
 	if err != nil {
