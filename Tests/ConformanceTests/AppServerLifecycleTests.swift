@@ -92,6 +92,28 @@ final class AppServerLifecycleTests: XCTestCase {
         waitFor("the child to end") { kill(pid, 0) != 0 }
     }
 
+    /// Releasing a client never blocks the releasing thread on its close, which waits seconds for a child that
+    /// ignores SIGTERM; the child still ends.
+    func testReleaseDoesNotWaitForTheClose() throws {
+        let (script, cleanup) = try fakeCodex(
+            "import signal\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                + "print(json.dumps({'method': 'ignoring'}), flush=True)\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let ignoring = DispatchSemaphore(value: 0)
+        var c: AppServerClient? = try start(script, timeout: 5) { _ in ignoring.signal() }
+        XCTAssertEqual(ignoring.wait(timeout: .now() + 5), .success, "the child did not start ignoring SIGTERM")
+        let pid = try XCTUnwrap(c).pid
+        weak let released = c
+        let start = Date()
+        c = nil
+        let took = Date().timeIntervalSince(start)
+        XCTAssertNil(released, "the client was not released")
+        XCTAssertLessThan(took, 0.5, "the release waited for the close")
+        let deadline = Date().addingTimeInterval(AppServerClient.killGrace + 3)
+        while kill(pid, 0) == 0, Date() < deadline { usleep(20_000) }
+        XCTAssertNotEqual(kill(pid, 0), 0, "the child outlived the client")
+    }
+
     /// A host that ignores SIGCHLD has the kernel reap the child at exit, so by the time close runs its ID, and its
     /// group ID, may be another process's: close then signals nothing, even when a group with that ID is alive.
     func testCloseSignalsNothingOnceTheSystemReapedTheChild() throws {

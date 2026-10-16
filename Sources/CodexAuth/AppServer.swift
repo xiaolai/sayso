@@ -292,7 +292,12 @@ public final class AppServerClient: @unchecked Sendable {
         return c
     }
 
-    deinit { core.close() }
+    /// The close runs on a thread of its own: it may wait seconds for a child that ignores SIGTERM, and the thread
+    /// that releases the client may be the main thread.
+    deinit {
+        let core = core
+        AppServerCore.thread { core.close() }
+    }
 
     /// The first 64 KiB the child wrote to stderr, scrubbed. It is for diagnostics a caller chooses to show; the
     /// package never logs it, because the scrubber cannot recognise every credential format.
@@ -1187,7 +1192,7 @@ final class AppServerCore: @unchecked Sendable {
         for fd in fds where fd >= 0 { Darwin.close(fd) }
     }
 
-    private static func thread(_ body: @escaping @Sendable () -> Void) {
+    static func thread(_ body: @escaping @Sendable () -> Void) {
         let t = Thread(block: body)
         t.stackSize = 1 << 20
         t.start()
