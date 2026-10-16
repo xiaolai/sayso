@@ -114,6 +114,34 @@ final class AppServerLifecycleTests: XCTestCase {
         XCTAssertNotEqual(kill(pid, 0), 0, "the child outlived the client")
     }
 
+    /// Close fails every call with the close, even while an answer to a server request is stuck in a write the child
+    /// does not read: the stuck answer does not get to blame the child first. As in Go.
+    func testCloseDuringAStuckAnswerReportsTheClose() throws {
+        let (script, cleanup) = try fakeCodex(
+            "for i in range(5000):\n    sys.stdout.write(json.dumps({'id': 'srv-%d' % i, 'method': 'x'}) + '\\n')\n"
+                + "sys.stdout.flush()\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let c = try start(script, timeout: 60, nil)
+        waitFor("the answers to back up") { c.held.refusalBytes > 256 << 10 }
+        c.setTestSeams(recordAdmissions: true)
+        final class Outcome: @unchecked Sendable {
+            let lock = NSLock()
+            var error: AppServerError?
+        }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            do { _ = try c.call("m") } catch let e as AppServerError { outcome.lock.withLock { outcome.error = e } } catch {}
+            done.signal()
+        }
+        waitFor("the call to be queued") {
+            c.admittedMessages.contains { String(decoding: $0, as: UTF8.self).contains(#""method":"m""#) }
+        }
+        c.close()
+        XCTAssertEqual(done.wait(timeout: .now() + 10), .success, "the call did not return")
+        XCTAssertEqual(outcome.lock.withLock { outcome.error?.message }, "Codex app-server was closed")
+    }
+
     /// A host that ignores SIGCHLD has the kernel reap the child at exit, so by the time close runs its ID, and its
     /// group ID, may be another process's: close then signals nothing, even when a group with that ID is alive.
     func testCloseSignalsNothingOnceTheSystemReapedTheChild() throws {

@@ -665,6 +665,9 @@ final class AppServerCore: @unchecked Sendable {
             outWake.signal()
             _ = marker.done.wait(timeout: .now() + Self.closeFlush)
         }
+        // The close is the failure from here on, as in Go: a write it cuts short, an answer to a server request
+        // included, reports the close, not the child.
+        fail(AppServerError("Codex app-server was closed"))
         lock.withLock { closed = true }
         // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
         writeGate.wait()
@@ -688,7 +691,6 @@ final class AppServerCore: @unchecked Sendable {
             stopReaders = true
             return stderrBytes.count
         }
-        fail(AppServerError("Codex app-server was closed"))
         // The group is no longer signalled: reap the child now, or once it exits if it was abandoned.
         let child = pid
         if reaped(by: .now()) {
@@ -864,7 +866,7 @@ final class AppServerCore: @unchecked Sendable {
     private func write(_ data: Data, deadline: DispatchTime) throws {
         let refused = AppServerError("Codex app-server is not accepting requests")
         let timedOut = AppServerError("Codex app-server did not accept a request within \(timeout) s")
-        func stopped() -> AppServerError? { lock.withLock { closed ? refused : failure } }
+        func stopped() -> AppServerError? { lock.withLock { failure ?? (closed ? refused : nil) } }
         while writeGate.wait(timeout: min(deadline, .now() + .milliseconds(50))) == .timedOut {
             if let e = stopped() { throw e }
             if DispatchTime.now() >= deadline { throw timedOut }

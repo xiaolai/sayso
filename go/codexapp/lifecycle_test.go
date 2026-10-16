@@ -392,3 +392,34 @@ func TestHandlerUsingItsClientLetsItBeCollected(t *testing.T) {
 		}
 	}
 }
+
+// Close fails every call with the close, even while an answer to a server request is stuck in a write the child does
+// not read: the stuck answer does not get to blame the child first.
+func TestCloseDuringAStuckAnswerReportsTheClose(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	script := fakeCodex(t, "for i in range(5000):\n    sys.stdout.write(json.dumps({'id': 'srv-%d' % i, 'method': 'x'}) + '\\n')\n"+
+		"sys.stdout.flush()\ntime.sleep(30)\n")
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: bulkTimeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := c.k
+	locked := func(f func() bool) func() bool {
+		return func() bool { k.mu.Lock(); defer k.mu.Unlock(); return f() }
+	}
+	waitFor(t, "the answers to back up", locked(func() bool { return k.refusalBytes > 256<<10 }))
+	done := make(chan error, 1)
+	go func() { done <- c.Call(t.Context(), "m", nil, nil) }()
+	waitFor(t, "the call to be queued", locked(func() bool {
+		for _, o := range k.out {
+			if !o.refusal && o.b != nil {
+				return true
+			}
+		}
+		return false
+	}))
+	_ = c.Close()
+	if err := recv(t, "the call", done); err == nil || !strings.Contains(err.Error(), "was closed") {
+		t.Errorf("the queued call failed with %v, want the close", err)
+	}
+}
