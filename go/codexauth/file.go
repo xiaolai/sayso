@@ -49,8 +49,10 @@ var afterResolve func()
 // is codex-error. The caller closes the location.
 //
 // The resolved path is then opened one folder at a time from the root, each relative to the folder before it and
-// without following a link: the folder opened is the one at the resolved path, which is inside confine, even when a
-// folder of the path is replaced after resolution. Such a replacement with a link fails the open instead.
+// without following a link, and it is inside confine when one of the folders opened is confine's folder, compared by
+// device and inode rather than by path: a path spelt in another case on a case-insensitive volume, or reaching the
+// folder through another mount, names the same folder. The check is on the folders the read goes through, even when
+// a folder of the path is replaced after resolution; a replacement with a link fails the open instead.
 func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 	if codexHome == "" {
 		return authLocation{path: filepath.Join(home, ".codex", authFileName)}, nil
@@ -65,27 +67,24 @@ func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 	if err != nil {
 		return authLocation{}, fail(StateCodexError, "CODEX_HOME does not resolve", err)
 	}
+	var root *folderID
 	if confine != "" {
-		// Absolute first: EvalSymlinks keeps a relative path relative, and Rel cannot relate it to real.
-		abs, err := filepath.Abs(confine)
-		if err != nil {
+		var st unix.Stat_t
+		if err := unix.Stat(confine, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR {
 			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to does not resolve", err)
 		}
-		root, err := filepath.EvalSymlinks(abs)
-		if err != nil {
-			return authLocation{}, fail(StateCodexError, "the folder CODEX_HOME is confined to does not resolve", err)
-		}
-		rel, err := filepath.Rel(root, real)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return authLocation{}, fail(StateCodexError, "CODEX_HOME is outside the folder it is confined to", nil)
-		}
+		root = &folderID{dev: uint64(st.Dev), ino: st.Ino}
 	}
 	if afterResolve != nil {
 		afterResolve()
 	}
-	dir, err := openDirNoFollow(real)
+	dir, inside, err := openDirNoFollow(real, root)
 	if err != nil {
 		return authLocation{}, fail(StateCodexError, "CODEX_HOME is not a folder, or a folder of its path changed", err)
+	}
+	if root != nil && !inside {
+		_ = unix.Close(dir)
+		return authLocation{}, fail(StateCodexError, "CODEX_HOME is outside the folder it is confined to", nil)
 	}
 	// Checked on the open folder, the one every read goes through.
 	var st unix.Stat_t
@@ -100,15 +99,33 @@ func authFilePath(codexHome, home, confine string) (authLocation, *Error) {
 	return authLocation{dir: &pinnedDir{dir}, path: filepath.Join(real, authFileName)}, nil
 }
 
+// folderID is a folder's identity, the same at every path that reaches it.
+type folderID struct{ dev, ino uint64 }
+
 // openDirNoFollow opens the folder at the clean absolute path p one component at a time, never following a link and
-// never blocking: a link, a FIFO or a file anywhere on the path fails.
-func openDirNoFollow(p string) (int, error) {
+// never blocking: a link, a FIFO or a file anywhere on the path fails. through reports whether one of the folders
+// opened, "/" and the last included, is the folder *via; false when via is nil.
+func openDirNoFollow(p string, via *folderID) (fd int, through bool, err error) {
 	if !filepath.IsAbs(p) || filepath.Clean(p) != p {
-		return -1, errors.New("not a clean absolute path")
+		return -1, false, errors.New("not a clean absolute path")
 	}
-	fd, err := openRetry(unix.AT_FDCWD, "/")
+	fd, err = openRetry(unix.AT_FDCWD, "/")
 	if err != nil {
-		return -1, err
+		return -1, false, err
+	}
+	is := func(fd int) (bool, error) {
+		if via == nil {
+			return false, nil
+		}
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			return false, err
+		}
+		return uint64(st.Dev) == via.dev && st.Ino == via.ino, nil
+	}
+	if through, err = is(fd); err != nil {
+		_ = unix.Close(fd)
+		return -1, false, err
 	}
 	for name := range strings.SplitSeq(strings.TrimPrefix(p, "/"), "/") {
 		if name == "" {
@@ -116,16 +133,22 @@ func openDirNoFollow(p string) (int, error) {
 		}
 		if name == "." || name == ".." {
 			_ = unix.Close(fd)
-			return -1, errors.New("the path names a relative folder")
+			return -1, false, errors.New("the path names a relative folder")
 		}
 		next, err := openRetry(fd, name)
 		_ = unix.Close(fd)
 		if err != nil {
-			return -1, err
+			return -1, false, err
 		}
 		fd = next
+		if !through {
+			if through, err = is(fd); err != nil {
+				_ = unix.Close(fd)
+				return -1, false, err
+			}
+		}
 	}
-	return fd, nil
+	return fd, through, nil
 }
 
 // openRetry opens the folder name inside dir with dirFlags, retrying an interrupted call.

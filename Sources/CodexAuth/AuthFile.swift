@@ -38,22 +38,28 @@ enum AuthFile {
         guard let real = realPath(codexHome) else {
             throw CodexAuthError(.codexError, message: "CODEX_HOME does not resolve")
         }
-        var confined = false
+        var root: FolderID?
         if let confine, !confine.isEmpty {
-            guard let root = realPath(confine) else {
+            var st = stat()
+            guard stat(confine, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else {
                 throw CodexAuthError(.codexError, message: "the folder CODEX_HOME is confined to does not resolve")
             }
-            guard real == root || real.utf8.starts(with: (root == "/" ? "/" : root + "/").utf8) else {
-                throw CodexAuthError(.codexError, message: "CODEX_HOME is outside the folder it is confined to")
-            }
-            confined = true
+            root = FolderID(dev: st.st_dev, ino: st.st_ino)
         }
         // The resolved path holds no link, so it is opened from "/" one folder at a time, never following one: a
         // folder of the path replaced since it was resolved (by a link elsewhere, say) fails the open instead of
-        // redirecting it, and the folder opened is the one the confinement above was checked on.
-        guard let dir = openResolved(real) else {
-            let what = confined ? "CODEX_HOME is not a folder inside the folder it is confined to" : "CODEX_HOME is not a folder"
-            throw CodexAuthError(.codexError, message: what)
+        // redirecting it. It is inside the confinement when one of the folders opened is the confinement's folder,
+        // compared by device and inode as in Go, never by path: the check is on the folders the read goes through,
+        // and a path reaching the folder through another mount (a firmlink, say) names the same folder.
+        guard let (dir, inside) = openResolved(real, through: root) else {
+            throw CodexAuthError(
+                .codexError,
+                message: root != nil
+                    ? "CODEX_HOME is not a folder inside the folder it is confined to" : "CODEX_HOME is not a folder")
+        }
+        guard root == nil || inside else {
+            Darwin.close(dir)
+            throw CodexAuthError(.codexError, message: "CODEX_HOME is outside the folder it is confined to")
         }
         // Checked on the open folder, the one every read goes through.
         var st = stat()
@@ -68,15 +74,31 @@ enum AuthFile {
         return AuthLocation(dir: dir, path: join(real, fileName))
     }
 
+    /// A folder's identity, the same at every path that reaches it.
+    struct FolderID: Equatable {
+        let dev: dev_t
+        let ino: ino_t
+    }
+
+    /// As ``openResolved(_:through:)``, without the identity check.
+    static func openResolved(_ path: String) -> Int32? { openResolved(path, through: nil)?.fd }
+
     /// The folder at `path`, an absolute path holding no link, opened from "/" one component at a time without
     /// following a link and without blocking on a FIFO, each component checked to be a folder on its own descriptor;
     /// nil on failure. Each folder is opened for search only (O_SEARCH): walking a path needs search permission on
-    /// its folders, not read permission, so an ancestor such as a 0711 home folder does not refuse it.
-    static func openResolved(_ path: String) -> Int32? {
+    /// its folders, not read permission, so an ancestor such as a 0711 home folder does not refuse it. `through` is
+    /// whether one of the folders opened, "/" and the last included, is the folder `via`; false when `via` is nil.
+    static func openResolved(_ path: String, through via: FolderID?) -> (fd: Int32, through: Bool)? {
         let flags = O_SEARCH | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
         guard path.utf8.first == 0x2F, !path.utf8.contains(0) else { return nil }
         var fd = openRetrying { open("/", flags) }
         guard fd >= 0 else { return nil }
+        var st = stat()
+        guard fstat(fd, &st) == 0 else {
+            Darwin.close(fd)
+            return nil
+        }
+        var through = via == FolderID(dev: st.st_dev, ino: st.st_ino)
         for part in path.utf8.split(separator: 0x2F).map({ String(decoding: $0, as: UTF8.self) }) {
             guard part != ".", part != ".." else {  // a resolved path has neither; refused rather than walked
                 Darwin.close(fd)
@@ -85,14 +107,14 @@ enum AuthFile {
             let next = openRetrying { openat(fd, part, flags) }
             Darwin.close(fd)
             guard next >= 0 else { return nil }
-            var st = stat()
             guard fstat(next, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else {
                 Darwin.close(next)
                 return nil
             }
+            through = through || via == FolderID(dev: st.st_dev, ino: st.st_ino)
             fd = next
         }
-        return fd
+        return (fd, through)
     }
 
     /// Runs `open` until it is not interrupted: a signal arriving during an open is no reason to refuse the file.

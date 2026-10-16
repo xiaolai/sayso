@@ -319,6 +319,30 @@ final class CredentialsUnitTests: XCTestCase {
         XCTAssertNil(AuthFile.openResolved(home + "/a/../a/b"), "a path with .. is refused")
     }
 
+    /// Confinement compares folders, not paths, as in Go: CODEX_HOME reached through the data volume's own mount
+    /// point, which realpath keeps, or spelt in another case is inside; the folder beside it is not.
+    func testConfinementComparesFoldersNotPaths() throws {
+        let tmp = try XCTUnwrap(realpath(NSTemporaryDirectory(), nil).map { p in defer { free(p) }; return String(cString: p) })
+        let base = tmp + "/sayso-confine-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        for side in ["confine", "outside"] {
+            try FileManager.default.createDirectory(atPath: base + "/\(side)/a/b", withIntermediateDirectories: true)
+            FileManager.default.createFile(
+                atPath: base + "/\(side)/a/b/auth.json", contents: Data(#"{"tokens":{"access_token":"\#(side)-token"}}"#.utf8))
+        }
+        var homes = [base + "/confine/a/b"]
+        let data = "/System/Volumes/Data" + base
+        if FileManager.default.fileExists(atPath: data) { homes.append(data + "/confine/a/b") }
+        if FileManager.default.fileExists(atPath: base + "/CONFINE") { homes.append(base + "/CONFINE/A/b") }
+        for codexHome in homes {
+            let loc = try AuthFile.location(codexHome: codexHome, home: base, confine: base + "/confine")
+            defer { loc.close() }
+            XCTAssertEqual(try AuthFile.read(loc, onRetry: nil).bearer, "confine-token", codexHome)
+        }
+        XCTAssertGreaterThan(homes.count, 1, "neither another mount point nor another case reaches the folder here")
+        XCTAssertThrowsError(try AuthFile.location(codexHome: base + "/outside/a/b", home: base, confine: base + "/confine"))
+    }
+
     /// A FIFO named as CODEX_HOME is refused at once instead of blocking the open.
     func testFIFOAsCodexHomeIsRefusedWithoutBlocking() throws {
         let base = try XCTUnwrap(realpath(NSTemporaryDirectory(), nil).map { p in defer { free(p) }; return String(cString: p) })

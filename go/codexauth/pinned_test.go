@@ -156,3 +156,41 @@ func TestSearchableUnreadableAncestorIsWalked(t *testing.T) {
 		t.Fatalf("read through a searchable, unreadable ancestor: %v", e)
 	}
 }
+
+// Confinement compares folders, not paths: on a case-insensitive volume a CODEX_HOME, or the confinement, spelt in
+// another case names the same folder and is inside, as Swift, whose realpath returns the stored case, finds it; so
+// is a CODEX_HOME reached through the data volume's own mount point on macOS, which resolving links keeps. The
+// folder beside it, spelt the same way, stays outside.
+func TestConfinementComparesFoldersNotSpellings(t *testing.T) {
+	base := tree(t)
+	if _, err := os.Stat(filepath.Join(base, "CONFINE")); err != nil {
+		t.Skip("the temporary folder is on a case-sensitive volume")
+	}
+	cases := []struct{ home, confine string }{
+		{filepath.Join(base, "CONFINE/a/b"), "confine"},
+		{filepath.Join(base, "confine/A/B"), "confine"},
+		{filepath.Join(base, "confine/a/b"), "Confine"},
+	}
+	if data := "/System/Volumes/Data" + base; dirExists(data) {
+		cases = append(cases, struct{ home, confine string }{filepath.Join(data, "confine/a/b"), "confine"})
+	}
+	for _, tc := range cases {
+		loc, e := authFilePath(tc.home, base, filepath.Join(base, tc.confine))
+		if e != nil {
+			t.Fatalf("%s confined to %s: %v", tc.home, tc.confine, e)
+		}
+		tok, e := readAuthFile(loc, nil)
+		loc.close()
+		if e != nil || tok.Bearer() != "confine-token" {
+			t.Fatalf("%s confined to %s: read %v", tc.home, tc.confine, e)
+		}
+	}
+	if _, e := authFilePath(filepath.Join(base, "OUTSIDE", "a", "b"), base, filepath.Join(base, "Confine")); e == nil {
+		t.Fatal("the folder beside the confinement was read")
+	}
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
