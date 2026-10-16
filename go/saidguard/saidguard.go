@@ -1307,22 +1307,22 @@ func svScriptUnits(s, language string) []svUnit {
 			j++
 		}
 		if len(labels) >= 2 { // "one.Next" has no second lowercase label: a number word and a word
-			var parts, dotted, joined, joinedDotted []string
-			hyphen := false
+			// One unit a label and one a dot, so each choice is independent and the readings stay linear in the
+			// labels: a hyphenated label split or joined on its own ("e-mail.long-term.com" = "email dot long term
+			// dot com"), and "dot" said or not at each dot. A dot written by the transcript is unspoken, so
+			// "www.example dot com" already reads as "www example dot com": a per-dot choice accepts no reading the
+			// written dots did not.
 			for i, l := range labels {
 				if i > 0 {
-					dotted, joinedDotted = append(dotted, "dot"), append(joinedDotted, "dot")
+					units = append(units, svUnit{lit("dot"), lit()})
 				}
 				ws := strings.FieldsFunc(l, svJoiner)
-				hyphen = hyphen || len(ws) > 1
-				parts, dotted = append(parts, ws...), append(dotted, ws...)
-				joined, joinedDotted = append(joined, strings.Join(ws, "")), append(joinedDotted, strings.Join(ws, ""))
+				unit := svUnit{lit(ws...)}
+				if len(ws) > 1 { // "e-mail.com" = "email dot com", as a hyphenated word may be joined
+					unit = append(unit, lit(strings.Join(ws, "")))
+				}
+				units = append(units, unit)
 			}
-			unit := svUnit{lit(parts...), lit(dotted...)}
-			if hyphen { // "e-mail.com" = "email dot com", as a hyphenated word may be joined
-				unit = append(unit, lit(joined...), lit(joinedDotted...))
-			}
-			units = append(units, unit)
 			k = j - 1
 			continue
 		}

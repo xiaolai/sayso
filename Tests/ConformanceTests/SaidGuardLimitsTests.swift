@@ -30,6 +30,10 @@ final class SaidGuardLimitsTests: XCTestCase {
             ("han-repeat", String(repeating: "一亿", count: 10000), "wrong"),
             ("hyphen-chain", String(repeating: "ab", count: 8000), String(repeating: "a-b-", count: 8000) + "x"),
             ("dash-chain", String(repeating: "1-", count: 32767) + "1", "wrong"),
+            (
+                "domain-hyphen-labels", String(repeating: "e-mail.", count: 4000) + "com",
+                String(repeating: "email dot e mail dot ", count: 2000) + "x"
+            ),
             ("spellout-words", String(repeating: "vingt et un ", count: 5000), "wrong"),
             ("spellout-groups", String(repeating: "1 000 ", count: 10000), "wrong"),
             ("spellout-long-group", "1" + String(repeating: " 000", count: 16000), "wrong"),

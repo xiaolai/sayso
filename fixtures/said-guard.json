@@ -3929,5 +3929,86 @@
   "language": "en",
   "expect": false,
   "note": "The elision's apostrophe is kept."
+ },
+ {
+  "id": "said-215",
+  "component": "said-guard",
+  "script": "e-mail.long-term.com",
+  "transcript": "email dot long term dot com",
+  "language": "en",
+  "expect": true,
+  "note": "Each hyphenated label of a domain is split or joined on its own."
+ },
+ {
+  "id": "said-216",
+  "component": "said-guard",
+  "script": "e-mail.long-term.com",
+  "transcript": "e mail dot longterm dot com",
+  "language": "en",
+  "expect": true,
+  "note": "The opposite choice for each label."
+ },
+ {
+  "id": "said-217",
+  "component": "said-guard",
+  "script": "e-mail.long-term.com",
+  "transcript": "email dot long term dot net",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a different label."
+ },
+ {
+  "id": "said-218",
+  "component": "said-guard",
+  "script": "e-mail.long-term.com",
+  "transcript": "email dot com",
+  "language": "en",
+  "expect": false,
+  "note": "Control: a dropped label."
+ },
+ {
+  "id": "said-219",
+  "component": "said-guard",
+  "script": "e-mail.long-term.com",
+  "transcript": "email dot long term com",
+  "language": "en",
+  "expect": true,
+  "note": "\"dot\" is said or not at each dot: a transcript that writes the second dot (\"long term.com\") already reads as no dot there."
+ },
+ {
+  "id": "said-220",
+  "component": "said-guard",
+  "script": "www.example.com",
+  "transcript": "www dot example com",
+  "language": "en",
+  "expect": true,
+  "note": "A per-dot choice, as the written form \"www dot example.com\" reads."
+ },
+ {
+  "id": "said-221",
+  "component": "said-guard",
+  "script": "www.example.com",
+  "transcript": "www dot dot example dot com",
+  "language": "en",
+  "expect": false,
+  "note": "Control: one dot is one \"dot\"."
+ },
+ {
+  "id": "said-222",
+  "component": "said-guard",
+  "script": "e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.com",
+  "transcript": "email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot com",
+  "language": "en",
+  "expect": true,
+  "note": "40 hyphenated labels, alternately joined and split: one unit per label keeps the readings linear, where every combination would be 2^40."
+ },
+ {
+  "id": "said-223",
+  "component": "said-guard",
+  "script": "e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.e-mail.com",
+  "transcript": "email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot email dot e mail dot net",
+  "language": "en",
+  "expect": false,
+  "note": "Control: the last label differs."
  }
 ]
