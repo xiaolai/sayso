@@ -24,6 +24,14 @@ for iOS 17.
 How the implementations are held to one behaviour: [`spec/parity.md`](spec/parity.md). Fixture format:
 [`spec/fixtures.md`](spec/fixtures.md).
 
+## Example applications
+
+| App | What it is | Uses |
+|---|---|---|
+| [recite](https://github.com/xiaolai/recite) | A text-to-speech CLI that checks every recording was read exactly as written | The Go module, since recite 0.3.0 |
+| [Mochi](https://github.com/xiaolai/mochi-macOS) | A native macOS companion for English conversation and voice practice | The Swift package (migration not yet released) |
+| [Checkmate](https://github.com/xiaolai/checkmate) | Native macOS chess practice with offline Stockfish and a spoken coach | The Swift package (migration not yet released) |
+
 ## The route is undocumented
 
 Using a ChatGPT sign-in, through Codex, to mint Realtime client secrets is not a documented OpenAI route, and the
