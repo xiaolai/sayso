@@ -119,7 +119,7 @@ func (s *Scan) Occurrences() ([]int, error) {
 				for k, r := range s.needles {
 					needle := s.pages[r[0]:r[1]]
 					for off := 0; off+len(needle) <= got; {
-						i := bytes.Index(chunk[off:got], needle)
+						i := index(chunk[off:got], needle)
 						if i < 0 {
 							break
 						}
@@ -139,4 +139,26 @@ func (s *Scan) Occurrences() ([]int, error) {
 		}
 	})
 	return counts, err
+}
+
+// index is bytes.Index without holding the needle in vector registers. An asynchronous preemption saves a goroutine's
+// registers to memory, and bytes.Index keeps up to 32 bytes of a needle in vector registers for its whole search, so
+// the scan could find its own copy there: the first 16 bytes of a needle, without the rest, now and then. Only the
+// first byte is searched for in bulk; the rest is compared a byte at a time.
+func index(s, needle []byte) int {
+	for i := 0; i+len(needle) <= len(s); i++ {
+		j := bytes.IndexByte(s[i:len(s)-len(needle)+1], needle[0])
+		if j < 0 {
+			return -1
+		}
+		i += j
+		k := 1
+		for k < len(needle) && s[i+k] == needle[k] {
+			k++
+		}
+		if k == len(needle) {
+			return i
+		}
+	}
+	return -1
 }
