@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/bounded"
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
@@ -161,8 +161,9 @@ func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secre
 		return secret.ClientSecret{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxMintReply+1))
-	defer clear(raw) // the reply holds the secret
+	// The reply holds the secret: it is read into one buffer, cleared on every exit, and read where it lies.
+	raw, err := bounded.Read(resp.Body, resp.ContentLength, maxMintReply+1)
+	defer clear(raw)
 	if err != nil {
 		return secret.ClientSecret{}, openaihttp.TransportError("realtime: mint: read reply", err)
 	}
@@ -174,22 +175,31 @@ func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secre
 	if len(raw) > maxMintReply {
 		return secret.ClientSecret{}, refuse("mint reply exceeds 1 MiB")
 	}
-	root, err := wire.Parse(raw)
-	if err != nil {
+	if !wire.Valid(raw) || wire.KindOf(raw, wire.Root(raw)) != '{' {
 		return secret.ClientSecret{}, refuse("mint reply is not valid JSON")
 	}
-	reply, err := wire.AsObject(root)
-	if err != nil {
-		return secret.ClientSecret{}, refuse("mint reply is not valid JSON")
+	root := wire.Root(raw)
+	e, ok := wire.Member(raw, root, "expires_at")
+	var expires int64
+	if ok && wire.KindOf(raw, e) != 'n' {
+		expires, ok = wire.Int64Of(raw, e)
+	} else {
+		ok = false
 	}
-	expires, ok, err := reply.Int("expires_at")
-	if err != nil || !ok {
+	if !ok {
 		return secret.ClientSecret{}, refuse("mint reply lacks an integer expires_at")
 	}
-	value, ok, err := reply.String("value")
-	if err != nil || !ok || value == "" || len(value) > maxSecretBytes {
+	// The value is decoded into a buffer it cannot outgrow, checked there, and made a string only once it is kept.
+	v, ok := wire.Member(raw, root, "value")
+	if !ok || wire.KindOf(raw, v) != '"' {
+		return secret.ClientSecret{}, refuse("mint reply value is missing, empty or longer than 4096 bytes")
+	}
+	value := make([]byte, 0, v.End-v.Start)
+	defer clear(value[:cap(value)])
+	value, _ = wire.AppendString(value, raw, v)
+	if len(value) == 0 || len(value) > maxSecretBytes {
 		return secret.ClientSecret{}, refuse("mint reply value is missing, empty or longer than 4096 bytes")
 	}
 	// The exact integer is kept; ExpiresAt clamps it to what a time.Time holds without wrapping.
-	return secret.NewClientSecretUnix(value, expires), nil
+	return secret.NewClientSecretUnix(string(value), expires), nil
 }

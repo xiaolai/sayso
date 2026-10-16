@@ -10,9 +10,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"syscall"
+	"unsafe"
 
 	"github.com/xiaolai/sayso/go/failure"
+	"github.com/xiaolai/sayso/go/internal/bounded"
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -97,45 +100,70 @@ func TransportError(msg string, err error) error {
 const maxErrorBody = 64 << 10
 
 // providerError reads the provider error shape {"error":{"message","type","code","param"}} with the wire rules
-// (package wire): a body that is not strict JSON, or a field of the wrong type, yields no fields at all.
+// (package wire): a body that is not strict JSON, or a field of the wrong type, yields no fields at all. The body is
+// read where it lies, and each field is returned scrubbed: only the scrubbed text is made a string.
 func providerError(body []byte) (message, typ, code, param string) {
-	root, err := wire.Parse(body)
-	if err != nil {
+	if !wire.Valid(body) {
 		return "", "", "", ""
 	}
-	o, err := wire.AsObject(root)
-	if err != nil {
+	field := func(obj wire.Span, name string) (wire.Span, bool) { // absent or null is no field
+		v, ok := wire.Member(body, obj, name)
+		return v, ok && wire.KindOf(body, v) != 'n'
+	}
+	e, ok := field(wire.Root(body), "error")
+	if !ok || wire.KindOf(body, e) != '{' {
 		return "", "", "", ""
 	}
-	e, ok, err := o.Object("error")
-	if err != nil || !ok {
+	m, hasM := field(e, "message")
+	t, hasT := field(e, "type")
+	p, hasP := field(e, "param")
+	if hasM && wire.KindOf(body, m) != '"' || hasT && wire.KindOf(body, t) != '"' || hasP && wire.KindOf(body, p) != '"' {
 		return "", "", "", ""
 	}
-	m, _, err1 := e.String("message")
-	t, _, err2 := e.String("type")
-	p, _, err3 := e.String("param")
-	c, err4 := e.Code("code")
-	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
-		return "", "", "", ""
+	if hasM {
+		message = scrubbedText(body, m)
 	}
-	return m, t, c, p
+	if hasT {
+		typ = scrubbedText(body, t)
+	}
+	if hasP {
+		param = scrubbedText(body, p)
+	}
+	if c, ok := field(e, "code"); ok {
+		code = scrubbedText(body, c) // a string as itself, any other value as its exact JSON text
+	}
+	return message, typ, code, param
+}
+
+// scrubbedText is the value at v as text, scrubbed: a string decoded, any other value its exact JSON text. The
+// scrubber reads the bytes in place and a string's decoded bytes are cleared, so only the scrubbed text is left: a
+// secret it removes leaves no copy behind.
+func scrubbedText(doc []byte, v wire.Span) string {
+	text := doc[v.Start:v.End]
+	if wire.KindOf(doc, v) == '"' {
+		buf := make([]byte, 0, len(text))
+		defer clear(buf[:cap(buf)])
+		text, _ = wire.AppendString(buf, doc, v)
+	}
+	return strings.Clone(secret.Scrub(unsafe.String(unsafe.SliceData(text), len(text)))) // never the view itself
 }
 
 // CheckResponse returns nil for a 2xx response and a classified *Error otherwise, reading at most 64 KiB of the body
-// and closing it in that case. route is kept only on a route-denied error.
+// and closing it in that case. route is kept only on a route-denied error. The body is read into one buffer that is
+// cleared once it is read, as the mint reply is.
 func CheckResponse(resp *http.Response, route string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+	body, _ := bounded.Read(resp.Body, resp.ContentLength, maxErrorBody)
+	defer clear(body)
 	_ = resp.Body.Close()
 	e := &Error{
 		Status:    resp.StatusCode,
 		RequestID: secret.Scrub(resp.Header.Get("x-request-id")),
 		Route:     route,
 	}
-	message, typ, code, param := providerError(body)
-	e.Message, e.Type, e.Code, e.Param = secret.Scrub(message), secret.Scrub(typ), secret.Scrub(code), secret.Scrub(param)
+	e.Message, e.Type, e.Code, e.Param = providerError(body)
 	e.Class = classifyStatus(resp.StatusCode, e.Code)
 	if e.Class != ClassRouteDenied {
 		e.Route = ""
