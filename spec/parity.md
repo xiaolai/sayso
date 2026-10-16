@@ -49,9 +49,10 @@ unread (spec/said-guard.md) has no tokens. A disagreement fails the run unless o
 - Unicode tables: said-guard text with a character newer than Unicode 15.0 (spec/said-guard.md).
 
 The said-guard generators keep to `en` and `zh` and to the characters `tools/unicode-15.0-assigned.txt` lists, so
-neither applies to a generated case; a new entry needs a sentence of this spec. A run prints its seed and Python's
-Unicode version, which with its commit's fixtures reproduce it through `--seed`, and prints each operation's
-shortest diverging input as a candidate fixture, whose expectation this spec decides.
+neither applies to a generated case; a new entry needs a sentence of this spec. CI runs it with the seed 20261016
+plus the run number. A run prints its seed and Python's Unicode version, which with its commit's fixtures reproduce
+it through `--seed`, and prints each operation's shortest diverging input as a candidate fixture, whose expectation
+this spec decides.
 
 ## Tags
 
