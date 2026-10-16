@@ -106,8 +106,8 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                 k += 1
                 continue
             }
-            // A sign before a Han numeral is the number's sign: "-五" = "-5" = "- 5".
-            if r.freeDash == .sign && k + 1 < raws.count && raws[k + 1].kind == .hanRun && raws[k + 1].gap.isEmpty {
+            // A sign before a Han numeral, touching it or not, is the number's sign: "-五" = "- 五" = "-5" = "- 5".
+            if r.freeDash == .sign && k + 1 < raws.count && raws[k + 1].kind == .hanRun && !raws[k + 1].punctBefore {
                 units.append(svSignedHanUnit(raws[k + 1].text))
                 k += 1
                 continue
@@ -131,7 +131,8 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                     continue
                 }
             }
-            var unit = svSymbolUnit(r.text, english)
+            // A sign reads as written or, in English, "minus" or "negative", never "to"; a range dash reads "to".
+            var unit = r.freeDash == .sign ? svSignUnit(english) : svSymbolUnit(r.text, english)
             if r.text == "-" && r.freeDash == nil && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty
                 && !inExpression[k]
             {
@@ -258,13 +259,13 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
 /// ("dot" in a domain) is left as it is. Each reading gains at most three spellings per position, so the readings stay
 /// linear in the marks.
 func svKeepMarks(_ units: inout [SvUnit], _ from: Int, _ span: ArraySlice<SvRaw>, _ parts: ArraySlice<[String]>) {
-    var words: [(text: String, lead: Bool, trail: Bool)] = []
+    var words: [(text: String, lead: Int, trail: Int)] = []
     var marked = false
     for (r, ps) in zip(span, parts) where r.kind == .word {
         for (i, p) in ps.enumerated() {
-            words.append((p, i == 0 && r.optLead, i == ps.count - 1 && r.optTrail))
+            words.append((p, i == 0 ? r.optLead : 0, i == ps.count - 1 ? r.optTrail : 0))
         }
-        marked = marked || r.optLead || r.optTrail
+        marked = marked || r.optLead > 0 || r.optTrail > 0
     }
     if !marked { return }
     func spells(_ seq: SvSeq, _ at: Int) -> Bool {
@@ -287,8 +288,8 @@ func svKeepMarks(_ units: inout [SvUnit], _ from: Int, _ span: ArraySlice<SvRaw>
             } else if ns.count == 1 {
                 ns[0] = svWithMarks(ns[0], first.lead, last.trail)
             } else if ns.count > 1 {
-                ns[0] = svWithMarks(ns[0], first.lead, false)
-                ns[ns.count - 1] = svWithMarks(ns[ns.count - 1], false, last.trail)
+                ns[0] = svWithMarks(ns[0], first.lead, 0)
+                ns[ns.count - 1] = svWithMarks(ns[ns.count - 1], 0, last.trail)
             }
             out.append(ns)
         }
@@ -298,8 +299,8 @@ func svKeepMarks(_ units: inout [SvUnit], _ from: Int, _ span: ArraySlice<SvRaw>
 }
 
 /// Each token of `alt` in all its ``svMarkReadings(_:lead:trail:)``.
-func svWithMarks(_ alt: SvAlt, _ lead: Bool, _ trail: Bool) -> SvAlt {
-    if !lead && !trail { return alt }
+func svWithMarks(_ alt: SvAlt, _ lead: Int, _ trail: Int) -> SvAlt {
+    if lead == 0 && trail == 0 { return alt }
     return alt.flatMap { svMarkReadings($0, lead: lead, trail: trail) }
 }
 
@@ -456,6 +457,11 @@ func svSignedHanUnit(_ run: String) -> SvUnit {
         if !signed.isEmpty { unit.append([signed] + seq.dropFirst()) }
     }
     return unit
+}
+
+/// A sign standing alone ("-x", "-五"): either minus, written, or its English names.
+func svSignUnit(_ english: Bool) -> SvUnit {
+    [lit("-"), lit("−")] + (english ? [lit("minus"), lit("negative")] : [])
 }
 
 /// The English names of spoken symbols. A symbol without a name matches only itself.

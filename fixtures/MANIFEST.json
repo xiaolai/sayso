@@ -1,5 +1,5 @@
 {
- "count": 937,
+ "count": 976,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5441,6 +5441,240 @@
   },
   {
    "id": "r11-dash-latin-sign-after-han",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-start-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-start-spaced-joined",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-start-spaced-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-start-spaced-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-start-tight",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-punct-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-punct-tight",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-space-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-space-spaced-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-unspaced-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-unspaced-spaced-joined",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-letter-digit-glued",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-letter-digit-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-letter-digit-spaced-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-numbers-tight",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-numbers-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-numbers-spaced-to",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-han-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-han-spaced-digits",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-han-unicode-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-han-unicode-minus-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-letter-han",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-letter-han-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-letter-negative",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-sign-letter-not-to",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-letter-spaced-start",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-before-end",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-dash-before-punct",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-han-run-three",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-han-run-three-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-before-han-run",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-before-han-run-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-quote-double-marks",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-quote-double-marks-kept",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-quote-double-marks-wrong-count",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-quote-double-marks-unpaired",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-leading-run",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-leading-run-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r12-marks-number-run-four",
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []

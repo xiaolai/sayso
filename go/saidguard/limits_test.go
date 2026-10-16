@@ -29,6 +29,9 @@ func TestBounds(t *testing.T) {
 		{"sentence-punctuation-mark", strings.Repeat(".", 65533) + "’", "wrong"},
 		{"free-dashes", strings.Repeat("a - ", 16384), strings.Repeat("a ", 16383) + "x"},
 		{"number-word-codes", strings.Repeat("TEN ", 16384), "wrong"},
+		{"mark-run", "五" + strings.Repeat("’", 21000), "wrong"},
+		{"spaced-signs", strings.Repeat("- 5 ", 16000), "wrong"},
+		{"double-mark-quotes", strings.Repeat("''a'' ", 10000), "wrong"},
 		{"unspaced-marks", strings.Repeat("甲’乙 - 丙 = ‘好’ ", 2000), "wrong"},
 		{"measurement-marks", strings.Repeat("5'10\" 3'' -五 ", 3000), "wrong"},
 	}
