@@ -143,6 +143,7 @@ type core struct {
 	out          []*outbound
 	refusalBytes int
 	outWake      chan struct{} // one pending wake-up for writeLoop
+	writing      bool          // a write to stdin is under way, so fail must interrupt it; guarded by mu
 	// events wait for onEvent, delivered in order by eventLoop; eventBytes and eventCount are what they are charged,
 	// the one being delivered included, at most eventCap and maxEvents. eventsClosed is set when Close begins, so no
 	// event is admitted after it. Guarded by mu.
@@ -551,7 +552,8 @@ func (k *core) deliver(id string, resp response) {
 
 // fail marks the client unusable and releases every pending call. The outbound queue is dropped with it: nothing is
 // written after a failure, so a failed or closed client keeps none of the encoded messages, and each caller still
-// queued sees dead and returns the failure.
+// queued sees dead and returns the failure. A write under way is interrupted by moving its deadline, so a child that
+// resumes reading gets no more of it and its caller returns the failure, not a timeout.
 func (k *core) fail(err error) {
 	k.mu.Lock()
 	if k.failure == nil {
@@ -560,6 +562,9 @@ func (k *core) fail(err error) {
 	}
 	clear(k.out)
 	k.out, k.refusalBytes = nil, 0
+	if k.writing {
+		_ = k.stdin.SetWriteDeadline(time.Now())
+	}
 	k.mu.Unlock()
 }
 
@@ -618,13 +623,10 @@ func (k *core) send(ctx context.Context, v any, deadline time.Time) error {
 }
 
 // writeBytes writes one encoded message, ended by a newline, for writeLoop: it gives up at deadline and when ctx
-// ends, and Close interrupts it.
+// ends, and a failure (Close's included) interrupts it and is what it returns.
 func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) error {
 	timedOut := codexError("Codex app-server did not accept a request within "+k.timeout.String(), nil)
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := k.failed(); err != nil {
 		return err
 	}
 	if !time.Now().Before(deadline) {
@@ -633,6 +635,20 @@ func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) err
 	if err := k.stdin.SetWriteDeadline(deadline); err != nil {
 		return codexError("Codex app-server is not accepting requests", nil)
 	}
+	// Marked under the lock fail takes, after the deadline is set: a failure from here on moves the deadline to now,
+	// and one before it is seen here, so no failure lets the write run on.
+	k.mu.Lock()
+	if err := k.failure; err != nil {
+		k.mu.Unlock()
+		return err
+	}
+	k.writing = true
+	k.mu.Unlock()
+	defer func() {
+		k.mu.Lock()
+		k.writing = false
+		k.mu.Unlock()
+	}()
 	// Cancellation interrupts the write by moving its deadline; active keeps a late callback off the next write.
 	var mu sync.Mutex
 	active := true
@@ -653,10 +669,13 @@ func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) err
 	if err == nil {
 		return nil
 	}
+	failure := k.failed() // one that interrupted the write, read before a cut-off adds its own
 	if n > 0 {
 		k.fail(codexError("Codex app-server stream was cut off inside a request", nil))
 	}
 	switch {
+	case failure != nil:
+		return failure
 	case ctx.Err() != nil:
 		return ctx.Err()
 	case errors.Is(err, os.ErrDeadlineExceeded):

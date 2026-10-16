@@ -96,6 +96,25 @@ func TestCallBetweenEarlierAndLaterRefusals(t *testing.T) {
 	}
 }
 
+// A failure while a write is blocked on a child that stopped reading interrupts it: the caller returns the failure at
+// once, not a timeout at its deadline.
+func TestFailureInterruptsABlockedWrite(t *testing.T) {
+	k, r, start := bareCore(t) // read once only, so a message far larger than the pipe's buffer blocks in its write
+	start()
+	done := make(chan error, 1)
+	go func() {
+		done <- k.send(t.Context(), map[string]string{"pad": strings.Repeat("x", 1<<20)}, time.Now().Add(30*time.Second))
+	}()
+	// A byte read proves the write is under way: the rest cannot fit the pipe, so it is blocked when the failure comes.
+	if _, err := r.ReadByte(); err != nil {
+		t.Fatalf("the write did not start: %v", err)
+	}
+	k.fail(codexError("broken", nil))
+	if err := recv(t, "the interrupted send", done); err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Errorf("send: %v, want the failure", err)
+	}
+}
+
 // Concurrent calls and answers contend for the writer; whatever order they were admitted in is the order written,
 // and every call returns.
 func TestConcurrentCallsAndRefusalsKeepAdmissionOrder(t *testing.T) {

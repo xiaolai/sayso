@@ -42,6 +42,19 @@ func (r *eventRecorder) seen() []string {
 	return append([]string(nil), r.methods...)
 }
 
+// recv receives from ch, failing the test after 5 s: a barrier that is never reached fails where it is, rather than
+// hanging until the package times out.
+func recv[T any](t *testing.T, what string, ch <-chan T) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		panic("unreachable")
+	}
+}
+
 // waitFor waits up to 5 s for cond, which the test cannot otherwise synchronise on.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
