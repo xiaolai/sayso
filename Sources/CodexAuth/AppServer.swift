@@ -182,8 +182,9 @@ public final class AppServerClient: @unchecked Sendable {
         /// wrote them, one at a time on a thread of its own: the reader never waits for it. A reply may reach its
         /// caller before the handler has seen the events written before it. Events held beyond 8 MiB (each charged
         /// its method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, fail the
-        /// client. After a failure the events already queued are still delivered; after ``AppServerClient/close()``,
-        /// none that has not started. nil ignores notifications.
+        /// client. After a failure the events already queued are still delivered. Once ``AppServerClient/close()``
+        /// has begun no further event is admitted; one already admitted may still be running, and close does not
+        /// wait for it, so the handler may call the client or close it itself. nil ignores notifications.
         public var onEvent: (@Sendable (AppServerEvent) -> Void)?
 
         public init(
@@ -528,8 +529,16 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Concurrent and later calls wait until the first has finished, as Go's sync.Once makes them.
     func close() {
+        // Close begins here, under the lock the event thread admits each event under: none is admitted after, and
+        // the queue is released.
         let first = lock.withLock { () -> Bool in
-            defer { closeStarted = true }
+            defer {
+                closeStarted = true
+                events = []
+                eventHead = 0
+                eventBytes = 0
+                eventCount = 0
+            }
             return !closeStarted
         }
         guard first else {
@@ -538,6 +547,7 @@ final class AppServerCore: @unchecked Sendable {
             return
         }
         defer { closeDone.signal() }
+        eventWake.signal()  // the event thread sees closeStarted and ends
         awaitRefusals(until: .now() + Self.refusalFlush)
         lock.withLock { closed = true }
         // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
@@ -850,7 +860,7 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Hands one notification or server request to ``eventLoop()``. Without a handler it does nothing, so a
     /// notification is ignored as before; a notification whose method is absent or not a string is ignored too, and
-    /// so is every event once the client has failed. The params are the exact bytes of the line,
+    /// so is every event once the client has failed or close has begun. The params are the exact bytes of the line,
     /// as Go keeps them. Events held beyond `eventCap` or `maxEvents`, from a handler that does not keep up, fail the
     /// client.
     private func queueEvent<C: Collection>(_ m: [String: Any], line: C, serverRequest: Bool) where C.Element == UInt8 {
@@ -860,7 +870,7 @@ final class AppServerCore: @unchecked Sendable {
         let event = AppServerEvent(method: method, params: params ?? Data(), isServerRequest: serverRequest)
         let size = Self.size(event)
         let over = lock.withLock { () -> Bool? in
-            guard failure == nil else { return nil }  // the client is done: nothing more is delivered
+            guard failure == nil, !closeStarted else { return nil }  // done: nothing more is delivered
             guard eventBytes + size <= Self.eventCap, eventCount + 1 <= Self.maxEvents else { return true }
             events.append(event)
             eventBytes += size
@@ -877,9 +887,11 @@ final class AppServerCore: @unchecked Sendable {
     /// What an event is charged against `eventCap`.
     private static func size(_ e: AppServerEvent) -> Int { eventOverhead + e.method.utf8.count + e.params.count }
 
-    /// Calls the handler with each queued event, one at a time, in the order the child wrote them. After the child
-    /// fails or exits it still delivers what was queued; close stops it before the next event. The event being
-    /// delivered stays charged against the bounds until the handler returns.
+    /// Calls the handler with each queued event, one at a time, in the order the child wrote them. An event is
+    /// admitted when it is taken from the queue, under the lock close takes to begin: an event admitted before close
+    /// began is delivered, possibly while close runs (close does not wait for the handler, which may itself call
+    /// close); none is admitted after. After the child fails or exits the events already queued are still delivered.
+    /// The event being delivered stays charged against the bounds until the handler returns.
     private func eventLoop() {
         guard let onEvent else { return }
         enum Next {
@@ -905,6 +917,7 @@ final class AppServerCore: @unchecked Sendable {
                 case .deliver(let e):
                     onEvent(e)
                     lock.withLock {
+                        guard !closeStarted else { return }  // close released the counts with the queue
                         eventBytes -= Self.size(e)
                         eventCount -= 1
                     }

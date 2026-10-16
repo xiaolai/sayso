@@ -4,7 +4,7 @@ import Darwin
 import Foundation
 import XCTest
 
-/// The bounds on held events, mirroring go/codexapp/lifecycle_test.go.
+/// Event delivery under failure, close and re-entry, mirroring go/codexapp/lifecycle_test.go.
 /// Barriers, not sleeps, order the steps.
 final class AppServerLifecycleTests: XCTestCase {
     /// A python child: it answers initialize, reads initialized, then runs `then` (Python source).
@@ -48,6 +48,79 @@ final class AppServerLifecycleTests: XCTestCase {
         try AppServerClient.start(
             AppServerClient.Configuration(
                 bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: timeout, onEvent: onEvent))
+    }
+
+    private func waitFor(_ what: String, _ cond: () -> Bool) {
+        let deadline = Date().addingTimeInterval(5)
+        while !cond() {
+            if Date() > deadline { return XCTFail("timed out waiting for \(what)") }
+            usleep(2000)
+        }
+    }
+
+    /// After an ordinary failure (here malformed output), the events queued before it are still delivered, in order;
+    /// nothing read after it is.
+    func testEventsQueuedBeforeAFailureAreDelivered() throws {
+        let (script, cleanup) = try fakeCodex(
+            "sys.stdin.readline()\nfor m in ['a', 'b', 'c']:\n    print(json.dumps({'method': m}), flush=True)\n"
+                + "print('not json', flush=True)\nprint(json.dumps({'method': 'after'}), flush=True)\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let r = Recorder()
+        let c = try start(script, timeout: 5) { r.handle($0) }
+        defer { c.close() }
+        XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("malformed"), "\($0)") }
+        r.entered.wait()
+        r.release.signal()
+        waitFor("the queued events") { r.seen.count == 3 }
+        XCTAssertEqual(r.seen, ["a", "b", "c"])
+    }
+
+    /// Once close has begun no queued event is admitted, and close does not wait for the handler already running.
+    func testCloseAdmitsNoFurtherEvent() throws {
+        let (script, cleanup) = try fakeCodex(
+            "call = json.loads(sys.stdin.readline())\nfor m in ['first', 'second', 'third']:\n"
+                + "    print(json.dumps({'method': m}), flush=True)\n"
+                + "print(json.dumps({'id': call['id'], 'result': {}}), flush=True)\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let r = Recorder()
+        let c = try start(script, timeout: 5) { r.handle($0) }
+        _ = try c.call("echo")  // its reply follows the three events, so all three are queued
+        r.entered.wait()
+        let closed = DispatchSemaphore(value: 0)
+        Thread {
+            c.close()
+            closed.signal()
+        }.start()
+        XCTAssertEqual(closed.wait(timeout: .now() + 5), .success, "close waited for the running handler")
+        r.release.signal()
+        usleep(50_000)  // a second event would be admitted at once; none may be
+        XCTAssertEqual(r.seen, ["first"])
+    }
+
+    /// A handler may call `call` and `close` itself: neither waits for the event thread.
+    func testHandlerMayCallAndClose() throws {
+        let (script, cleanup) = try fakeCodex(
+            "print(json.dumps({'method': 'go'}), flush=True)\nfor line in sys.stdin:\n    m = json.loads(line)\n"
+                + "    if 'id' in m and 'method' in m:\n"
+                + "        print(json.dumps({'id': m['id'], 'result': {'ok': True}}), flush=True)\n")
+        defer { cleanup() }
+        final class Box: @unchecked Sendable { var client: AppServerClient? }
+        let box = Box()
+        let ready = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        let ok = Box()
+        let c = try start(script, timeout: 5) { _ in
+            ready.wait()
+            if let client = box.client, let r = try? client.call("echo"), (r as? [String: Any])?["ok"] as? Bool == true {
+                ok.client = client
+            }
+            box.client?.close()
+            done.signal()
+        }
+        box.client = c
+        ready.signal()
+        XCTAssertEqual(done.wait(timeout: .now() + 10), .success, "call or close from the handler deadlocked")
+        XCTAssertNotNil(ok.client, "the call from the handler failed")
     }
 
     /// Events beyond the count bound fail the client with the overflow, even when each is empty, and a reply the

@@ -86,7 +86,7 @@ func (e Event) MarshalJSON() ([]byte, error) { return json.Marshal(e.String()) }
 
 // queueEvent hands one notification or server request to the event goroutine. Without a handler it does nothing, so
 // a notification is ignored as before. A notification whose method is absent or not a string is ignored too, and so
-// is every event once the client has failed. Events held beyond eventCap or maxEvents, from a
+// is every event once the client has failed or Close has begun. Events held beyond eventCap or maxEvents, from a
 // handler that does not keep up, fail the client.
 func (k *core) queueEvent(m wire.Object, request bool) {
 	if k.onEvent == nil {
@@ -102,7 +102,7 @@ func (k *core) queueEvent(m wire.Object, request bool) {
 	}
 	d := eventData{method, params, request}
 	k.mu.Lock()
-	if k.failure != nil { // the client is done: nothing more is delivered
+	if k.failure != nil || k.eventsClosed {
 		k.mu.Unlock()
 		return
 	}
@@ -123,9 +123,11 @@ func (k *core) queueEvent(m wire.Object, request bool) {
 	}
 }
 
-// eventLoop calls the handler with each queued event, one at a time, in the order the child wrote them. After the
-// child fails or exits it still delivers what was queued; Close stops it before the next event. The event being
-// delivered stays charged against the bounds until the handler returns.
+// eventLoop calls the handler with each queued event, one at a time, in the order the child wrote them. An event is
+// admitted when it is taken from the queue, under the lock Close takes to begin: an event admitted before Close
+// began is delivered, possibly while Close runs (Close does not wait for the handler, which may itself call Close);
+// none is admitted after. After the child fails or exits the events already queued are still delivered. The event
+// being delivered stays charged against the bounds until the handler returns.
 func (k *core) eventLoop() {
 	for {
 		select {
@@ -133,10 +135,11 @@ func (k *core) eventLoop() {
 		case <-k.dead:
 		}
 		for {
-			if k.closing.Load() {
+			k.mu.Lock()
+			if k.eventsClosed {
+				k.mu.Unlock()
 				return
 			}
-			k.mu.Lock()
 			if len(k.events) == 0 {
 				dead := k.failure != nil
 				k.mu.Unlock()
@@ -151,9 +154,23 @@ func (k *core) eventLoop() {
 			k.mu.Unlock()
 			k.onEvent(newEvent(d.method, d.params, d.request))
 			k.mu.Lock()
-			k.eventBytes -= d.size()
-			k.eventCount--
+			if !k.eventsClosed { // Close cleared the counts with the queue
+				k.eventBytes -= d.size()
+				k.eventCount--
+			}
 			k.mu.Unlock()
 		}
+	}
+}
+
+// closeEvents begins Close for the events: none is admitted after it, and the queue and its counts are released.
+func (k *core) closeEvents() {
+	k.mu.Lock()
+	k.eventsClosed = true
+	k.events, k.eventBytes, k.eventCount = nil, 0, 0
+	k.mu.Unlock()
+	select {
+	case k.eventWake <- struct{}{}: // the loop sees eventsClosed and ends
+	default:
 	}
 }
