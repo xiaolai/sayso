@@ -68,22 +68,33 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   field of the wrong type is `codex-error` (an error `code` is a signed 64-bit integer). A message is classified
   before its reply fields are read: one without `id` is a notification and is ignored whatever else it holds; one
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
-  JSON-RPC error and never acted on. The answers are queued and written in order by a writer of their own, so the
-  reader never waits on the child's input; answers still queued beyond 8 MiB (a child sending requests without
-  reading the answers) are `codex-error`. A request the client sends waits, within its timeout, until the answers
-  queued before it have been written (never the ones queued later), so the child reads each answer before any
-  request sent after the server request arrived; close waits up to 100 ms for the queued answers before it closes
-  the child's input, so a request sent before close is answered. Any other message is a reply, matched to a call by
-  its integer `id`.
+  JSON-RPC error and never acted on. Every message the client sends, requests and these answers alike, goes through
+  one ordered queue that a writer of its own drains, so the reader never waits on the child's input: a request is
+  written after every answer queued before it and ahead of every answer queued after it, so the child reads each
+  answer before any request sent after the server request arrived. A request that cannot get its turn within its
+  timeout is taken off the queue unwritten; one whose write has started is ended by its timeout. Each answer gets
+  the per-call timeout from when its write starts; an answer that cannot be written is `codex-error` and fails the
+  client, since the child would wait for it and every later request would be written ahead of it. Answers queued
+  beyond 8 MiB (a child sending requests without reading the answers) are `codex-error`. Close waits up to 100 ms
+  for the messages queued before it before it closes the child's input, so a request sent before close is
+  answered. Any other message is a reply, matched to a call by its integer `id`. Once the client has failed, a
+  reply read afterwards is not handed to its call, and nothing more is read from the child.
 - **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
-  a string, and every server request after its refusal was queued, as an event: the method, the `params` member as
-  JSON (absent when the message had none; `null` when it was null) and whether it was a server request. Events are
-  delivered one at a time, in the order the child wrote them, from a thread or goroutine of the client's own, so the
-  reader never waits for the handler; a reply may reach its caller before the handler has seen the events written
-  before it. Events still queued beyond 8 MiB (a handler that does not keep up) are `codex-error`, which fails the
-  client. Once the client has failed nothing more is queued, but what was queued is still delivered; after close
-  begins, no event that has not started is delivered. Formatting an event shows its kind, its scrubbed method and the
-  size of its params, never the params. Without a handler, notifications are ignored as before. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+  a string, and every server request after its refusal was queued, as an event: the method, the `params` member
+  exactly as the child wrote it, byte for byte (absent when the message had none; `null` when it was null), and
+  whether it was a server request. Events are delivered one at a time, in the order the child wrote them, from a
+  thread or goroutine of the client's own, so the reader never waits for the handler; a reply may reach its caller
+  before the handler has seen the events written before it. Each event held, the one being handled included, is
+  charged 64 bytes plus the bytes of its method and params; more than 8 MiB charged, or more than 65,536 events
+  held, is `codex-error` (a handler that does not keep up), which fails the client. Once the client has failed
+  nothing more is queued, but what was queued is still delivered. Close begins under the same lock the event
+  thread admits each event under: once it has begun no event is admitted and the queue is released; an event
+  admitted before is delivered, possibly while close runs, and close does not wait for it, so a handler may itself
+  call the client or close it. Formatting an event, by any path (in Go every verb, a wrapper field of any
+  visibility, JSON and structured logs; reflection cannot reach the params either), shows its kind, its method
+  scrubbed and quoted with every unprintable character escaped as Go's `strconv.Quote` does, and the size of its
+  params, never the params. Without a handler, notifications are ignored as before. Stderr is kept up to 64 KiB,
+  scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.

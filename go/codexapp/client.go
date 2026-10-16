@@ -17,7 +17,6 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -40,8 +39,9 @@ const (
 	stderrDrain = 100 * time.Millisecond
 	// refusalCap bounds the refusals queued for a child that sends server requests without reading the answers.
 	refusalCap = 2 * maxLine
-	// refusalFlush bounds how long Close waits for queued refusals to be written before it closes stdin.
-	refusalFlush = 100 * time.Millisecond
+	// closeFlush bounds how long Close waits for the messages queued before it, refusals included, to be written
+	// before it closes stdin.
+	closeFlush = 100 * time.Millisecond
 )
 
 // Args are the child's arguments. The provider override makes Codex answer for its OpenAI sign-in even when the
@@ -66,9 +66,11 @@ type Config struct {
 	ExperimentalAPI bool
 	// OnEvent, when set, receives every notification and every server request (already refused), in the order the
 	// child wrote them, one at a time from a goroutine of its own: the reader never waits for it. A reply may reach
-	// its caller before OnEvent has seen the events written before it. Events still queued beyond 8 MiB (a handler
-	// that does not keep up) are a codex-error, which fails the client. After a failure the events already queued
-	// are still delivered; after Close, none that has not started. Unset, notifications are ignored.
+	// its caller before OnEvent has seen the events written before it. Events held beyond 8 MiB (each charged its
+	// method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, are a codex-error
+	// that fails the client. After a failure the events already queued are still delivered. Once Close has begun no
+	// further event is admitted; one already admitted may still be running, and Close does not wait for it, so the
+	// handler may call Close or Call itself. Unset, notifications are ignored.
 	OnEvent func(Event)
 }
 
@@ -134,24 +136,22 @@ type core struct {
 	stderr  boundedBuffer
 	agent   string // initialize userAgent, scrubbed
 
-	// writeSem admits one writer at a time; a channel, so a waiting writer observes its deadline and cancellation.
-	writeSem chan struct{}
-	// refusals are the encoded answers to server requests, written in order by refuseLoop so the reader never waits
-	// on the child's input; refusalBytes is the size of those not yet written (the one being written included), at
-	// most refusalCap. refusalsQueued and refusalsDone count them, so a request waits for the answers queued before
-	// it and no later ones. Guarded by mu.
-	refusals       [][]byte
-	refusalBytes   int
-	refusalsQueued int64
-	refusalsDone   int64
-	refusalWake    chan struct{} // one pending wake-up for refuseLoop
-	// events wait for onEvent, delivered in order by eventLoop; eventBytes is their size, at most eventCap. Guarded by
-	// mu. closing is set by Close, so no event starts after it.
-	onEvent    func(Event)
-	events     []Event
-	eventBytes int
-	eventWake  chan struct{}
-	closing    atomic.Bool
+	// out is every message waiting to be written, requests and answers to server requests alike, in the order they
+	// were queued; writeLoop alone writes, so the reader never waits on the child's input and a request is written
+	// after every answer queued before it and before every answer queued after. refusalBytes is the size of the
+	// answers not yet written (the one being written included), at most refusalCap. Guarded by mu.
+	out          []*outbound
+	refusalBytes int
+	outWake      chan struct{} // one pending wake-up for writeLoop
+	// events wait for onEvent, delivered in order by eventLoop; eventBytes and eventCount are what they are charged,
+	// the one being delivered included, at most eventCap and maxEvents. eventsClosed is set when Close begins, so no
+	// event is admitted after it. Guarded by mu.
+	onEvent      func(Event)
+	events       []eventData
+	eventBytes   int
+	eventCount   int
+	eventsClosed bool
+	eventWake    chan struct{}
 
 	stderrDone chan struct{} // closed when the stderr copy ends
 	mu         sync.Mutex
@@ -198,16 +198,15 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		env = os.Environ()
 	}
 	k := &core{
-		timeout:     cfg.Timeout,
-		logger:      cfg.Logger,
-		pending:     map[string]chan response{},
-		dead:        make(chan struct{}),
-		exited:      make(chan struct{}),
-		writeSem:    make(chan struct{}, 1),
-		stderrDone:  make(chan struct{}),
-		refusalWake: make(chan struct{}, 1),
-		onEvent:     cfg.OnEvent,
-		eventWake:   make(chan struct{}, 1),
+		timeout:    cfg.Timeout,
+		logger:     cfg.Logger,
+		pending:    map[string]chan response{},
+		dead:       make(chan struct{}),
+		exited:     make(chan struct{}),
+		stderrDone: make(chan struct{}),
+		outWake:    make(chan struct{}, 1),
+		onEvent:    cfg.OnEvent,
+		eventWake:  make(chan struct{}, 1),
 	}
 	c := &Client{k: k}
 	if k.logger == nil {
@@ -244,7 +243,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 
 	// The goroutines hold the core only, so an unclosed Client can be collected, and its cleanup ends the child.
 	go k.readLoop(outR)
-	go k.refuseLoop()
+	go k.writeLoop()
 	if k.onEvent != nil {
 		go k.eventLoop()
 	}
@@ -281,7 +280,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, codexError("Codex app-server sent an unexpected initialize result", nil)
 	}
 	k.agent = secret.Scrub(agent)
-	if err := k.write(ctx, map[string]any{"method": "initialized"}, time.Now().Add(k.timeout)); err != nil {
+	if err := k.send(ctx, map[string]any{"method": "initialized"}, time.Now().Add(k.timeout)); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -305,6 +304,9 @@ func (k *core) readLoop(r io.Reader) {
 			// The line is never quoted: it may carry a credential.
 			failure = codexError("Codex app-server sent malformed JSON", nil)
 			break
+		}
+		if k.failed() != nil {
+			break // the client is done (an overflow, a cut-off write, Close): nothing more is read from the stream
 		}
 	}
 	if failure == nil {
@@ -395,9 +397,46 @@ func (k *core) handle(line []byte) bool {
 	return true
 }
 
-// refuse queues the answer to a server request (an approval, for instance): an error, written by refuseLoop. The
-// reader never writes, so a child that blocks on its full output while we wait to write its input cannot stall it.
-// Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the client.
+// outbound is one message for writeLoop: a request or notification of a call, an answer to a server request
+// (refusal), or, with no bytes, a marker Close waits for.
+type outbound struct {
+	b        []byte
+	refusal  bool
+	ctx      context.Context // the caller's; nil for a refusal or a marker
+	deadline time.Time       // the caller's; a refusal's starts when its write does
+	done     chan error      // the outcome, for a caller or Close; nil for a refusal
+	state    int             // guarded by mu
+}
+
+const (
+	outQueued = iota
+	outStarted
+	outAbandoned // its caller gave up before writeLoop reached it: skipped
+)
+
+// enqueue appends o to the outbound queue; false once the client has failed.
+func (k *core) enqueue(o *outbound) bool {
+	k.mu.Lock()
+	if k.failure != nil {
+		k.mu.Unlock()
+		return false
+	}
+	k.out = append(k.out, o)
+	if o.refusal {
+		k.refusalBytes += len(o.b)
+	}
+	k.mu.Unlock()
+	select {
+	case k.outWake <- struct{}{}:
+	default: // a wake-up is already pending
+	}
+	return true
+}
+
+// refuse queues the answer to a server request (an approval, for instance): an error, written by writeLoop in its
+// turn. The reader never writes, so a child that blocks on its full output while we wait to write its input cannot
+// stall it. Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the
+// client.
 func (k *core) refuse(id wire.Node) {
 	msg := map[string]any{"id": json.RawMessage(id.Raw()), "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}}
 	b, err := json.Marshal(msg)
@@ -408,55 +447,71 @@ func (k *core) refuse(id wire.Node) {
 	b = append(b, '\n')
 	k.mu.Lock()
 	over := k.refusalBytes+len(b) > refusalCap
-	if !over {
-		k.refusals = append(k.refusals, b)
-		k.refusalBytes += len(b)
-		k.refusalsQueued++
-	}
 	k.mu.Unlock()
 	if over {
 		k.fail(codexError("Codex app-server sent server requests without reading the answers", nil))
 		return
 	}
-	select {
-	case k.refusalWake <- struct{}{}:
-	default: // a wake-up is already pending
-	}
+	k.enqueue(&outbound{b: b, refusal: true})
 }
 
-// refuseLoop writes the queued refusals in order, each with the per-call deadline, until the client fails. A refusal
-// that misses its deadline is dropped: the child stopped reading, and the calls waiting on it time out on their own.
-func (k *core) refuseLoop() {
+// writeLoop writes the queued messages in order until the client fails. A request's write keeps its caller's
+// deadline and cancellation; a caller that gave up before its turn is skipped. A refusal gets the per-call timeout
+// from when its write starts, and one that cannot be written fails the client: the child would wait for an answer
+// that never comes, and every later request would be written ahead of it.
+func (k *core) writeLoop() {
 	for {
 		select {
-		case <-k.refusalWake:
+		case <-k.outWake:
 		case <-k.dead:
 			return
 		}
 		for {
 			k.mu.Lock()
-			if len(k.refusals) == 0 {
+			if k.failure != nil {
+				k.mu.Unlock()
+				return
+			}
+			if len(k.out) == 0 {
 				k.mu.Unlock()
 				break
 			}
-			b := k.refusals[0]
-			k.refusals[0] = nil
-			k.refusals = k.refusals[1:]
+			o := k.out[0]
+			k.out[0] = nil
+			k.out = k.out[1:]
+			if o.state == outAbandoned {
+				k.mu.Unlock()
+				continue
+			}
+			o.state = outStarted
 			k.mu.Unlock()
-			err := k.writeBytes(context.Background(), b, time.Now().Add(k.timeout))
-			k.mu.Lock()
-			k.refusalBytes -= len(b) // written, or given up on
-			k.refusalsDone++
-			k.mu.Unlock()
-			if err != nil && k.failed() != nil {
-				return
+			switch {
+			case o.b == nil: // Close's marker: everything queued before it is written
+				o.done <- nil
+			case o.refusal:
+				err := k.writeBytes(context.Background(), o.b, time.Now().Add(k.timeout))
+				k.mu.Lock()
+				k.refusalBytes -= len(o.b)
+				k.mu.Unlock()
+				if err != nil {
+					k.fail(codexError("Codex app-server did not read the answer to a server request", nil))
+					return
+				}
+			default:
+				o.done <- k.writeBytes(o.ctx, o.b, o.deadline)
 			}
 		}
 	}
 }
 
+// deliver hands a reply to its call. A reply read after the client failed is dropped: the failure came first, so the
+// call fails with it.
 func (k *core) deliver(id string, resp response) {
 	k.mu.Lock()
+	if k.failure != nil {
+		k.mu.Unlock()
+		return
+	}
 	ch, ok := k.pending[id]
 	delete(k.pending, id)
 	k.mu.Unlock()
@@ -481,36 +536,58 @@ func (k *core) failed() error {
 	return k.failure
 }
 
-// write sends one message, giving up at deadline and when ctx ends: a child that stops reading cannot hold a call,
-// or the writer of refusals, past its timeout. Waiting for another writer counts against the deadline too. A write
-// cut off after part of the message was sent leaves the stream unusable, so the client is failed. Close interrupts a
-// write in progress.
-func (k *core) write(ctx context.Context, v any, deadline time.Time) error {
+// send queues one message for writeLoop and waits for its write, giving up at deadline and when ctx ends: a child
+// that stops reading cannot hold a call past its timeout. Waiting for the messages queued before it counts against
+// the deadline too. A caller that gives up before its turn takes its message off the queue; one whose write has
+// started waits for it, which its deadline and ctx interrupt. A write cut off after part of the message was sent
+// leaves the stream unusable, so the client is failed.
+func (k *core) send(ctx context.Context, v any, deadline time.Time) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("codexapp: encode: %w", err)
 	}
-	return k.writeBytes(ctx, append(b, '\n'), deadline)
-}
-
-// writeBytes writes one encoded message, ended by a newline, as write describes.
-func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) error {
 	timedOut := codexError("Codex app-server did not accept a request within "+k.timeout.String(), nil)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	o := &outbound{b: append(b, '\n'), ctx: ctx, deadline: deadline, done: make(chan error, 1)}
+	if !k.enqueue(o) {
+		return k.failed()
+	}
 	wait := time.NewTimer(time.Until(deadline))
 	defer wait.Stop()
+	var gaveUp error
 	select {
-	case k.writeSem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
+	case err := <-o.done:
+		return err
 	case <-k.dead:
-		return k.failed()
+		gaveUp = nil // the failure, read below
+	case <-ctx.Done():
+		gaveUp = ctx.Err()
 	case <-wait.C:
-		return timedOut
+		gaveUp = timedOut
 	}
-	defer func() { <-k.writeSem }()
+	k.mu.Lock()
+	queued := o.state == outQueued
+	if queued {
+		o.state = outAbandoned
+	}
+	failure := k.failure
+	k.mu.Unlock()
+	if !queued {
+		// Started: writeLoop reports every write it starts, which its deadline, ctx and Close all end.
+		return <-o.done
+	}
+	if gaveUp == nil {
+		return failure
+	}
+	return gaveUp
+}
+
+// writeBytes writes one encoded message, ended by a newline, for writeLoop: it gives up at deadline and when ctx
+// ends, and Close interrupts it.
+func (k *core) writeBytes(ctx context.Context, b []byte, deadline time.Time) error {
+	timedOut := codexError("Codex app-server did not accept a request within "+k.timeout.String(), nil)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -582,9 +659,8 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 	if params == nil {
 		params = map[string]any{}
 	}
-	deadline, _ := ctx.Deadline()  // set: ctx carries the per-call timeout
-	k.awaitRefusals(ctx, deadline) // the write below fails as the wait did, if it ended on the deadline or a failure
-	if err := k.write(ctx, map[string]any{"id": id, "method": method, "params": params}, deadline); err != nil {
+	deadline, _ := ctx.Deadline() // set: ctx carries the per-call timeout
+	if err := k.send(ctx, map[string]any{"id": id, "method": method, "params": params}, deadline); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return codexError("Codex app-server did not accept "+method+" within "+k.timeout.String(), nil)
 		}
@@ -624,8 +700,19 @@ func (k *core) call(ctx context.Context, method string, params, out any) error {
 
 func (k *core) close() error {
 	k.closeMu.Do(func() {
-		k.closing.Store(true) // before fail wakes eventLoop, so no further event starts
-		k.awaitRefusals(context.Background(), time.Now().Add(refusalFlush))
+		k.closeEvents() // before fail wakes eventLoop, so no further event is admitted
+		// The messages queued before Close, answers to server requests included, are written first, for at most
+		// closeFlush: a request the child sent before Close is answered rather than dropped with the queue.
+		marker := &outbound{done: make(chan error, 1)}
+		if k.enqueue(marker) {
+			flush := time.NewTimer(closeFlush)
+			select {
+			case <-marker.done:
+			case <-k.dead:
+			case <-flush.C:
+			}
+			flush.Stop()
+		}
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
@@ -663,27 +750,6 @@ func (k *core) close() error {
 		}
 	})
 	return nil
-}
-
-// awaitRefusals waits until every answer to a server request queued so far has been written, or deadline, ctx or a
-// failure ends the wait. A request waits for them before it is written, so the child reads each answer before any
-// request the client sent after the server request arrived, as when the reader wrote the answers itself; Close waits
-// for them, at most refusalFlush, so a request the child sent before Close is answered rather than dropped with the
-// queue. Answers queued after the wait began are not waited for, so a child that keeps sending requests cannot hold
-// a call.
-func (k *core) awaitRefusals(ctx context.Context, deadline time.Time) {
-	k.mu.Lock()
-	target := k.refusalsQueued
-	k.mu.Unlock()
-	for {
-		k.mu.Lock()
-		done, dead := k.refusalsDone >= target, k.failure != nil
-		k.mu.Unlock()
-		if done || dead || ctx.Err() != nil || !time.Now().Before(deadline) {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // gone reports whether the child has exited and no live member of its process group remains.

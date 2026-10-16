@@ -30,7 +30,8 @@ Scenario keys (all optional):
                        after it). A message is {"method", "params"} (a notification) or carries an "id" too (a server
                        request); "repeat": n sends it n times with "$i" in a params string value replaced by the index
                        (a number), and "padBytes": n adds a params member "pad" of n "x". The string "$cwd" in a message is
-                       replaced by the fake's working directory. A method with no steps answers -32601.
+                       replaced by the fake's working directory. {"rawLine": "text"} sends the text as one line, byte
+                       for byte. A method with no steps answers -32601.
   byParams             {method: [{"when": {param: value}, "steps": [...]}]}: the first entry whose `when` matches the
                        call's params, by equality of each named key, is used instead of `methods`; each entry
                        counts its own calls, across starts like `methods`
@@ -121,6 +122,10 @@ def indexed(value, i: int):
 def notify(messages: list) -> None:
     """Sends a step's scripted notifications and server requests, in order."""
     for spec in messages:
+        if "rawLine" in spec:
+            sys.stdout.write(spec["rawLine"] + "\n")
+            sys.stdout.flush()
+            continue
         spec = dict(spec)
         repeat, pad = int(spec.pop("repeat", 1)), int(spec.pop("padBytes", 0))
         for i in range(repeat):

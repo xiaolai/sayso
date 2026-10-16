@@ -77,13 +77,15 @@ public struct AuthStatus: Sendable, Equatable, CustomStringConvertible, CustomDe
 }
 
 /// A message from the child that is not a reply: a notification, or a server request, which the client has already
-/// answered with an error (``isServerRequest``). Formatting and reflection show the kind, the scrubbed method and the
-/// size of ``params``, never the params themselves: a notification may carry what the user said, or a credential.
+/// answered with an error (``isServerRequest``). Formatting and reflection show the kind, the method scrubbed and
+/// escaped (so a control character in it cannot forge a log line or reach a terminal) and the size of ``params``,
+/// never the params themselves: a notification may carry what the user said, or a credential.
 public struct AppServerEvent: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible,
     CustomReflectable
 {
     public let method: String
-    /// The params member as JSON; empty when absent (a `"params": null` is `null`).
+    /// The params member exactly as the child wrote it, strict JSON; empty when absent (a `"params": null` is
+    /// `null`).
     public let params: Data
     /// Set for a server request (it had an id), which was refused before the event was queued.
     public let isServerRequest: Bool
@@ -106,15 +108,49 @@ public struct AppServerEvent: Sendable, Equatable, CustomStringConvertible, Cust
     }
 
     public var description: String {
-        "AppServerEvent{\(isServerRequest ? "server request" : "notification") \(Secret.scrub(method)), \(params.count) bytes}"
+        "AppServerEvent{\(isServerRequest ? "server request" : "notification") \(Self.quoted(Secret.scrub(method))), \(params.count) bytes}"
     }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
         Mirror(
             self,
             children: [
-                "method": Secret.scrub(method), "params": "\(params.count) bytes", "isServerRequest": isServerRequest,
+                "method": Self.quoted(Secret.scrub(method)), "params": "\(params.count) bytes",
+                "isServerRequest": isServerRequest,
             ], displayStyle: .struct)
+    }
+
+    /// `s` in double quotes, with a quote, a backslash and every scalar that is not printable (controls, format
+    /// characters such as a bidirectional override, separators other than the space) escaped, as Go's strconv.Quote
+    /// writes them.
+    static func quoted(_ s: String) -> String {
+        var out = "\""
+        for u in s.unicodeScalars {
+            switch u {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\u{07}": out += "\\a"
+            case "\u{08}": out += "\\b"
+            case "\u{0C}": out += "\\f"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case "\u{0B}": out += "\\v"
+            default:
+                if u.value < 0x20 || u.value == 0x7F {
+                    out += "\\x" + String(format: "%02x", u.value)
+                    continue
+                }
+                switch u.properties.generalCategory {
+                case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate, .unassigned, .privateUse,
+                    .spaceSeparator where u != " ":
+                    out += u.value <= 0xFFFF
+                        ? "\\u" + String(format: "%04x", u.value) : "\\U" + String(format: "%08x", u.value)
+                default: out.unicodeScalars.append(u)
+                }
+            }
+        }
+        return out + "\""
     }
 }
 
@@ -144,9 +180,11 @@ public final class AppServerClient: @unchecked Sendable {
         public var experimentalAPI: Bool
         /// When set, receives every notification and every server request (already refused), in the order the child
         /// wrote them, one at a time on a thread of its own: the reader never waits for it. A reply may reach its
-        /// caller before the handler has seen the events written before it. Events still queued beyond 8 MiB (a
-        /// handler that does not keep up) fail the client. After a failure the events already queued are still
-        /// delivered; after ``AppServerClient/close()``, none that has not started. nil ignores notifications.
+        /// caller before the handler has seen the events written before it. Events held beyond 8 MiB (each charged
+        /// its method and params bytes plus 64) or beyond 65,536 of them, the one being handled included, fail the
+        /// client. After a failure the events already queued are still delivered. Once ``AppServerClient/close()``
+        /// has begun no further event is admitted; one already admitted may still be running, and close does not
+        /// wait for it, so the handler may call the client or close it itself. nil ignores notifications.
         public var onEvent: (@Sendable (AppServerEvent) -> Void)?
 
         public init(
@@ -325,7 +363,8 @@ final class AppServerCore: @unchecked Sendable {
     private let log: (@Sendable (String) -> Void)?
     private let stdinFD: Int32
     private let lock = NSLock()
-    /// Admits one writer at a time; a semaphore, so a waiting writer observes its deadline and a failure.
+    /// Held by the writer thread while it writes, and by close while it closes stdin, so the descriptor is never
+    /// closed under a write.
     private let writeGate = DispatchSemaphore(value: 1)
     /// Signalled when the stderr reader ends.
     private let stderrDone = DispatchSemaphore(value: 0)
@@ -338,27 +377,37 @@ final class AppServerCore: @unchecked Sendable {
     private var closed = false
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
-    /// The encoded answers to server requests, written in order by ``refuseLoop()`` so the reader never waits on the
-    /// child's input; `refusalBytes` counts them until written, at most `refusalCap`. Guarded by `lock`.
-    private var refusals: [Data] = []
+    /// Every message waiting to be written, requests and answers to server requests alike, in the order they were
+    /// queued, from `outHead` on; ``writeLoop()`` alone writes, so the reader never waits on the child's input and a
+    /// request is written after every answer queued before it and before every answer queued after. `refusalBytes`
+    /// is the size of the answers not yet written (the one being written included), at most `refusalCap`. Guarded
+    /// by `lock`.
+    private var out: [Outbound] = []
+    private var outHead = 0
     private var refusalBytes = 0
-    /// Count the refusals queued and written, so a request waits for the answers queued before it and no later ones.
-    private var refusalsQueued = 0
-    private var refusalsDone = 0
-    private let refusalWake = DispatchSemaphore(value: 0)
+    private let outWake = DispatchSemaphore(value: 0)
     /// Bounds the refusals queued for a child that sends server requests without reading the answers.
     private static let refusalCap = 2 * AppServerClient.maxLine
-    /// Bounds how long close waits for queued refusals to be written before it closes stdin.
-    private static let refusalFlush: TimeInterval = 0.1
+    /// Bounds how long close waits for the messages queued before it, refusals included, to be written before it
+    /// closes stdin.
+    private static let closeFlush: TimeInterval = 0.1
 
-    /// The events waiting for `onEvent`, delivered in order by ``eventLoop()``; `eventBytes` is their size, at most
-    /// `eventCap`. Guarded by `lock`.
+    /// The events waiting for `onEvent`, from `eventHead` on, delivered in order by ``eventLoop()``; `eventBytes`
+    /// and `eventCount` are what they are charged, the one being delivered included, at most `eventCap` and
+    /// `maxEvents`. Guarded by `lock`.
     private let onEvent: (@Sendable (AppServerEvent) -> Void)?
     private var events: [AppServerEvent] = []
+    private var eventHead = 0
     private var eventBytes = 0
+    private var eventCount = 0
     private let eventWake = DispatchSemaphore(value: 0)
-    /// Bounds the events queued for a handler that does not keep up.
+    /// Bounds the events held for a handler that does not keep up.
     private static let eventCap = 2 * AppServerClient.maxLine
+    /// What each held event is charged on top of its method and params bytes, so a flood of tiny events reaches
+    /// `eventCap` too.
+    private static let eventOverhead = 64
+    /// Bounds the number of events held, whatever their size.
+    private static let maxEvents = 1 << 16
     private let exited = DispatchSemaphore(value: 0)
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
@@ -366,6 +415,26 @@ final class AppServerCore: @unchecked Sendable {
     private final class Pending {
         let done = DispatchSemaphore(value: 0)
         var result: Result<Any, AppServerError>?
+    }
+
+    /// One message for ``writeLoop()``: a request or notification of a call, an answer to a server request, or, with
+    /// no bytes, the marker close waits for. `state` and `error` are guarded by `lock`; `done` is signalled once the
+    /// outcome is known.
+    private final class Outbound {
+        enum State { case queued, started, abandoned }
+        let data: Data
+        let isRefusal: Bool
+        /// The caller's; a refusal's starts when its write does.
+        let deadline: DispatchTime
+        let done = DispatchSemaphore(value: 0)
+        var state = State.queued
+        var error: AppServerError?
+
+        init(_ data: Data, isRefusal: Bool = false, deadline: DispatchTime = .distantFuture) {
+            self.data = data
+            self.isRefusal = isRefusal
+            self.deadline = deadline
+        }
     }
 
     init(
@@ -431,7 +500,7 @@ final class AppServerCore: @unchecked Sendable {
 
         let out = outPipe[0], err = errPipe[0]
         Self.thread { [self] in readLoop(out) }
-        Self.thread { [self] in refuseLoop() }
+        Self.thread { [self] in writeLoop() }
         if onEvent != nil { Self.thread { [self] in eventLoop() } }
         Self.thread { [self] in
             stderrLoop(err)
@@ -460,8 +529,7 @@ final class AppServerCore: @unchecked Sendable {
             return nextID
         }
         defer { _ = lock.withLock { pending.removeValue(forKey: id) } }
-        awaitRefusals(until: deadline)  // the write below fails as the wait did, on the deadline or a failure
-        try write(["id": id, "method": method, "params": params], deadline: deadline)
+        try send(Self.encode(["id": id, "method": method, "params": params]), deadline: deadline)
         if p.done.wait(timeout: deadline) == .timedOut {
             throw AppServerError("Codex app-server did not answer \(method) within \(timeout) s")
         }
@@ -478,13 +546,21 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Sends a notification, within the per-call timeout.
     func notify(_ message: [String: Any]) throws {
-        try write(message, deadline: .now() + timeout)
+        try send(Self.encode(message), deadline: .now() + timeout)
     }
 
     /// Concurrent and later calls wait until the first has finished, as Go's sync.Once makes them.
     func close() {
+        // Close begins here, under the lock the event thread admits each event under: none is admitted after, and
+        // the queue is released.
         let first = lock.withLock { () -> Bool in
-            defer { closeStarted = true }
+            defer {
+                closeStarted = true
+                events = []
+                eventHead = 0
+                eventBytes = 0
+                eventCount = 0
+            }
             return !closeStarted
         }
         guard first else {
@@ -493,7 +569,18 @@ final class AppServerCore: @unchecked Sendable {
             return
         }
         defer { closeDone.signal() }
-        awaitRefusals(until: .now() + Self.refusalFlush)
+        eventWake.signal()  // the event thread sees closeStarted and ends
+        // The messages queued before close, answers to server requests included, are written first, for at most
+        // closeFlush: a request the child sent before close is answered rather than dropped with the queue.
+        let marker = Outbound(Data())
+        if lock.withLock({ () -> Bool in
+            guard failure == nil else { return false }
+            out.append(marker)
+            return true
+        }) {
+            outWake.signal()
+            _ = marker.done.wait(timeout: .now() + Self.closeFlush)
+        }
         lock.withLock { closed = true }
         // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
         writeGate.wait()
@@ -534,17 +621,6 @@ final class AppServerCore: @unchecked Sendable {
         if n > 0 { log?("codex app-server wrote to stderr (\(n) bytes)") }
     }
 
-    /// Waits until every answer to a server request queued so far has been written, or `deadline` or a failure ends the
-    /// wait. A request waits for them before it is written, so the child reads each answer before any request the
-    /// client sent after the server request arrived, as when the reader wrote the answers itself; close waits for
-    /// them, at most `refusalFlush`, so a request the child sent before close is answered rather than dropped with the
-    /// queue. Answers queued after the wait began are not waited for, so a child that keeps sending requests cannot
-    /// hold a call.
-    private func awaitRefusals(until deadline: DispatchTime) {
-        let target = lock.withLock { refusalsQueued }
-        while lock.withLock({ refusalsDone < target && failure == nil }), DispatchTime.now() < deadline { usleep(1000) }
-    }
-
     var hasExited: Bool { reaped(by: .now()) }
 
     /// Whether the child has exited by `deadline` (it stays unreaped until close); the semaphore keeps its signal for
@@ -581,16 +657,86 @@ final class AppServerCore: @unchecked Sendable {
 
     // MARK: - Wire
 
-    /// Writes one message, giving up at `deadline`, so a child that stops reading cannot hold a call, or the
-    /// writer of refusals, past its timeout; ``close()`` ends the wait too.
-    /// Waiting for another writer counts against the deadline. A write cut off after part of the message was sent
-    /// leaves the stream unusable, so the client is failed. A message JSONSerialization cannot encode (a Date, NaN)
-    /// is refused before it reaches the encoder, which would raise an Objective-C exception no `try` can catch.
-    private func write(_ message: [String: Any], deadline: DispatchTime) throws {
-        try write(Self.encode(message), deadline: deadline)
+    /// Queues one encoded line for ``writeLoop()`` and waits for its write, giving up at `deadline`, so a child that
+    /// stops reading cannot hold a call past its timeout; waiting for the messages queued before it counts against
+    /// the deadline too. A caller that gives up before its turn takes its line off the queue; one whose write has
+    /// started waits for it, which the deadline and ``close()`` end within one poll interval. A failure releases
+    /// every caller still queued.
+    private func send(_ data: Data, deadline: DispatchTime) throws {
+        let o = Outbound(data, deadline: deadline)
+        try lock.withLock {
+            if let failure { throw failure }
+            out.append(o)
+        }
+        outWake.signal()
+        if o.done.wait(timeout: deadline) == .timedOut {
+            let gaveUp = lock.withLock { () -> Bool in
+                guard o.state == .queued else { return false }
+                o.state = .abandoned
+                return true
+            }
+            if gaveUp { throw AppServerError("Codex app-server did not accept a request within \(timeout) s") }
+            o.done.wait()
+        }
+        if let e = lock.withLock({ o.error }) { throw e }
     }
 
-    /// `message` as one line, or a throw when JSONSerialization cannot encode it.
+    /// Writes the queued messages in order until the client fails. A request's write keeps its caller's deadline;
+    /// a caller that gave up before its turn is skipped. A refusal gets the per-call timeout from when its write
+    /// starts, and one that cannot be written fails the client: the child would wait for an answer that never comes,
+    /// and every later request would be written ahead of it.
+    private func writeLoop() {
+        while true {
+            outWake.wait()
+            while true {
+                enum Next {
+                    case write(Outbound)
+                    case wait
+                    case stop
+                }
+                let next = lock.withLock { () -> Next in
+                    if failure != nil { return .stop }
+                    while outHead < out.count {
+                        let o = out[outHead]
+                        outHead += 1
+                        if outHead > 1024 && outHead * 2 > out.count {  // released in O(1) amortised
+                            out.removeFirst(outHead)
+                            outHead = 0
+                        }
+                        if o.state == .abandoned { continue }
+                        o.state = .started
+                        return .write(o)
+                    }
+                    return .wait
+                }
+                guard case .write(let o) = next else {
+                    if case .stop = next { return }
+                    break
+                }
+                if o.data.isEmpty {  // close's marker: everything queued before it is written
+                    o.done.signal()
+                } else if o.isRefusal {
+                    let ok = (try? write(o.data, deadline: .now() + timeout)) != nil
+                    lock.withLock { refusalBytes -= o.data.count }
+                    if !ok {
+                        fail(AppServerError("Codex app-server did not read the answer to a server request"))
+                        return
+                    }
+                } else {
+                    var outcome: AppServerError?
+                    do { try write(o.data, deadline: o.deadline) } catch let e as AppServerError { outcome = e } catch {
+                        outcome = AppServerError("Codex app-server is not accepting requests")
+                    }
+                    lock.withLock { o.error = outcome }
+                    o.done.signal()
+                }
+            }
+        }
+    }
+
+    /// `message` as one line, or a throw when JSONSerialization cannot encode it. A message JSONSerialization cannot
+    /// encode (a Date, NaN) is refused before it reaches the encoder, which would raise an Objective-C exception no
+    /// `try` can catch.
     private static func encode(_ message: [String: Any]) throws -> Data {
         guard encodable(message),
             var data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])
@@ -599,7 +745,8 @@ final class AppServerCore: @unchecked Sendable {
         return data
     }
 
-    /// Writes one encoded line, as the overload taking a message describes.
+    /// Writes one encoded line for ``writeLoop()``, giving up at `deadline` and once the client fails or closes. A
+    /// write cut off after part of the line was sent leaves the stream unusable, so the client is failed.
     private func write(_ data: Data, deadline: DispatchTime) throws {
         let refused = AppServerError("Codex app-server is not accepting requests")
         let timedOut = AppServerError("Codex app-server did not accept a request within \(timeout) s")
@@ -672,6 +819,11 @@ final class AppServerCore: @unchecked Sendable {
                     break
                 }
                 start = nl + 1
+                // The client is done (an overflow, a cut-off write, close): nothing more is read from the stream.
+                if lock.withLock({ failure != nil }) {
+                    failed = true
+                    break
+                }
             }
             if failed {
                 buffer = []
@@ -731,7 +883,7 @@ final class AppServerCore: @unchecked Sendable {
         if value is NSNull { return true }
         guard let m = value as? [String: Any] else { return false }
         guard let id = m["id"], !(id is NSNull) else {
-            queueEvent(m, serverRequest: false)
+            queueEvent(m, line: trimmed, serverRequest: false)
             return true  // a notification, whatever else it holds
         }
         var hasMethod = false
@@ -741,7 +893,7 @@ final class AppServerCore: @unchecked Sendable {
         }
         if hasMethod {
             refuse(id)
-            queueEvent(m, serverRequest: true)
+            queueEvent(m, line: trimmed, serverRequest: true)
             return true
         }
         let result: Result<Any, AppServerError>
@@ -793,30 +945,34 @@ final class AppServerCore: @unchecked Sendable {
                 p.done.signal()
             }
             pending.removeAll()
+            // Every caller still waiting for its turn to write is released with the failure.
+            for o in out[outHead...] where o.state == .queued && !o.isRefusal {
+                o.state = .abandoned
+                o.error = failure
+                o.done.signal()
+            }
         }
-        refusalWake.signal()  // the refusal writer ends
+        outWake.signal()  // the writer ends
         eventWake.signal()  // the event loop delivers what is queued, then ends
     }
 
     /// Hands one notification or server request to ``eventLoop()``. Without a handler it does nothing, so a
-    /// notification is ignored as before; a notification whose method is absent or not a string is ignored too.
-    /// Events beyond `eventCap`, from a handler that does not keep up, fail the client.
-    private func queueEvent(_ m: [String: Any], serverRequest: Bool) {
+    /// notification is ignored as before; a notification whose method is absent or not a string is ignored too, and
+    /// so is every event once the client has failed or close has begun. The params are the exact bytes of the line,
+    /// as Go keeps them. Events held beyond `eventCap` or `maxEvents`, from a handler that does not keep up, fail the
+    /// client.
+    private func queueEvent<C: Collection>(_ m: [String: Any], line: C, serverRequest: Bool) where C.Element == UInt8 {
         guard onEvent != nil, let method = m["method"] as? String else { return }
-        var params = Data()
-        if let p = m["params"] {
-            // A parsed JSON value, so this encodes.
-            params =
-                (try? JSONSerialization.data(withJSONObject: p, options: [.fragmentsAllowed, .withoutEscapingSlashes]))
-                ?? Data()
-        }
-        let event = AppServerEvent(method: method, params: params, isServerRequest: serverRequest)
-        let size = method.utf8.count + params.count
+        // The line was validated, so this reads.
+        let params = (try? WireJSON.memberBytes(Data(line), "params")) ?? nil
+        let event = AppServerEvent(method: method, params: params ?? Data(), isServerRequest: serverRequest)
+        let size = Self.size(event)
         let over = lock.withLock { () -> Bool? in
-            guard failure == nil else { return nil }  // the client is done: nothing more is delivered
-            guard eventBytes + size <= Self.eventCap else { return true }
+            guard failure == nil, !closeStarted else { return nil }  // done: nothing more is delivered
+            guard eventBytes + size <= Self.eventCap, eventCount + 1 <= Self.maxEvents else { return true }
             events.append(event)
             eventBytes += size
+            eventCount += 1
             return false
         }
         switch over {
@@ -826,8 +982,14 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
-    /// Calls the handler with each queued event, one at a time, in the order the child wrote them. After the child
-    /// fails or exits it still delivers what was queued; close stops it before the next event.
+    /// What an event is charged against `eventCap`.
+    private static func size(_ e: AppServerEvent) -> Int { eventOverhead + e.method.utf8.count + e.params.count }
+
+    /// Calls the handler with each queued event, one at a time, in the order the child wrote them. An event is
+    /// admitted when it is taken from the queue, under the lock close takes to begin: an event admitted before close
+    /// began is delivered, possibly while close runs (close does not wait for the handler, which may itself call
+    /// close); none is admitted after. After the child fails or exits the events already queued are still delivered.
+    /// The event being delivered stays charged against the bounds until the handler returns.
     private func eventLoop() {
         guard let onEvent else { return }
         enum Next {
@@ -840,13 +1002,23 @@ final class AppServerCore: @unchecked Sendable {
             drain: while true {
                 let next = lock.withLock { () -> Next in
                     if closeStarted { return .stop }
-                    guard !events.isEmpty else { return failure != nil ? .stop : .wait }
-                    let e = events.removeFirst()
-                    eventBytes -= e.method.utf8.count + e.params.count
+                    guard eventHead < events.count else { return failure != nil ? .stop : .wait }
+                    let e = events[eventHead]
+                    eventHead += 1
+                    if eventHead > 1024 && eventHead * 2 > events.count {  // released in O(1) amortised
+                        events.removeFirst(eventHead)
+                        eventHead = 0
+                    }
                     return .deliver(e)
                 }
                 switch next {
-                case .deliver(let e): onEvent(e)
+                case .deliver(let e):
+                    onEvent(e)
+                    lock.withLock {
+                        guard !closeStarted else { return }  // close released the counts with the queue
+                        eventBytes -= Self.size(e)
+                        eventCount -= 1
+                    }
                 case .wait: break drain
                 case .stop: return
                 }
@@ -854,9 +1026,10 @@ final class AppServerCore: @unchecked Sendable {
         }
     }
 
-    /// Queues the answer to a server request (an approval, for instance): an error, written by ``refuseLoop()``. The
-    /// reader never writes, so a child that blocks on its full output while we wait to write its input cannot stall
-    /// it. Refusals beyond `refusalCap`, from a child that sends requests without reading the answers, fail the client.
+    /// Queues the answer to a server request (an approval, for instance): an error, written by ``writeLoop()`` in its
+    /// turn. The reader never writes, so a child that blocks on its full output while we wait to write its input
+    /// cannot stall it. Refusals beyond `refusalCap`, from a child that sends requests without reading the answers,
+    /// fail the client.
     private func refuse(_ id: Any) {
         let message: [String: Any] = [
             "id": id, "error": ["code": AppServerError.methodNotFound, "message": "server requests are not supported"],
@@ -865,40 +1038,17 @@ final class AppServerCore: @unchecked Sendable {
             fail(AppServerError("Codex app-server sent a server request that could not be answered"))
             return
         }
-        let over = lock.withLock { () -> Bool in
+        let over = lock.withLock { () -> Bool? in
+            guard failure == nil else { return nil }
             guard refusalBytes + data.count <= Self.refusalCap else { return true }
-            refusals.append(data)
+            out.append(Outbound(data, isRefusal: true))
             refusalBytes += data.count
-            refusalsQueued += 1
             return false
         }
-        if over {
-            fail(AppServerError("Codex app-server sent server requests without reading the answers"))
-        } else {
-            refusalWake.signal()
-        }
-    }
-
-    /// Writes the queued refusals in order, each with the per-call deadline, until the client fails. A refusal that
-    /// misses its deadline is dropped: the child stopped reading, and the calls waiting on it time out on their own.
-    private func refuseLoop() {
-        while true {
-            refusalWake.wait()
-            let batch = lock.withLock { () -> [Data]? in
-                guard failure == nil else { return nil }
-                defer { refusals = [] }
-                return refusals
-            }
-            guard let batch else { return }
-            for data in batch {
-                try? write(data, deadline: .now() + timeout)
-                let failed = lock.withLock { () -> Bool in
-                    refusalBytes -= data.count
-                    refusalsDone += 1
-                    return failure != nil
-                }
-                if failed { return }
-            }
+        switch over {
+        case true?: fail(AppServerError("Codex app-server sent server requests without reading the answers"))
+        case false?: outWake.signal()
+        case nil: break
         }
     }
 

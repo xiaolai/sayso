@@ -8,7 +8,9 @@ import RealtimeConnection
 /// itself, mirroring go/conformance/client_test.go.
 extension CredentialWorld {
     /// The expectations checked here; the rest go to ``check(_:state:token:mode:info:elapsed:description:)``.
-    private static let clientKeys: Set<String> = ["startFails", "calls", "events", "eventCount", "eventSequence"]
+    private static let clientKeys: Set<String> = [
+        "startFails", "calls", "callError", "events", "eventCount", "eventSequence",
+    ]
 
     func client(_ s: [String: Any], want: [String: Any]) throws -> [String] {
         let events = Box<[AppServerEvent]>([])
@@ -48,13 +50,17 @@ extension CredentialWorld {
             p.append("start failed: \(client == nil), want \(fails)")
         }
         var outcomes: [String] = []
+        var callErrors: [String] = []
         if let client {
             for call in s["calls"] as? [[String: Any]] ?? [] {
                 let method = call["method"] as? String ?? ""
                 do {
                     _ = try client.call(method, params: call["params"] as? [String: Any] ?? [:])
                     outcomes.append("ok")
-                } catch { outcomes.append("error") }
+                } catch {
+                    outcomes.append("error")
+                    callErrors.append("\(error)")
+                }
             }
             // Events are delivered from a thread of their own: wait for the expected number, then a moment for any
             // that should not come.
@@ -86,6 +92,10 @@ extension CredentialWorld {
             case "startFails": break
             case "calls":
                 if !Self.same(outcomes, v) { p.append("calls \(outcomes), want \(v)") }
+            case "callError":  // every failed call names this failure
+                for (i, e) in callErrors.enumerated() where !e.contains(v as? String ?? "") {
+                    p.append("failed call \(i): \(e.debugDescription) does not name \(v)")
+                }
             case "events":
                 let list = v as? [[String: Any]] ?? []
                 guard got.count == list.count else {
@@ -102,6 +112,10 @@ extension CredentialWorld {
                         let params = e.params.isEmpty
                             ? nil : try? JSONSerialization.jsonObject(with: e.params, options: [.fragmentsAllowed])
                         if params == nil || !Self.same(params!, expand(wp)) { p.append("event \(i) params differ") }
+                    }
+                    // The bytes as the child wrote them.
+                    if let raw = w["paramsRaw"] as? String, e.params != Data(raw.utf8) {
+                        p.append("event \(i) params bytes \(String(decoding: e.params, as: UTF8.self).debugDescription), want \(raw.debugDescription)")
                     }
                 }
             case "eventCount":

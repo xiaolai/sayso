@@ -513,15 +513,19 @@ func (w *world) check(want map[string]any, state string, tok secret.Token, mode 
 			if limit := time.Duration(v.(float64)) * time.Millisecond; elapsed > limit {
 				p = append(p, fmt.Sprintf("took %v, limit %v", elapsed, limit))
 			}
-		case "serverRequestAnswered":
+		case "serverRequestAnswered": // with the method-not-found error
 			answered := false
 			for _, m := range rec.requests {
-				if _, isReq := m["method"]; !isReq && m["id"] != nil && m["error"] != nil {
+				if e, ok := m["error"].(map[string]any); ok && m["method"] == nil && m["id"] != nil && same(e["code"], -32601) {
 					answered = true
 				}
 			}
 			if !answered {
 				p = append(p, "the server request got no error reply")
+			}
+		case "outbound": // every message the fake read, in order: a method, or "refusal:<id>" for an answer
+			if got := outbound(rec.requests); !same(got, v) {
+				p = append(p, fmt.Sprintf("outbound %v, want %v", got, v))
 			}
 		case "refreshCalls":
 			if !same(refreshCalls(rec), v) {
@@ -534,6 +538,20 @@ func (w *world) check(want map[string]any, state string, tok secret.Token, mode 
 		}
 	}
 	return p
+}
+
+// outbound names each message the fake read, in order: its method, or "refusal:<id>" for an answer to a server
+// request.
+func outbound(got []map[string]any) []string {
+	out := make([]string, 0, len(got))
+	for _, m := range got {
+		if method, ok := m["method"].(string); ok {
+			out = append(out, method)
+		} else {
+			out = append(out, fmt.Sprintf("refusal:%v", m["id"]))
+		}
+	}
+	return out
 }
 
 // checkRequests compares the requests and notifications the fake received (the client's answers to server requests

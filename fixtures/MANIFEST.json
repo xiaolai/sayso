@@ -1,5 +1,5 @@
 {
- "count": 806,
+ "count": 812,
  "fixtures": [
   {
    "id": "app-ready",
@@ -501,6 +501,42 @@
   },
   {
    "id": "app-client-default-capabilities",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-outbound-order",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-params-exact-bytes",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-empty-events-at-the-count-bound",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-empty-events-past-the-count-bound",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-events-at-the-byte-bound",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-events-past-the-byte-bound",
    "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []

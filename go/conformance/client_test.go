@@ -29,7 +29,7 @@ type clientSetup struct {
 }
 
 // clientKeys are the expectations client checks itself; the rest go to check.
-var clientKeys = map[string]bool{"startFails": true, "calls": true, "events": true, "eventCount": true, "eventSequence": true}
+var clientKeys = map[string]bool{"startFails": true, "calls": true, "callError": true, "events": true, "eventCount": true, "eventSequence": true}
 
 func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []string {
 	var (
@@ -82,7 +82,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	} else if !ok && err != nil {
 		p = append(p, "start: "+err.Error())
 	}
-	var outcomes []string
+	var outcomes, callErrors []string
 	if c != nil {
 		for _, call := range s.Calls {
 			var params any // a fixture without params sends Call's default
@@ -91,6 +91,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 			}
 			if err := c.Call(ctx, call.Method, params, nil); err != nil {
 				outcomes = append(outcomes, "error")
+				callErrors = append(callErrors, err.Error())
 			} else {
 				outcomes = append(outcomes, "ok")
 			}
@@ -132,6 +133,12 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 			if !same(outcomes, v) {
 				p = append(p, fmt.Sprintf("calls %v, want %v", outcomes, v))
 			}
+		case "callError": // every failed call names this failure
+			for i, e := range callErrors {
+				if !strings.Contains(e, v.(string)) {
+					p = append(p, fmt.Sprintf("failed call %d: %q does not name %q", i, e, v))
+				}
+			}
 		case "events":
 			list := v.([]any)
 			if len(got) != len(list) {
@@ -148,7 +155,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 		case "eventSequence":
 			for i, e := range got {
 				var params map[string]any
-				if err := json.Unmarshal(e.Params, &params); err != nil || !same(params[v.(string)], i) {
+				if err := json.Unmarshal(e.Params(), &params); err != nil || !same(params[v.(string)], i) {
 					p = append(p, fmt.Sprintf("event %d out of order", i))
 					break
 				}
@@ -168,20 +175,23 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 
 func checkClientEvent(i int, got codexapp.Event, want map[string]any, expand *strings.Replacer) []string {
 	var p []string
-	if got.Method != want["method"] {
-		p = append(p, fmt.Sprintf("event %d is %s, want %v", i, got.Method, want["method"]))
+	if got.Method() != want["method"] {
+		p = append(p, fmt.Sprintf("event %d is %s, want %v", i, got.Method(), want["method"]))
 	}
-	if req, _ := want["serverRequest"].(bool); got.Request != req {
-		p = append(p, fmt.Sprintf("event %d: server request %v, want %v", i, got.Request, req))
+	if req, _ := want["serverRequest"].(bool); got.Request() != req {
+		p = append(p, fmt.Sprintf("event %d: server request %v, want %v", i, got.Request(), req))
 	}
-	if none, _ := want["noParams"].(bool); none && got.Params != nil {
+	if none, _ := want["noParams"].(bool); none && got.Params() != nil {
 		p = append(p, fmt.Sprintf("event %d has params", i))
 	}
 	if wantParams, ok := want["params"]; ok {
 		var params any
-		if got.Params == nil || json.Unmarshal(got.Params, &params) != nil || !same(params, expandAll(wantParams, expand)) {
+		if got.Params() == nil || json.Unmarshal(got.Params(), &params) != nil || !same(params, expandAll(wantParams, expand)) {
 			p = append(p, fmt.Sprintf("event %d params differ", i))
 		}
+	}
+	if raw, ok := want["paramsRaw"].(string); ok && string(got.Params()) != raw { // the bytes as the child wrote them
+		p = append(p, fmt.Sprintf("event %d params bytes %q, want %q", i, got.Params(), raw))
 	}
 	return p
 }
@@ -210,7 +220,7 @@ func expandAll(v any, r *strings.Replacer) any {
 func methods(events []codexapp.Event) string {
 	names := make([]string, len(events))
 	for i, e := range events {
-		names[i] = e.Method
+		names[i] = e.Method()
 	}
 	return strings.Join(names, ",")
 }
