@@ -26,8 +26,9 @@ Scenario keys (all optional):
                        {"result": ...} | {"error": {"code", "message"}} | {"raw": "line"} | {"exit": code} |
                        {"rawLineBytes": n} (one line of n bytes, then a newline) |
                        {"rawThenExit": "text"} (the text with no newline, then exit 0: a last line ended by EOF),
-                       optionally with "delayMs", "notify" (messages sent before the reply) and "notifyAfter" (sent
-                       after it). A message is {"method", "params"} (a notification) or carries an "id" too (a server
+                       optionally with "delayMs", "notify" (messages sent before the reply), "awaitLines": n (after
+                       the notify messages, read and record n more lines of input before going on: a barrier that
+                       proves the client wrote them while this call waits) and "notifyAfter" (sent after it). A message is {"method", "params"} (a notification) or carries an "id" too (a server
                        request); "repeat": n sends it n times with "$i" in a params string value replaced by the index
                        (a number), and "padBytes": n adds a params member "pad" of n "x". The string "$cwd" in a message is
                        replaced by the fake's working directory. {"rawLine": "text"} sends the text as one line, byte
@@ -187,6 +188,14 @@ def main() -> int:
         if step.get("delayMs"):
             time.sleep(step["delayMs"] / 1000)
         notify(step.get("notify", []))
+        for _ in range(int(step.get("awaitLines", 0))):
+            waited = sys.stdin.readline()
+            if not waited:
+                return 0  # the client closed our input first
+            try:
+                record({"req": json.loads(waited)})
+            except json.JSONDecodeError:
+                record({"malformedRequest": waited.strip()})
         if method == "getAuthStatus" and pending_server_request:
             send(pending_server_request)
             pending_server_request = None

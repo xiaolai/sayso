@@ -1,5 +1,5 @@
 {
- "count": 812,
+ "count": 813,
  "fixtures": [
   {
    "id": "app-ready",
@@ -507,6 +507,12 @@
   },
   {
    "id": "app-client-outbound-order",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-refusal-written-while-a-call-waits",
    "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []

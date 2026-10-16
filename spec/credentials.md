@@ -69,9 +69,11 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   before its reply fields are read: one without `id` is a notification and is ignored whatever else it holds; one
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
   JSON-RPC error and never acted on. Every message the client sends, requests and these answers alike, goes through
-  one ordered queue that a writer of its own drains, so the reader never waits on the child's input: a request is
-  written after every answer queued before it and ahead of every answer queued after it, so the child reads each
-  answer before any request sent after the server request arrived. A request that cannot get its turn within its
+  one ordered queue that a writer of its own drains, so the reader never waits on the child's input. The order is
+  the order of admission to that queue: a request is admitted when its call queues it, and an answer when the reader
+  reads the server request it answers. So the child reads each answer after every request queued before the reader
+  read that server request (a request already queued goes first, even if its write has not started) and before
+  every request queued after. A request that cannot get its turn within its
   timeout is taken off the queue unwritten; one whose write has started is ended by its timeout. Each answer gets
   the per-call timeout from when its write starts; an answer that cannot be written is `codex-error` and fails the
   client, since the child would wait for it and every later request would be written ahead of it. Answers queued

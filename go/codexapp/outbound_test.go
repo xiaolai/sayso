@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"bufio"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -73,6 +74,55 @@ func sendAsync(t *testing.T, k *core, v any) <-chan error {
 	go func() { done <- k.send(t.Context(), v, time.Now().Add(5*time.Second)) }()
 	waitFor(t, "the request to be queued", func() bool { return len(queuedLines(k)) == before+1 })
 	return done
+}
+
+// A request admitted between two answers is written between them: the order is admission to the one queue, fixed
+// before the writer runs.
+func TestCallBetweenEarlierAndLaterRefusals(t *testing.T) {
+	k, r, start := bareCore(t)
+	refusal(k, "r1")
+	done := sendAsync(t, k, map[string]string{"call": "B"})
+	refusal(k, "r2")
+	start()
+	got := strings.Join(readLines(t, r, 3), " ")
+	if want := `{"id":"r1","error":{}} {"call":"B"} {"id":"r2","error":{}}`; got != want {
+		t.Errorf("written %s, want %s", got, want)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("send: %v", err)
+	}
+}
+
+// Concurrent calls and answers contend for the writer; whatever order they were admitted in is the order written,
+// and every call returns.
+func TestConcurrentCallsAndRefusalsKeepAdmissionOrder(t *testing.T) {
+	k, r, start := bareCore(t)
+	var wg sync.WaitGroup
+	results := make(chan error, 32)
+	for i := range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%3 == 0 {
+				refusal(k, fmt.Sprint("r", i))
+				return
+			}
+			results <- k.send(t.Context(), map[string]int{"call": i}, time.Now().Add(5*time.Second))
+		}()
+	}
+	waitFor(t, "every message to be queued", func() bool { return len(queuedLines(k)) == 32 })
+	admitted := queuedLines(k)
+	start()
+	if got := readLines(t, r, 32); strings.Join(got, "\n") != strings.Join(admitted, "\n") {
+		t.Errorf("written out of admission order:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(admitted, "\n"))
+	}
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Errorf("send: %v", err)
+		}
+	}
 }
 
 // A failure drops the outbound queue: nothing queued is kept or written, every caller still queued returns the
