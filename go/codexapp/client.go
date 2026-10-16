@@ -193,6 +193,18 @@ func codexError(msg string, cause error) error {
 	return &openaihttp.Error{Class: openaihttp.ClassCodexError, Message: msg, Err: cause}
 }
 
+// checkDir refuses a working directory that is set but is not an absolute path to an existing folder. The path is
+// not quoted: a caller's folder name is not ours to print.
+func checkDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	if st, err := os.Stat(dir); !filepath.IsAbs(dir) || err != nil || !st.IsDir() {
+		return errors.New("codexapp: the working directory is not an absolute path to an existing folder")
+	}
+	return nil
+}
+
 // Start spawns the child in its own process group and completes the initialize handshake.
 func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if !filepath.IsAbs(cfg.Bin) {
@@ -201,11 +213,8 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout <= 0 {
 		return nil, errors.New("codexapp: a per-call Timeout is required")
 	}
-	if cfg.Dir != "" {
-		// The path is not quoted: a caller's folder name is not ours to print.
-		if st, err := os.Stat(cfg.Dir); !filepath.IsAbs(cfg.Dir) || err != nil || !st.IsDir() {
-			return nil, errors.New("codexapp: the working directory is not an absolute path to an existing folder")
-		}
+	if err := checkDir(cfg.Dir); err != nil {
+		return nil, err
 	}
 	if cfg.Guard != nil {
 		if err := cfg.Guard(cfg.Bin); err != nil {

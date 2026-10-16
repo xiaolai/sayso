@@ -16,11 +16,14 @@ type Streams struct {
 	Stdout, Stderr io.Writer
 }
 
-// Login runs `<bin> login`, or `<bin> login --device-auth`, with cfg's executable, CODEX_HOME and environment hygiene
-// and the caller's streams, and waits for it. The flow itself is never read.
+// Login runs `<bin> login`, or `<bin> login --device-auth`, with cfg's executable, CODEX_HOME, working directory and
+// environment hygiene and the caller's streams, and waits for it. The flow itself is never read.
 func Login(cfg Config, deviceAuth bool, s Streams) error {
 	if !filepath.IsAbs(cfg.Bin) {
 		return fmt.Errorf("codexapp: executable path %q is not absolute", cfg.Bin)
+	}
+	if err := checkDir(cfg.Dir); err != nil {
+		return err
 	}
 	if cfg.Guard != nil {
 		if err := cfg.Guard(cfg.Bin); err != nil {
@@ -39,6 +42,7 @@ func Login(cfg Config, deviceAuth bool, s Streams) error {
 	// its own flow ends.
 	cmd := exec.Command(cfg.Bin, args...)
 	cmd.Env = ChildEnv(env, cfg.Bin, cfg.CodexHome)
+	cmd.Dir = cfg.Dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = s.Stdin, s.Stdout, s.Stderr
 	if err := cmd.Run(); err != nil {
 		return codexError("`codex login` did not complete", err)
