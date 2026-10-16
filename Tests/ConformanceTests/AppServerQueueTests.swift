@@ -215,15 +215,21 @@ final class AppServerQueueTests: XCTestCase {
     }
 
     /// A request admitted before a server request is read is written before that request's answer, even while it is
-    /// still waiting to be written: call A fills the pipe and holds the writer, call B waits behind it unwritten, and
-    /// only then does the child send srv-1. The child reads A, B, then the answer to srv-1.
+    /// still waiting to be written. Call A fills the pipe and holds the writer, and call B waits behind it unwritten.
+    /// Only then does the child send srv-1, and it reads nothing until the answer has been admitted, so the answer
+    /// meets B still queued. The child reads A, B, then the answer to srv-1.
     func testLaterAnswerDoesNotOvertakeAQueuedRequest() throws {
-        let flag = NSTemporaryDirectory() + "sayso-flag-\(UUID().uuidString)"
-        defer { try? FileManager.default.removeItem(atPath: flag) }
+        let send = NSTemporaryDirectory() + "sayso-send-\(UUID().uuidString)"
+        let drain = NSTemporaryDirectory() + "sayso-drain-\(UUID().uuidString)"
+        defer {
+            try? FileManager.default.removeItem(atPath: send)
+            try? FileManager.default.removeItem(atPath: drain)
+        }
         let (script, cleanup) = try fakeCodex(
             "import os\n"
-                + "while not os.path.exists('\(flag)'): time.sleep(0.005)\n"
+                + "while not os.path.exists('\(send)'): time.sleep(0.005)\n"
                 + "print(json.dumps({'id': 'srv-1', 'method': 'approve'}), flush=True)\n"
+                + "while not os.path.exists('\(drain)'): time.sleep(0.005)\n"
                 + "order = []\ncalls = []\n"
                 + "for line in sys.stdin:\n"
                 + "    m = json.loads(line)\n"
@@ -238,11 +244,17 @@ final class AppServerQueueTests: XCTestCase {
         defer { cleanup() }
         let c = try start(script, timeout: 20, nil)
         defer { c.close() }
-        c.setTestSeams(recordAdmissions: true)
+        let answerAdmitted = DispatchSemaphore(value: 0)
+        c.setTestSeams(refusalAdmitted: { answerAdmitted.signal() }, recordAdmissions: true)
         let group = DispatchGroup()
         let lock = NSLock()
         nonisolated(unsafe) var replies: [String: [String]] = [:]
-        // A's 1 MiB line is far beyond the pipe buffer, and the child reads nothing until the flag exists.
+        func waitFor(_ what: String, _ done: () -> Bool) {
+            let deadline = Date().addingTimeInterval(5)
+            while !done() && Date() < deadline { Thread.sleep(forTimeInterval: 0.002) }
+            XCTAssertTrue(done(), what)
+        }
+        // A's 1 MiB line is far beyond the pipe buffer, and the child reads nothing until told to drain.
         for (method, params) in [("A", ["pad": String(repeating: "x", count: 1 << 20)]), ("B", [:])] {
             group.enter()
             Thread {
@@ -250,15 +262,14 @@ final class AppServerQueueTests: XCTestCase {
                 let r = (try? c.call(method, params: params)) as? [String: Any]
                 lock.withLock { replies[method] = r?["order"] as? [String] }
             }.start()
-            // B is admitted after A.
-            let deadline = Date().addingTimeInterval(5)
-            while c.admittedMessages.count < (method == "A" ? 1 : 2) && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.002)
-            }
+            waitFor("\(method) was not admitted") { c.admittedMessages.count == (method == "A" ? 1 : 2) }
         }
-        XCTAssertEqual(c.admittedMessages.count, 2, "both calls were not admitted")
-        XCTAssertEqual(c.held.outbound, 1, "B is not waiting unwritten behind A")
-        FileManager.default.createFile(atPath: flag, contents: Data())
+        waitFor("the writer did not take A, leaving B queued") { c.held.outbound == 1 }
+        FileManager.default.createFile(atPath: send, contents: Data())
+        XCTAssertEqual(answerAdmitted.wait(timeout: .now() + 5), .success, "srv-1 was not answered")
+        // The answer is admitted while B still waits: the child has read nothing, so A cannot have been written.
+        XCTAssertEqual(c.held.outbound, 2, "the answer was not queued behind B")
+        FileManager.default.createFile(atPath: drain, contents: Data())
         XCTAssertEqual(group.wait(timeout: .now() + 20), .success, "a call did not return")
         XCTAssertEqual(lock.withLock { replies["A"] }, ["A", "B", "srv-1"])
         XCTAssertEqual(lock.withLock { replies["B"] }, ["A", "B", "srv-1"])
