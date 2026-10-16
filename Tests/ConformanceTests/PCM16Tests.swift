@@ -5,6 +5,49 @@ import XCTest
 final class PCM16Tests: XCTestCase {
     func testPCM16() throws { try runFixtures("pcm16") { try checkPCM($0.object) } }
 
+    /// Every header `wav` writes, across rates and data lengths, holds each canonical field for that rate and length;
+    /// `isValidWAV` accepts exactly the 24 kHz ones with a non-empty, even data chunk within the cap; and a rate no
+    /// header can carry is refused.
+    func testWAVHeaderAcrossRatesAndLengths() throws {
+        for rate in [1, 2, 8000, 11025, 16000, 22050, PCM.sampleRate, 44100, 48000, 96000, PCM.maxRate] {
+            for n in [0, 1, 2, 3, 4, 100, 4097] {
+                let pcm = Data((0..<n).map { UInt8(truncatingIfNeeded: $0) })
+                let wav = try PCM.wav(pcm, rate: rate)
+                checkHeader(wav, rate: rate, pcm: pcm)
+                let want = rate == PCM.sampleRate && n > 0 && n % 2 == 0
+                XCTAssertEqual(PCM.isValidWAV(wav, maxData: n), want, "rate \(rate), \(n) bytes")
+                if n > 0 { XCTAssertFalse(PCM.isValidWAV(wav, maxData: n - 1), "rate \(rate): over a cap of \(n - 1)") }
+            }
+        }
+        for rate in [Int.min, -1, 0, PCM.maxRate + 1, Int.max] {
+            XCTAssertThrowsError(try PCM.wav(Data([0, 0]), rate: rate), "rate \(rate)") {
+                XCTAssertEqual($0 as? PCM.RangeError, PCM.RangeError())
+            }
+        }
+    }
+
+    /// Compares each field of `wav`'s header with the canonical value for `rate` and `pcm`, which must follow it.
+    private func checkHeader(_ wav: Data, rate: Int, pcm: Data, line: UInt = #line) {
+        let b = [UInt8](wav)
+        guard b.count == PCM.headerSize + pcm.count else {
+            return XCTFail("rate \(rate): \(b.count) bytes for \(pcm.count) of PCM", line: line)
+        }
+        func le16(_ at: Int) -> UInt32 { UInt32(b[at]) | UInt32(b[at + 1]) << 8 }
+        func le32(_ at: Int) -> UInt32 { le16(at) | le16(at + 2) << 16 }
+        func id(_ at: Int) -> String { String(decoding: b[at..<at + 4], as: UTF8.self) }
+        let fields: [(String, AnyHashable, AnyHashable)] = [
+            ("chunk id", id(0), "RIFF"), ("RIFF size", le32(4), UInt32(36 + pcm.count)), ("form", id(8), "WAVE"),
+            ("fmt id", id(12), "fmt "), ("fmt size", le32(16), UInt32(16)), ("format", le16(20), UInt32(1)),
+            ("channels", le16(22), UInt32(1)), ("rate", le32(24), UInt32(rate)),
+            ("byte rate", le32(28), UInt32(2 * rate)), ("block align", le16(32), UInt32(2)),
+            ("bits", le16(34), UInt32(16)), ("data id", id(36), "data"), ("data size", le32(40), UInt32(pcm.count)),
+        ]
+        for (name, got, want) in fields where got != want {
+            XCTFail("rate \(rate), \(pcm.count) bytes: \(name) \(got), want \(want)", line: line)
+        }
+        XCTAssertEqual(Data(b[PCM.headerSize...]), pcm, "rate \(rate): the PCM after the header differs", line: line)
+    }
+
     /// Per op, the case members it reads besides the head and `op`.
     private static let members: [String: Set<String>] = [
         "encode": ["input", "expectSamples", "expectHex"],

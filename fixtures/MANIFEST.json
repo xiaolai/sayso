@@ -1,5 +1,5 @@
 {
- "count": 1004,
+ "count": 1016,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1761,6 +1761,78 @@
   },
   {
    "id": "pcm-valid-wav-not-riff",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-format-float",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-bits-8",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-block-align",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-byte-rate",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-fmt-size",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-list-chunk",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-wave-id",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-fmt-id",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-data-id",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-short",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-nothing",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-one-byte",
    "file": "pcm16.json",
    "component": "pcm16",
    "requires": []
