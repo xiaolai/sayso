@@ -107,7 +107,10 @@ final class OracleTests: XCTestCase {
         case "said.matches":
             return saidMatches(try text(c, "said"), try text(c, "spoken"), language: try text(c, "language"))
         case "said.tokens":
-            return svTranscriptTokens(try text(c, "text"), try text(c, "language")).map {
+            // As go/saidguard/oracle_test.go: a side the guard refuses unread has no tokens to compare.
+            let s = try text(c, "text")
+            if s.utf8.count > saidGuardMaxBytes || svOverlongMarks(s) { return "refused" }
+            return svTranscriptTokens(s, try text(c, "language")).map {
                 ["text": $0.text, "link": $0.link, "lead": $0.lead, "trail": $0.trail] as [String: Any]
             }
         case "han.parse":
@@ -283,6 +286,11 @@ final class OracleTests: XCTestCase {
                 + #"{"text":"2","link":false,"lead":0,"trail":0},{"text":"%","link":false,"lead":0,"trail":0}]"#
         ),
         ("said.tokens", #"{"text":"","language":"zh"}"#, "[]"),
+        (
+            "said.tokens", #"{"text":"x"# + String(repeating: #"\u0305"#, count: 29) + #"","language":"en"}"#,
+            #"[{"text":"x"# + String(repeating: #"\u0305"#, count: 29) + #"","link":false,"lead":0,"trail":0}]"#
+        ),
+        ("said.tokens", #"{"text":"x"# + String(repeating: #"\u0305"#, count: 30) + #"","language":"en"}"#, #""refused""#),
         ("han.parse", #"{"text":"两万五"}"#, #""25000""#),
         ("han.parse", #"{"text":"一千万亿"}"#, #""1000000000000000""#),
         ("han.parse", #"{"text":"三五"}"#, "null"),
