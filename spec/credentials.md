@@ -40,7 +40,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
 ## The app-server source (`AUTH-01`, `AUTH-03`)
 
 - **Child.** `<codex> -c model_provider="openai" app-server --listen stdio://`. The provider override makes Codex
-  answer for its OpenAI sign-in even when the user's configured provider needs none.
+  answer for its OpenAI sign-in even when the user's configured provider needs none. It starts in the caller's
+  working directory unless the caller names another, which must be an absolute path to an existing folder; any other
+  is refused before anything starts, with an error that does not quote the path.
 - **Environment.** Inherited, minus these names compared case-insensitively: `OPENAI_API_KEY`, `CODEX_API_KEY`,
   `CODEX_ACCESS_TOKEN`, `CODEX_APP_SERVER_LOGIN_CLIENT_ID`, `CODEX_REFRESH_TOKEN_URL_OVERRIDE`,
   `CODEX_REVOKE_TOKEN_URL_OVERRIDE`. `CODEX_HOME` is set when the caller configured one (an empty choice is no

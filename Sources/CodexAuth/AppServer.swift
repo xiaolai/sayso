@@ -138,6 +138,8 @@ public final class AppServerClient: @unchecked Sendable {
         public var guardStart: (@Sendable (String) throws -> Void)?
         /// Receives debug lines, which never hold the child's output.
         public var log: (@Sendable (String) -> Void)?
+        /// The child's working directory: an absolute path to an existing folder. nil keeps the caller's.
+        public var workingDirectory: String?
         /// When set, receives every notification and every server request (already refused), in the order the child
         /// wrote them, one at a time on a thread of its own: the reader never waits for it. A reply may reach its
         /// caller before the handler has seen the events written before it. Events still queued beyond 8 MiB (a
@@ -148,7 +150,7 @@ public final class AppServerClient: @unchecked Sendable {
         public init(
             bin: String, codexHome: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment,
             timeout: TimeInterval, clientName: String = "sayso", guardStart: (@Sendable (String) throws -> Void)? = nil,
-            log: (@Sendable (String) -> Void)? = nil,
+            log: (@Sendable (String) -> Void)? = nil, workingDirectory: String? = nil,
             onEvent: (@Sendable (AppServerEvent) -> Void)? = nil
         ) {
             self.bin = bin
@@ -158,6 +160,7 @@ public final class AppServerClient: @unchecked Sendable {
             self.clientName = clientName
             self.guardStart = guardStart
             self.log = log
+            self.workingDirectory = workingDirectory
             self.onEvent = onEvent
         }
 
@@ -198,6 +201,13 @@ public final class AppServerClient: @unchecked Sendable {
             throw AppServerError("the Codex executable path is not absolute")
         }
         guard cfg.timeout > 0, cfg.timeout.isFinite else { throw AppServerError("a per-call timeout is required") }
+        if let dir = cfg.workingDirectory {
+            // The path is not quoted: a caller's folder name is not ours to print.
+            var st = stat()
+            guard dir.utf8.first == 0x2F, !dir.utf8.contains(0), stat(dir, &st) == 0,
+                st.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR)
+            else { throw AppServerError("the working directory is not an absolute path to an existing folder") }
+        }
         // A name holding "=" would become another variable in the child ("OPENAI_API_KEY=x" with value "y" is
         // OPENAI_API_KEY=x=y) and slip past the removal list; a NUL would cut the string short. Go cannot be given
         // either: its entries are "name=value" strings, and exec refuses a NUL.
@@ -214,7 +224,8 @@ public final class AppServerClient: @unchecked Sendable {
         let env = CodexExecutable.childEnvironment(cfg.environment, bin: cfg.bin, codexHome: cfg.codexHome)
         let c = AppServerClient(
             core: try AppServerCore(
-                bin: cfg.bin, env: env, timeout: cfg.timeout, log: cfg.log, onEvent: cfg.onEvent))
+                bin: cfg.bin, env: env, timeout: cfg.timeout, log: cfg.log, directory: cfg.workingDirectory,
+                onEvent: cfg.onEvent))
         onSpawn?(c)
         do {
             let hello = try c.core.call(
@@ -347,7 +358,7 @@ final class AppServerCore: @unchecked Sendable {
 
     init(
         bin: String, env: [String: String], timeout: TimeInterval, log: (@Sendable (String) -> Void)?,
-        onEvent: (@Sendable (AppServerEvent) -> Void)?
+        directory: String?, onEvent: (@Sendable (AppServerEvent) -> Void)?
     ) throws {
         self.timeout = timeout
         self.log = log
@@ -378,6 +389,7 @@ final class AppServerCore: @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, inPipe[0], 0)
         posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
         posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2)
+        if let directory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
         // Its own process group, so close can signal every process the child starts; only fds 0-2 are inherited.
         var defaults = sigset_t()
         sigfillset(&defaults)

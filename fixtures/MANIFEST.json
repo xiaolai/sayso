@@ -1,5 +1,5 @@
 {
- "count": 783,
+ "count": 788,
  "fixtures": [
   {
    "id": "app-ready",
@@ -459,6 +459,36 @@
   },
   {
    "id": "app-client-event-shapes",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-working-directory",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-working-directory-default",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-working-directory-relative",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-working-directory-missing",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-working-directory-file",
    "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []

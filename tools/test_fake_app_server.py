@@ -65,13 +65,14 @@ class Fake(unittest.TestCase):
     def test_notify_around_a_reply(self):
         scenario = {"methods": {"m": [{"notify": [{"method": "a", "params": {"n": "$i"}, "repeat": 3},
                                                   {"id": "srv", "method": "approve"}, {"method": "pad", "padBytes": 4}],
-                                       "result": {}, "notifyAfter": [{"method": "after"}]}]}}
+                                       "result": {}, "notifyAfter": [{"method": "cwd", "params": {"cwd": "$cwd"}}]}]}}
         _, out, _, _ = converse(scenario, [{"id": 1, "method": "m"}])
-        self.assertEqual([o.get("method") for o in out], ["a", "a", "a", "approve", "pad", None, "after"])
+        self.assertEqual([o.get("method") for o in out], ["a", "a", "a", "approve", "pad", None, "cwd"])
         self.assertEqual([o["params"]["n"] for o in out[:3]], [0, 1, 2])
         self.assertEqual(out[3]["id"], "srv")
         self.assertEqual(out[4]["params"], {"pad": "xxxx"})
         self.assertEqual(out[5], {"id": 1, "result": {}})
+        self.assertEqual(out[6]["params"]["cwd"], os.getcwd())
 
     def test_unscripted_method_is_not_found(self):
         _, out, _, _ = converse({}, [{"id": 1, "method": "config/read", "params": {}}])

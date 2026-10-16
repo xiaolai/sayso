@@ -25,6 +25,20 @@ extension CredentialWorld {
         case "block": config.onEvent = { _ in block.wait() }
         case let other: return ["unknown handler \(other)"]
         }
+        let work = root + "/work"
+        switch s["dir"] as? String ?? "" {
+        case "": break
+        case "work":
+            try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: false)
+            config.workingDirectory = work
+        case "relative": config.workingDirectory = "work"
+        case "missing": config.workingDirectory = root + "/missing"
+        case "file":
+            config.workingDirectory = root + "/file"
+            FileManager.default.createFile(atPath: root + "/file", contents: Data())
+        case let other: return ["unknown dir \(other)"]
+        }
+
         var p: [String] = []
         var client: AppServerClient?
         do { client = try AppServerClient.start(config) } catch {
@@ -53,6 +67,19 @@ extension CredentialWorld {
         }
         let got = events.value
 
+        let callerCwd = FileManager.default.currentDirectoryPath.withCString { c -> String in
+            guard let r = realpath(c, nil) else { return String(cString: c) }
+            defer { free(r) }
+            return String(cString: r)
+        }
+        func expand(_ v: Any) -> Any {
+            if let t = v as? String {
+                return t.replacingOccurrences(of: "$work", with: work).replacingOccurrences(of: "$callerCwd", with: callerCwd)
+            }
+            if let o = v as? [String: Any] { return o.mapValues(expand) }
+            if let a = v as? [Any] { return a.map(expand) }
+            return v
+        }
         var rest: [String: Any] = [:]
         for (key, v) in want {
             switch key {
@@ -74,7 +101,7 @@ extension CredentialWorld {
                     if let wp = w["params"] {
                         let params = e.params.isEmpty
                             ? nil : try? JSONSerialization.jsonObject(with: e.params, options: [.fragmentsAllowed])
-                        if params == nil || !Self.same(params!, wp) { p.append("event \(i) params differ") }
+                        if params == nil || !Self.same(params!, expand(wp)) { p.append("event \(i) params differ") }
                     }
                 }
             case "eventCount":

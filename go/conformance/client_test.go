@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +20,7 @@ import (
 // clientSetup drives the app-server client itself rather than a credentials object (spec/fixtures.md).
 type clientSetup struct {
 	Handler string `json:"handler"` // "" (none), "record", or "block" (never returns until the case ends)
+	Dir     string `json:"dir"`     // "" (none), "work", "relative", "missing" or "file"
 	Calls   []struct {
 		Method string         `json:"method"`
 		Params map[string]any `json:"params"`
@@ -50,6 +52,27 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	default:
 		return []string{"unknown handler " + s.Handler}
 	}
+	work := filepath.Join(w.root, "work")
+	switch s.Dir {
+	case "":
+	case "work":
+		if err := os.Mkdir(work, 0o700); err != nil {
+			return []string{err.Error()}
+		}
+		cfg.Dir = work
+	case "relative":
+		cfg.Dir = "work"
+	case "missing":
+		cfg.Dir = filepath.Join(w.root, "missing")
+	case "file":
+		cfg.Dir = filepath.Join(w.root, "file")
+		if err := os.WriteFile(cfg.Dir, nil, 0o600); err != nil {
+			return []string{err.Error()}
+		}
+	default:
+		return []string{"unknown dir " + s.Dir}
+	}
+
 	var p []string
 	ctx := context.Background()
 	c, err := codexapp.Start(ctx, cfg)
@@ -95,6 +118,11 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	got := slices.Clone(events)
 	mu.Unlock()
 
+	callerCwd, _ := os.Getwd()
+	if r, err := filepath.EvalSymlinks(callerCwd); err == nil {
+		callerCwd = r
+	}
+	expand := strings.NewReplacer("$work", work, "$callerCwd", callerCwd)
 	rest := map[string]any{}
 	for key, v := range want {
 		switch key {
@@ -110,7 +138,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 				break
 			}
 			for i, e := range list {
-				p = append(p, checkClientEvent(i, got[i], e.(map[string]any))...)
+				p = append(p, checkClientEvent(i, got[i], e.(map[string]any), expand)...)
 			}
 		case "eventCount":
 			if !same(len(got), v) {
@@ -137,7 +165,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	return append(p, w.check(rest, "", secret.Token{}, "", codexauth.Info{}, rec, 0, "")...)
 }
 
-func checkClientEvent(i int, got codexapp.Event, want map[string]any) []string {
+func checkClientEvent(i int, got codexapp.Event, want map[string]any, expand *strings.Replacer) []string {
 	var p []string
 	if got.Method != want["method"] {
 		p = append(p, fmt.Sprintf("event %d is %s, want %v", i, got.Method, want["method"]))
@@ -150,11 +178,32 @@ func checkClientEvent(i int, got codexapp.Event, want map[string]any) []string {
 	}
 	if wantParams, ok := want["params"]; ok {
 		var params any
-		if got.Params == nil || json.Unmarshal(got.Params, &params) != nil || !same(params, wantParams) {
+		if got.Params == nil || json.Unmarshal(got.Params, &params) != nil || !same(params, expandAll(wantParams, expand)) {
 			p = append(p, fmt.Sprintf("event %d params differ", i))
 		}
 	}
 	return p
+}
+
+// expandAll replaces the path placeholders in every string of v.
+func expandAll(v any, r *strings.Replacer) any {
+	switch t := v.(type) {
+	case string:
+		return r.Replace(t)
+	case map[string]any:
+		out := map[string]any{}
+		for k, x := range t {
+			out[k] = expandAll(x, r)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = expandAll(x, r)
+		}
+		return out
+	}
+	return v
 }
 
 func methods(events []codexapp.Event) string {

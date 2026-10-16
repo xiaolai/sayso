@@ -58,6 +58,8 @@ type Config struct {
 	// Guard, if set, runs before the executable is started; an error refuses the start. A consumer uses it to keep
 	// unit tests away from a real Codex.
 	Guard func(bin string) error
+	// Dir is the child's working directory: an absolute path to an existing folder. "" keeps the caller's.
+	Dir string
 	// OnEvent, when set, receives every notification and every server request (already refused), in the order the
 	// child wrote them, one at a time from a goroutine of its own: the reader never waits for it. A reply may reach
 	// its caller before OnEvent has seen the events written before it. Events still queued beyond 8 MiB (a handler
@@ -172,6 +174,12 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Timeout <= 0 {
 		return nil, errors.New("codexapp: a per-call Timeout is required")
 	}
+	if cfg.Dir != "" {
+		// The path is not quoted: a caller's folder name is not ours to print.
+		if st, err := os.Stat(cfg.Dir); !filepath.IsAbs(cfg.Dir) || err != nil || !st.IsDir() {
+			return nil, errors.New("codexapp: the working directory is not an absolute path to an existing folder")
+		}
+	}
 	if cfg.Guard != nil {
 		if err := cfg.Guard(cfg.Bin); err != nil {
 			return nil, fmt.Errorf("codexapp: start refused: %w", err)
@@ -200,6 +208,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	// No CommandContext: the child must outlive ctx and is reaped only by Close.
 	cmd := exec.Command(cfg.Bin, Args...)
 	cmd.Env = ChildEnv(env, cfg.Bin, cfg.CodexHome)
+	cmd.Dir = cfg.Dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Our own pipes, handed to the child as files: Wait then waits for the process only, never for a descendant
 	// that inherited the write ends, and Close can end our readers by closing the read ends.

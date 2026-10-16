@@ -29,7 +29,8 @@ Scenario keys (all optional):
                        optionally with "delayMs", "notify" (messages sent before the reply) and "notifyAfter" (sent
                        after it). A message is {"method", "params"} (a notification) or carries an "id" too (a server
                        request); "repeat": n sends it n times with "$i" in a params string value replaced by the index
-                       (a number), and "padBytes": n adds a params member "pad" of n "x". A method with no steps answers -32601.
+                       (a number), and "padBytes": n adds a params member "pad" of n "x". The string "$cwd" in a message is
+                       replaced by the fake's working directory. A method with no steps answers -32601.
   byParams             {method: [{"when": {param: value}, "steps": [...]}]}: the first entry whose `when` matches the
                        call's params, by equality of each named key, is used instead of `methods`; each entry
                        counts its own calls, across starts like `methods`
@@ -105,13 +106,15 @@ def send(message: dict) -> None:
 
 
 def indexed(value, i: int):
-    """value with every string "$i" replaced by i."""
+    """value with every string "$i" replaced by i and "$cwd" by the working directory."""
     if isinstance(value, dict):
         return {k: indexed(v, i) for k, v in value.items()}
     if isinstance(value, list):
         return [indexed(v, i) for v in value]
     if value == "$i":
         return i
+    if value == "$cwd":
+        return os.getcwd()
     return value
 
 
