@@ -274,7 +274,7 @@ func decodeAuthFile(doc map[string]wipedRaw) (secret.Token, *Error) {
 	switch {
 	case present("auth_mode"):
 		var m string
-		if json.Unmarshal(doc["auth_mode"], &m) != nil || (m != modeChatGPT && m != modeAPIKey && !fileModes[m]) {
+		if !decodeMember(doc["auth_mode"], '"', &m) || (m != modeChatGPT && m != modeAPIKey && !fileModes[m]) {
 			return secret.Token{}, fail(StateCodexError, "auth.json names an unknown auth_mode", nil)
 		}
 		mode = m
@@ -292,12 +292,29 @@ func decodeAuthFile(doc map[string]wipedRaw) (secret.Token, *Error) {
 	}
 	missing := fail(StateCodexError, "auth.json has a ChatGPT sign-in without an access token", nil)
 	var tokens map[string]wipedRaw
-	if !present("tokens") || json.Unmarshal(doc["tokens"], &tokens) != nil {
+	if !present("tokens") || !decodeMember(doc["tokens"], '{', &tokens) {
 		return secret.Token{}, missing
 	}
 	var access string
-	if raw, ok := tokens["access_token"]; !ok || json.Unmarshal(raw, &access) != nil || access == "" {
+	if raw, ok := tokens["access_token"]; !ok || !decodeMember(raw, '"', &access) || access == "" {
 		return secret.Token{}, missing
 	}
 	return newToken(access, "file"), nil
 }
+
+// decodeMember decodes a member of auth.json into v when its first byte is kind ('"' for a string, '{' for an
+// object), and reports whether it did. Any other value is refused from its bytes, never handed to the decoder: a
+// string decoded where an object belongs is unquoted first, into a copy that is never wiped when it holds an escape.
+func decodeMember(raw wipedRaw, kind byte, v any) bool {
+	if len(raw) == 0 || raw[0] != kind {
+		return false
+	}
+	if raw[0] == '"' && stringDecoded != nil {
+		stringDecoded(raw)
+	}
+	return json.Unmarshal(raw, v) == nil
+}
+
+// stringDecoded, when set, sees each string value handed to the decoder, the one kind of value that leaves a copy the
+// read does not wipe; an object's members stay wipedRaw. For tests.
+var stringDecoded func([]byte)
