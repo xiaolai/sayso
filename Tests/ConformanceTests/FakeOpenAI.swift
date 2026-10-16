@@ -42,6 +42,8 @@ struct FakeHTTPReply: Sendable {
     let status: Int
     let headers: [(String, String)]
     let body: Data
+    /// Read the request and close the connection without a byte of reply.
+    var hangup = false
 }
 
 /// One request as the fake server received it.
@@ -52,8 +54,8 @@ struct FakeHTTPRequest: Sendable {
     let body: Data
 }
 
-/// An HTTP/1.1 server that answers the n-th request with the n-th reply (418 when the script has none) and closes
-/// each connection after its reply.
+/// An HTTP/1.1 server that answers the n-th request with the n-th reply (418 when the script has none), or hangs up on
+/// it, and closes each connection after its reply.
 final class FakeHTTPServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "fake-openai-http")
@@ -128,6 +130,10 @@ final class FakeHTTPServer: @unchecked Sendable {
         let reply =
             n < replies.count
             ? replies[n] : FakeHTTPReply(status: 418, headers: [], body: Data("fixture has no reply for this request".utf8))
+        if reply.hangup {
+            connection.cancel()
+            return
+        }
         var head = "HTTP/1.1 \(reply.status) Fixture\r\n"
         for (k, v) in reply.headers { head += "\(k): \(v)\r\n" }
         head += "Content-Length: \(reply.body.count)\r\nConnection: close\r\n\r\n"

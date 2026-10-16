@@ -1,5 +1,5 @@
 {
- "count": 1049,
+ "count": 1051,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1683,6 +1683,18 @@
   },
   {
    "id": "mint-redirect-malformed-location",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-lost-connection-resent",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-lost-connection-twice",
    "file": "mint/mint.json",
    "component": "mint",
    "requires": []

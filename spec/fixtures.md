@@ -120,10 +120,11 @@ A timeline case has `steps` instead of `expect`: each runs `op` (`token`, or `re
 
 `setup`: `origin` (`test`: the harness's fake server, registered as a test origin; or a URL that must be refused),
 `session`, `lifetimeSeconds`, `token` (what the stub credential source returns), `refreshTo` (what it returns after a
-refresh), `replies` (in order: `status`, `headers`, and `json` or `body`; `bodyPadTo` pads with trailing spaces).
+refresh), `replies` (in order: `status`, `headers`, and `json` or `body`; `bodyPadTo` pads with trailing spaces;
+`hangup: true` instead reads the request and closes the connection without a byte of reply).
 `expect`: `class` (`null`: success), `secret`, `expiresAt`, `status`, `type`, `code`, `param`, `requestId`, `requests`
 (requests the fake received), `refreshCalls`, `tokenCalls` (tokens asked of the stub), `request` (the first request:
-method, path, headers, JSON body), `secondAuthorization`, `scrubs` (strings the scrubber must replace afterwards),
+method, path, headers, JSON body), `secondAuthorization` (`$token` or `$refreshTo`), `scrubs` (strings the scrubber must replace afterwards),
 `notInDescription`.
 
 ### `session` (`ws/`, `events/`)

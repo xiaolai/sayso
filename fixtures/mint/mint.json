@@ -1813,5 +1813,104 @@
    ]
   },
   "note": "A redirect is refused and its reply kept: protocol with the status, request id and provider fields, in both implementations. Go's http.Client parsed the Location before its redirect check, so a malformed one failed as network, and the refusal's text quoted the Location."
+ },
+ {
+  "id": "mint-lost-connection-resent",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "hangup": true
+    },
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "expiresAt": 1800000600,
+   "requests": 2,
+   "refreshCalls": 0,
+   "tokenCalls": 1,
+   "secondAuthorization": "Bearer $token"
+  }
+ },
+ {
+  "id": "mint-lost-connection-twice",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "hangup": true
+    },
+    {
+     "hangup": true
+    },
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 1800000600,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": "network",
+   "requests": 2,
+   "refreshCalls": 0
+  }
  }
 ]

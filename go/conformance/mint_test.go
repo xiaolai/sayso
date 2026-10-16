@@ -26,6 +26,8 @@ type mintReply struct {
 	JSON      json.RawMessage   `json:"json"`
 	Body      *string           `json:"body"`
 	BodyPadTo int               `json:"bodyPadTo"`
+	// Hangup reads the request and closes the connection without a byte of reply.
+	Hangup bool `json:"hangup"`
 }
 
 type mintCase struct {
@@ -95,6 +97,15 @@ func checkMint(t *testing.T, mc mintCase) []string {
 			return
 		}
 		rep := mc.Setup.Replies[n]
+		if rep.Hangup {
+			conn, _, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				http.Error(w, "the fake cannot hang up: "+err.Error(), http.StatusTeapot)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
 		for k, v := range rep.Headers {
 			w.Header().Set(k, v)
 		}
@@ -186,9 +197,9 @@ func checkMint(t *testing.T, mc mintCase) []string {
 		}
 	}
 	if w, ok := want["secondAuthorization"]; ok {
-		exp := strings.ReplaceAll(fmt.Sprint(w), "$refreshTo", refreshTo)
+		exp := strings.NewReplacer("$refreshTo", refreshTo, "$token", token).Replace(fmt.Sprint(w))
 		if len(requests) < 2 || requests[1].authorization != exp {
-			p = append(p, "second request did not carry the refreshed token")
+			p = append(p, "second request did not carry the expected token")
 		}
 	}
 	for _, s := range strings_(want["scrubs"]) {

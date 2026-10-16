@@ -129,9 +129,15 @@ public final class HTTPClient: Sendable {
     /// `limit` bytes. A non-2xx reply is a classified error (at most 64 KiB of its body read; `route` is kept only on a
     /// route-denied error); a longer body is `protocol`; a broken connection is `network`; the caller's cancellation is
     /// `cancelled`. Neither the request nor the body is ever logged.
-    public func send(_ request: URLRequest, timeout: TimeInterval, limit: Int, route: String = "") async throws
-        -> HTTPReply
-    {
+    ///
+    /// With `resendOnLostConnection`, a request whose connection was lost before any byte of a reply arrived
+    /// (`URLError.networkConnectionLost`) is sent once more, within the same `timeout` (spec/http-and-mint.md, lost
+    /// connection): the server may have closed a kept-alive connection as the request reached it, and URLSession does
+    /// not resend a POST. Only a caller for whom a duplicate request is harmless asks for it; a body stream, which
+    /// cannot be sent twice, is never resent.
+    public func send(
+        _ request: URLRequest, timeout: TimeInterval, limit: Int, route: String = "", resendOnLostConnection: Bool = false
+    ) async throws -> HTTPReply {
         guard Deadline.nanoseconds(timeout) != nil, limit >= 0 else {
             throw RealtimeError(.internal, message: "HTTPClient.send needs a positive, finite timeout and a limit")
         }
@@ -141,7 +147,8 @@ public final class HTTPClient: Sendable {
         let session = self.session
         let sending = request
         return try await withDeadline(seconds: timeout, what: "request") {
-            let (bytes, response) = try await session.bytes(for: sending)
+            let resend = resendOnLostConnection && sending.httpBodyStream == nil
+            let (bytes, response) = try await Self.open(session, sending, resend: resend)
             guard let http = response as? HTTPURLResponse else {
                 throw RealtimeError(.protocol, message: "not an HTTP response")
             }
@@ -181,6 +188,18 @@ public final class HTTPClient: Sendable {
                     requestID: headers["x-request-id"] ?? "")
             }
             return HTTPReply(status: http.statusCode, headers: headers, body: body.data)
+        }
+    }
+
+    /// The reply's head and its body as it arrives; with `resend`, a connection lost before the head is tried once
+    /// more.
+    private static func open(_ session: URLSession, _ request: URLRequest, resend: Bool) async throws
+        -> (URLSession.AsyncBytes, URLResponse)
+    {
+        do {
+            return try await session.bytes(for: request)
+        } catch let lost as URLError where resend && lost.code == .networkConnectionLost && !Task.isCancelled {
+            return try await session.bytes(for: request)
         }
     }
 
