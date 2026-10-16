@@ -3,7 +3,8 @@ import XCTest
 
 @testable import RealtimeConnection
 
-/// The secret types beyond the fixtures: how an expiry is converted and normalised.
+/// The secret types beyond the fixtures: how an expiry is converted and normalised, and that no reflection or
+/// encoding path shows a bearer.
 final class SecretValueTests: XCTestCase {
     // MARK: Expiry conversion
 
@@ -44,5 +45,59 @@ final class SecretValueTests: XCTestCase {
         for unix: Int64 in [(1 << 53) + 1, .max, .min] {
             XCTAssertEqual(ClientSecret(bearer: "ek_exact", expiresAtUnix: unix).expiresAtUnix, unix)
         }
+    }
+
+    // MARK: Reflection and encoding
+
+    private struct Holder: Encodable {
+        let token: Token
+        let secret: ClientSecret
+        let list: [ClientSecret]
+        let map: [String: Token]
+    }
+
+    private func holder() -> Holder {
+        let token = Token(bearer: "opaque-canary-reflect", expires: Date(), plan: "plus", source: "test")
+        let secret = ClientSecret(bearer: "ek_canary_reflect", expiresAtUnix: 1_800_000_600)
+        return Holder(token: token, secret: secret, list: [secret], map: ["k": token])
+    }
+
+    private func assertNoBearer(_ text: String, _ what: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertFalse(
+            text.contains("opaque-canary-reflect") || text.contains("ek_canary_reflect"), "\(what): \(text)",
+            file: file, line: line)
+    }
+
+    func testReflectionShowsNoBearer() {
+        let h = holder()
+        for (value, what) in [(h.token as Any, "token"), (h.secret, "secret"), (h, "holder"), ([h], "array")] {
+            var dumped = ""
+            dump(value, to: &dumped)
+            assertNoBearer(dumped, "dump of \(what)")
+            assertNoBearer(String(reflecting: value), "reflecting \(what)")
+            assertNoBearer("\(value)", "describing \(what)")
+            var children = ""
+            func walk(_ v: Any, depth: Int) {
+                guard depth < 8 else { return }
+                for c in Mirror(reflecting: v).children {
+                    children += "\(c.label ?? "") \(c.value)\n"
+                    walk(c.value, depth: depth + 1)
+                }
+            }
+            walk(value, depth: 0)
+            assertNoBearer(children, "mirror of \(what)")
+        }
+    }
+
+    func testEncodingShowsNoBearer() throws {
+        let h = holder()
+        let json = try JSONEncoder().encode(h)
+        assertNoBearer(String(decoding: json, as: UTF8.self), "JSON")
+        let plist = try PropertyListEncoder().encode(h)
+        assertNoBearer(String(decoding: plist, as: UTF8.self), "binary property list")
+        let xml = PropertyListEncoder()
+        xml.outputFormat = .xml
+        assertNoBearer(String(decoding: try xml.encode(h), as: UTF8.self), "XML property list")
+        XCTAssertTrue(String(decoding: json, as: UTF8.self).contains(Secret.redacted), "the redacted marker is encoded")
     }
 }
