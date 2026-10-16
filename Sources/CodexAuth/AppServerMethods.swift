@@ -6,19 +6,31 @@ import RealtimeConnection
 /// The methods the credentials call, each read with exact keys: a field of the wrong type is an error, as in Go.
 extension AppServerClient {
     /// getAuthStatus. Any token in the reply is registered with the scrubber before it is returned.
+    ///
+    /// The result is read where it lies (``WireJSON/Borrowed``), null being an empty object, and every field is
+    /// checked before a `String` is made, so a refused result leaves no copy of the token; the token is decoded once,
+    /// into the `String` kept.
     public func getAuthStatus(includeToken: Bool, refreshToken: Bool) throws -> AuthStatus {
-        let result = try call("getAuthStatus", params: ["includeToken": includeToken, "refreshToken": refreshToken])
         let bad = AppServerError("Codex app-server sent an unexpected getAuthStatus result")
-        guard let o = jsonObject(result) else { throw bad }
-        guard let token = jsonOptionalString(o["authToken"]) else { throw bad }
-        Secret.register(token ?? "")  // before anything else can fail or format it
-        guard let method = jsonOptionalString(o["authMethod"]) else { throw bad }
-        var requires = true
-        if let r = o["requiresOpenaiAuth"], !(r is NSNull) {
-            guard let b = jsonBool(r) else { throw bad }
-            requires = b
+        return try call("getAuthStatus", params: ["includeToken": includeToken, "refreshToken": refreshToken]) { raw in
+            guard let doc = plainJSON(raw) else { throw bad }
+            let root = doc.root
+            if doc.isNull(root) { return AuthStatus(method: nil, requiresOpenAIAuth: true, token: "") }
+            guard doc.kind(root) == UInt8(ascii: "{") else { throw bad }
+            func present(_ name: String) -> Range<Int>? {  // absent or null is not present
+                guard let v = doc.member(root, name), !doc.isNull(v) else { return nil }
+                return v
+            }
+            let token = present("authToken"), method = present("authMethod"), requires = present("requiresOpenaiAuth")
+            let isString = { (v: Range<Int>) in doc.kind(v) == UInt8(ascii: "\"") }
+            guard token.map(isString) ?? true, method.map(isString) ?? true,
+                requires.map({ doc.kind($0) == UInt8(ascii: "t") || doc.kind($0) == UInt8(ascii: "f") }) ?? true
+            else { throw bad }
+            return AuthStatus(
+                method: method.flatMap { doc.string($0) },
+                requiresOpenAIAuth: requires.map { doc.kind($0) == UInt8(ascii: "t") } ?? true,
+                token: token.flatMap { doc.string($0) } ?? "")  // registered by AuthStatus before anything else
         }
-        return AuthStatus(method: method, requiresOpenAIAuth: requires, token: token ?? "")
     }
 
     /// config/read's effective `cli_auth_credentials_store`; "" when absent, which Codex treats as "file".

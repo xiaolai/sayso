@@ -3,15 +3,6 @@ import Darwin
 import Foundation
 import RealtimeConnection
 
-/// Whether `bytes` can be JSON as Go reads it: see ``plainJSON(_:)``. The bytes are copied once, so every check
-/// reads them contiguously (a generic collection is read element by element, which is slow for a long line), and
-/// the copy is wiped: a reply can hold a token.
-func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
-    var data = Data(bytes)
-    defer { data.resetBytes(in: 0..<data.count) }
-    return data.withUnsafeBytes { plainJSON($0) != nil }
-}
-
 /// The document `raw` if it can be JSON as Go reads it, read in place: UTF-8 without a byte-order mark, within the
 /// depth and number bounds, and strict. JSONSerialization also accepts UTF-16 and UTF-32, whose text always holds
 /// NUL bytes, and skips a leading UTF-8 byte-order mark; Go accepts neither, and no JSON text holds a raw NUL. The
@@ -132,10 +123,5 @@ func jsonOptionalString(_ v: Any?) -> String?? {
     guard let v, !(v is NSNull) else { return .some(nil) }
     guard let s = v as? String else { return nil }
     return .some(s)
-}
-
-func jsonBool(_ v: Any) -> Bool? {
-    guard let n = v as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { return nil }
-    return n.boolValue
 }
 #endif

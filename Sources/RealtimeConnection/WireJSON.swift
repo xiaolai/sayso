@@ -43,15 +43,6 @@ package enum WireJSON {
         return Node(doc: doc, range: range)
     }
 
-    /// The exact bytes of the member `name` of the JSON object `data`, as the sender wrote them; nil when absent.
-    /// Throws ``Invalid`` unless `data` is one strict JSON object. For the other modules of this package, which
-    /// cannot see ``Node``: CodexAuth hands an app-server event's params on byte for byte, as Go does.
-    package static func memberBytes<C: Collection>(_ data: C, _ name: String) throws -> Data? where C.Element == UInt8 {
-        let root = try parse(data)
-        guard let n = try root.members()[Array(name.utf8)] else { return nil }
-        return n.data
-    }
-
     /// A validated document's bytes, shared by its nodes and wiped when the last of them is released. Unchecked
     /// Sendable: `bytes` is written only by `deinit`, when no other reference to the document is left.
     final class Document: @unchecked Sendable {
@@ -92,10 +83,6 @@ package enum WireJSON {
         }
 
         var isNull: Bool { kind == UInt8(ascii: "n") }
-
-        /// The value's exact bytes. Read through a node, every copy of the document's bytes ends while the node
-        /// still holds the document.
-        var data: Data { Data(bytes[range]) }
 
         /// The value's exact text.
         var raw: String { String(decoding: bytes[range], as: UTF8.self) }

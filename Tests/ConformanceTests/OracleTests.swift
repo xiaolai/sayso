@@ -122,7 +122,7 @@ final class OracleTests: XCTestCase {
         case "wire.valid":
             return WireJSON.isValid(try bytes(c))
         case "codex.valid":
-            return isPlainJSON(try bytes(c))
+            return try bytes(c).withUnsafeBytes { plainJSON($0) != nil }
         case "event.decode":
             do {
                 return ["event": eventObservation(try RealtimeEvent.decode(try bytes(c)))]

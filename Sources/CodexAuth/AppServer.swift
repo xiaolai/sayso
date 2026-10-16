@@ -201,6 +201,14 @@ public final class AppServerClient: @unchecked Sendable {
 
     /// Waits for the event thread to end, for tests.
     func waitForEventLoop(timeout: TimeInterval) -> Bool { core.waitForEventLoop(timeout: timeout) }
+
+    /// Waits for the stdout reader to end, for tests.
+    func waitForReadLoop(timeout: TimeInterval) -> Bool { core.waitForReadLoop(timeout: timeout) }
+
+    /// Sends one request and gives `read` its result's exact bytes; see ``AppServerCore/call(_:params:read:)``.
+    func call<T>(_ method: String, params: [String: Any], read: (UnsafeRawBufferPointer) throws -> T) throws -> T {
+        try core.call(method, params: params, read: read)
+    }
 }
 
 /// The child's process, pipes, readers and pending calls.
@@ -266,9 +274,11 @@ final class AppServerCore: @unchecked Sendable {
     /// Signalled when the first close has finished.
     private let closeDone = DispatchSemaphore(value: 0)
 
+    /// A call waiting for its reply. A result is the exact bytes of the reply's `result`, copied for this call alone
+    /// and wiped once the last reference to it is released, whether or not the call read it.
     private final class Pending {
         let done = DispatchSemaphore(value: 0)
-        var result: Result<Any, AppServerError>?
+        var result: Result<OwnedBytes, AppServerError>?
     }
 
     /// One message for ``writeLoop()``: a request or notification of a call, an answer to a server request, or, with
@@ -304,6 +314,8 @@ final class AppServerCore: @unchecked Sendable {
     private var testSignal: (@Sendable (Int32) -> Void)?
     /// Signalled when the event thread ends.
     private let eventLoopEnded = DispatchSemaphore(value: 0)
+    /// Signalled when the stdout reader ends.
+    private let readLoopEnded = DispatchSemaphore(value: 0)
 
     func setTestSeams(
         refusalAdmitted: (@Sendable () -> Void)? = nil, eventAdmitted: (@Sendable () -> Void)? = nil,
@@ -330,6 +342,11 @@ final class AppServerCore: @unchecked Sendable {
     /// Waits for the event thread to end.
     func waitForEventLoop(timeout: TimeInterval) -> Bool {
         eventLoopEnded.wait(timeout: .now() + timeout) == .success
+    }
+
+    /// Waits for the stdout reader to end.
+    func waitForReadLoop(timeout: TimeInterval) -> Bool {
+        readLoopEnded.wait(timeout: .now() + timeout) == .success
     }
 
     init(
@@ -421,7 +438,23 @@ final class AppServerCore: @unchecked Sendable {
         lock.withLock { Secret.scrub(String(decoding: stderrBytes, as: UTF8.self)) }
     }
 
+    /// The result as JSONSerialization decodes it, NSNull for null: the objects it makes are the caller's.
     func call(_ method: String, params: [String: Any]) throws -> Any {
+        try call(method, params: params) { result in
+            let data = Data(
+                bytesNoCopy: UnsafeMutableRawPointer(mutating: result.baseAddress!), count: result.count,
+                deallocator: .none)
+            guard let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+                throw AppServerError("Codex app-server sent an unexpected \(method) result")
+            }
+            return value
+        }
+    }
+
+    /// Sends one request and gives `read` the exact bytes of its result, where they lie: a copy made for this call
+    /// alone, wiped once the call returns. A reply that comes after the call stopped waiting is never copied; one
+    /// copied for a call that then gives up is wiped as it is released.
+    func call<T>(_ method: String, params: [String: Any], read: (UnsafeRawBufferPointer) throws -> T) throws -> T {
         let deadline = DispatchTime.now() + timeout
         let p = Pending()
         let id: Int = try lock.withLock {
@@ -436,7 +469,7 @@ final class AppServerCore: @unchecked Sendable {
             throw AppServerError("Codex app-server did not answer \(method) within \(timeout) s")
         }
         switch lock.withLock({ p.result }) {
-        case .success(let result): return result
+        case .success(let result): return try withExtendedLifetime(result) { try read(UnsafeRawBufferPointer(result.bytes)) }
         case .failure(let e) where e.rpcCode != nil:
             throw AppServerError("Codex app-server rejected \(method)", rpcCode: e.rpcCode, rpcMessage: e.rpcMessage)
         case .failure(let e) where e.message == Self.missingResult:
@@ -731,147 +764,136 @@ final class AppServerCore: @unchecked Sendable {
     /// Matches replies to pending calls until stdout ends or misbehaves. A server request is answered with an error
     /// and never acted on; it and every notification are queued for `onEvent` when one is set. A line is never
     /// quoted: it may carry a credential.
+    ///
+    /// Every line is read into the reader's one buffer (``LineReader``) and wiped once it is handled, and the buffer is
+    /// wiped before a failure is recorded, so a call that returns, whatever its outcome, leaves no line of the child's
+    /// behind; what the child writes after a failure is read and wiped.
     private func readLoop(_ fd: Int32) {
-        defer { Darwin.close(fd) }
-        var buffer: [UInt8] = []
-        var scanned = 0  // bytes of `buffer` already searched for a newline
-        var failed = false
-        while let chunk = readChunk(fd) {
-            if failed { continue }  // keep the child from blocking on a full pipe
-            buffer.append(contentsOf: chunk)
-            var start = 0
-            while let nl = buffer[max(start, scanned)...].firstIndex(of: 0x0A) {
-                if nl - start > AppServerClient.maxLine {
-                    fail(AppServerError("Codex app-server sent a line longer than 4 MiB"))
-                    failed = true
-                    break
+        defer {
+            Darwin.close(fd)
+            readLoopEnded.signal()
+        }
+        let lines = LineReader { [self] in readChunk(fd, into: $0) }
+        var failure: AppServerError?
+        reading: while true {
+            switch lines.next() {
+            case .tooLong:
+                failure = AppServerError("Codex app-server sent a line longer than 4 MiB")
+                break reading
+            case .ended:
+                failure = AppServerError("Codex app-server exited unexpectedly")
+                break reading
+            case .line(let line, let last):
+                // A last line without a newline is still a line, as Go's bufio.Scanner reads it, unless close ended it.
+                if last, lock.withLock({ stopReaders }) { continue }
+                let ok = handle(line)
+                wipe(line)
+                if !ok {
+                    failure = AppServerError("Codex app-server sent malformed JSON")
+                    break reading
                 }
-                if !handle(buffer[start..<nl]) {
-                    fail(AppServerError("Codex app-server sent malformed JSON"))
-                    failed = true
-                    break
-                }
-                start = nl + 1
                 // The client is done (an overflow, a cut-off write, close): nothing more is read from the stream.
-                if lock.withLock({ failure != nil }) {
-                    failed = true
-                    break
-                }
-            }
-            if failed {
-                buffer = []
-                continue
-            }
-            buffer.removeFirst(start)
-            scanned = buffer.count
-            if buffer.count > AppServerClient.maxLine {
-                fail(AppServerError("Codex app-server sent a line longer than 4 MiB"))
-                failed = true
-                buffer = []
+                if lock.withLock({ self.failure != nil }) { break reading }
             }
         }
-        // A last line without a newline is still a line, as Go's bufio.Scanner reads it.
-        if !failed, !buffer.isEmpty, !lock.withLock({ stopReaders }), !handle(buffer[...]) {
-            fail(AppServerError("Codex app-server sent malformed JSON"))
-        }
-        fail(AppServerError("Codex app-server exited unexpectedly"))
+        lines.wipe()
+        if let failure { fail(failure) }
+        lines.drain()  // keep the child from blocking on a full pipe
     }
 
     private func stderrLoop(_ fd: Int32) {
         defer { Darwin.close(fd) }
-        while let chunk = readChunk(fd) {
-            lock.withLock {
-                let room = AppServerClient.stderrCap - stderrBytes.count
-                if room > 0 { stderrBytes.append(contentsOf: chunk.prefix(room)) }
+        var chunk = [UInt8](repeating: 0, count: 65_536)
+        chunk.withUnsafeMutableBytes { buf in
+            while let n = readChunk(fd, into: buf) {
+                lock.withLock {
+                    let room = AppServerClient.stderrCap - stderrBytes.count
+                    if room > 0 { stderrBytes.append(contentsOf: buf[0..<Swift.min(n, room)]) }
+                }
             }
         }
     }
 
-    /// The next bytes from `fd`; nil at end of file, on an error, or once the client is closed. Polls, so a close
-    /// ends the reader even while a descendant holds the write end.
-    private func readChunk(_ fd: Int32) -> [UInt8]? {
-        var buf = [UInt8](repeating: 0, count: 65_536)
+    /// Reads the next bytes from `fd` into `buf` and returns how many; nil at end of file, on an error, or once the
+    /// client is closed. Polls, so a close ends the reader even while a descendant holds the write end.
+    private func readChunk(_ fd: Int32, into buf: UnsafeMutableRawBufferPointer) -> Int? {
         while true {
             if lock.withLock({ stopReaders }) { return nil }
             var p = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
             let r = poll(&p, 1, 50)
             if r < 0 && errno != EINTR { return nil }
             if r <= 0 { continue }
-            let n = buf.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!, $0.count) }
+            let n = Darwin.read(fd, buf.baseAddress!, buf.count)
             if n < 0 && (errno == EINTR || errno == EAGAIN) { continue }
             if n <= 0 { return nil }
-            return Array(buf[0..<n])
+            return n
         }
     }
 
     /// Handles one line (spec/credentials.md, messages); false when it is not JSON-RPC. A message is classified
     /// before its reply fields are read: a notification (no id) is ignored whatever else it holds, unless `onEvent`
     /// takes it, and a message with a method, even "", is a server request. Keys are exact.
-    private func handle(_ line: ArraySlice<UInt8>) -> Bool {
-        // Trimmed by index, so the line stays one contiguous slice: a lazily reversed view is read element by element,
-        // which took seconds for each pass over a 1 MiB line.
-        var lo = line.startIndex
-        var hi = line.endIndex
+    ///
+    /// The line is read where it lies (``plainJSON(_:)``): a reply is checked in place, its result copied only for a
+    /// call that still waits, and its error message scrubbed where it lies; the line is wiped before the call is
+    /// woken, so a call that has its reply leaves no line behind.
+    func handle(_ line: UnsafeMutableRawBufferPointer) -> Bool {
+        var lo = 0
+        var hi = line.count
         while lo < hi, Self.isSpace(line[lo]) { lo += 1 }
         while hi > lo, Self.isSpace(line[hi - 1]) { hi -= 1 }
-        let trimmed = line[lo..<hi]
-        if trimmed.isEmpty { return true }
-        guard isPlainJSON(trimmed),
-            let value = try? JSONSerialization.jsonObject(with: Data(trimmed), options: [.fragmentsAllowed])
-        else { return false }
-        if value is NSNull { return true }
-        guard let m = value as? [String: Any] else { return false }
-        guard let id = m["id"], !(id is NSNull) else {
-            queueEvent(m, line: trimmed, serverRequest: false)
+        if lo == hi { return true }
+        let trimmed = UnsafeRawBufferPointer(rebasing: line[lo..<hi])
+        guard let doc = plainJSON(trimmed) else { return false }
+        let root = doc.root
+        if doc.isNull(root) { return true }
+        guard doc.kind(root) == UInt8(ascii: "{") else { return false }
+        func present(_ object: Range<Int>, _ name: String) -> Range<Int>? {  // absent or null is not present
+            guard let v = doc.member(object, name), !doc.isNull(v) else { return nil }
+            return v
+        }
+        guard let id = present(root, "id") else {
+            queueEvent(doc, serverRequest: false)
             return true  // a notification, whatever else it holds
         }
-        var hasMethod = false
-        if let raw = m["method"], !(raw is NSNull) {
-            guard raw is String else { return false }
-            hasMethod = true
-        }
-        if hasMethod {
-            refuse(id)
-            queueEvent(m, line: trimmed, serverRequest: true)
+        if let method = present(root, "method") {
+            guard doc.kind(method) == UInt8(ascii: "\"") else { return false }
+            // The id is answered as the child wrote it, decoded as any JSON value: it is no credential.
+            guard let value = try? JSONSerialization.jsonObject(with: Data(doc.bytes(of: id)), options: [.fragmentsAllowed])
+            else { return false }
+            refuse(value)
+            queueEvent(doc, serverRequest: true)
             return true
         }
-        let result: Result<Any, AppServerError>
-        if let e = m["error"], !(e is NSNull) {
-            // As in Go: a code that is not a signed 64-bit integer, or a message that is not a string, makes the line
-            // malformed.
-            guard let e = e as? [String: Any] else { return false }
+        // As in Go: a code that is not a signed 64-bit integer, or a message that is not a string, makes the line
+        // malformed. The result is made only for a call that waits for it.
+        let reply: () -> Result<OwnedBytes, AppServerError>
+        if let e = present(root, "error") {
+            guard doc.kind(e) == UInt8(ascii: "{") else { return false }
             var code = 0
-            if let raw = e["code"], !(raw is NSNull) {
-                guard let n = Self.int64(raw) else { return false }
+            if let c = present(e, "code") {
+                guard let n = doc.int64(c) else { return false }
                 code = Int(n)
             }
-            var message = ""
-            if let raw = e["message"], !(raw is NSNull) {
-                guard let s = raw as? String else { return false }
-                message = s
+            let message = present(e, "message")
+            if let message, doc.kind(message) != UInt8(ascii: "\"") { return false }
+            reply = {
+                let text = message.flatMap { doc.withString($0) { Secret.scrub(utf8: $0) } } ?? ""
+                return .failure(AppServerError("", rpcCode: code, rpcMessage: text))
             }
-            result = .failure(AppServerError("", rpcCode: code, rpcMessage: message))
-        } else if let r = m["result"] {
-            result = .success(r)  // NSNull for null
+        } else if let r = doc.member(root, "result") {
+            reply = { .success(OwnedBytes(copying: doc.bytes(of: r))) }  // null as its bytes, `null`
         } else {
-            result = .failure(AppServerError(Self.missingResult))
+            reply = { .failure(AppServerError(Self.missingResult)) }
         }
-        guard let n = Self.int64(id) else { return true }  // not one of ours
+        guard let n = doc.int64(id) else { return true }  // not one of ours
         lock.withLock {
             guard let p = pending.removeValue(forKey: Int(n)) else { return }
-            p.result = result
+            p.result = reply()
+            wipe(line)
             p.done.signal()
         }
         return true
-    }
-
-    /// A JSON number written as an integer within the signed 64-bit range; nil for a fraction, an exponent, an
-    /// unsigned value beyond it, a Boolean or any other type.
-    private static func int64(_ v: Any) -> Int64? {
-        guard let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n),
-            NSNumber(value: n.int64Value) == n
-        else { return nil }
-        return n.int64Value
     }
 
     /// Marks the client unusable and releases every pending call. The outbound queue is dropped with it: nothing is
@@ -901,12 +923,11 @@ final class AppServerCore: @unchecked Sendable {
     /// Hands one notification or server request to ``eventLoop()``. Without a handler it does nothing, so a
     /// notification is ignored as before; a notification whose method is absent or not a string is ignored too, and
     /// so is every event once the client has failed or close has begun. The params are the exact bytes of the line,
-    /// as Go keeps them. Events held beyond `eventCap` or `maxEvents`, from a handler that does not keep up, fail the
+    /// as Go keeps them, and are all that is copied of it: they are the handler's. Events held beyond `eventCap` or `maxEvents`, from a handler that does not keep up, fail the
     /// client.
-    private func queueEvent<C: Collection>(_ m: [String: Any], line: C, serverRequest: Bool) where C.Element == UInt8 {
-        guard onEvent != nil, let method = m["method"] as? String else { return }
-        // The line was validated, so this reads.
-        let params = (try? WireJSON.memberBytes(line, "params")) ?? nil
+    private func queueEvent(_ doc: WireJSON.Borrowed, serverRequest: Bool) {
+        guard onEvent != nil, let m = doc.member(doc.root, "method"), let method = doc.string(m) else { return }
+        let params = doc.member(doc.root, "params").map { Data(doc.bytes(of: $0)) }
         let event = AppServerEvent(method: method, params: params ?? Data(), isServerRequest: serverRequest)
         let size = Self.size(event)
         let over = lock.withLock { () -> Bool? in

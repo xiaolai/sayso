@@ -60,9 +60,6 @@ final class ParserWipeTests: XCTestCase {
     /// so a debug run of this test fails when a reader keeps a copy or the wipe is skipped.
     func testParsedDocumentsAreWipedWhenReleased() throws {
         let doc = Data(#"{"type":"x","params":{"token":"ek_doc_canary"},"n":[1,2]}"#.utf8)
-        XCTAssertEqual(try WireJSON.memberBytes(doc, "params"), Data(#"{"token":"ek_doc_canary"}"#.utf8))
-        XCTAssertEqual(try WireJSON.memberBytes(ArraySlice(doc), "absent"), nil)
-        XCTAssertThrowsError(try WireJSON.memberBytes(Data(#"{"a":1,"a":2}"#.utf8), "a"))
         XCTAssertThrowsError(try WireJSON.parse(Data(#"{"a":"#.utf8)))
         let fields = try WireJSON.Object(WireJSON.parse(doc))
         XCTAssertEqual(try fields.string("type"), "x")
