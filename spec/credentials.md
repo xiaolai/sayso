@@ -71,7 +71,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   JSON-RPC error and never acted on. Every message the client sends, requests and these answers alike, goes through
   one ordered queue that a writer of its own drains, so the reader never waits on the child's input. The order is
   the order of admission to that queue: a request is admitted when its call queues it, and an answer when the reader
-  reads the server request it answers. So the child reads each answer after every request queued before the reader
+  reads the server request it answers (its place is taken as soon as the line is parsed, before the answer is
+  encoded; the writer waits at that place until the answer's bytes are in). So the child reads each answer after every request queued before the reader
   read that server request (a request already queued goes first, even if its write has not started) and before
   every request queued after. A request that cannot get its turn within its
   timeout is taken off the queue unwritten; one whose write has started is ended by its timeout. Each answer gets

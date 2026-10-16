@@ -152,6 +152,9 @@ func (k *core) eventLoop() {
 			k.events[0] = eventData{}
 			k.events = k.events[1:]
 			k.mu.Unlock()
+			if k.testEventAdmitted != nil {
+				k.testEventAdmitted()
+			}
 			k.onEvent(newEvent(d.method, d.params, d.request))
 			k.mu.Lock()
 			if !k.eventsClosed { // Close cleared the counts with the queue

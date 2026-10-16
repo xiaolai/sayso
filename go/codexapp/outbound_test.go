@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xiaolai/sayso/go/internal/wire"
 )
 
 // bareCore is a core with no child: its stdin is a pipe the test reads, and writeLoop starts only when the test says,
@@ -147,4 +150,62 @@ func TestFailureDropsTheOutboundQueue(t *testing.T) {
 	}
 	_ = r
 	start() // the writer finds the failure and an empty queue, and ends without writing
+}
+
+// An answer is admitted when its server request is read, before it is encoded: a request queued while the answer is
+// still being encoded is written after it.
+func TestAnswerIsAdmittedBeforeItIsEncoded(t *testing.T) {
+	k, r, start := bareCore(t)
+	admitted, release := make(chan struct{}), make(chan struct{})
+	k.testRefusalAdmitted = func() { close(admitted); <-release }
+	refused := refuseAsync(t, k, "srv-1")
+	<-admitted
+	done := sendAsync(t, k, map[string]string{"call": "B"})
+	close(release)
+	<-refused
+	start()
+	got := readLines(t, r, 2)
+	if !strings.Contains(got[0], `"srv-1"`) || !strings.Contains(got[0], "-32601") || got[1] != `{"call":"B"}` {
+		t.Errorf("written %q; want the answer to srv-1, then the call", got)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("send: %v", err)
+	}
+}
+
+// A running writer that reaches an answer still being encoded waits at it: neither the answer nor a request behind it
+// is written until the answer's bytes are in.
+func TestWriterWaitsAtAnAnswerBeingEncoded(t *testing.T) {
+	k, r, start := bareCore(t)
+	admitted, release := make(chan struct{}), make(chan struct{})
+	k.testRefusalAdmitted = func() { close(admitted); <-release }
+	refused := refuseAsync(t, k, "srv-1")
+	<-admitted
+	start()
+	done := sendAsync(t, k, map[string]string{"call": "B"}) // queued behind the slot, not written past it
+	if q := queuedLines(k); len(q) != 2 || q[0] != "" {
+		t.Fatalf("queue %q while the answer is encoded; want its empty slot, then the call", q)
+	}
+	close(release)
+	<-refused
+	got := readLines(t, r, 2)
+	if !strings.Contains(got[0], `"srv-1"`) || got[1] != `{"call":"B"}` {
+		t.Errorf("written %q; want the answer to srv-1, then the call", got)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("send: %v", err)
+	}
+}
+
+// refuseAsync answers the server request id in the background, as the reader does; the channel closes when refuse
+// returns.
+func refuseAsync(t *testing.T, k *core, id string) <-chan struct{} {
+	t.Helper()
+	node, err := wire.Parse([]byte(strconv.Quote(id)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := make(chan struct{})
+	go func() { k.refuse(node); close(refused) }()
+	return refused
 }
