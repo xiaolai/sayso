@@ -23,7 +23,7 @@ import (
 
 	"github.com/xiaolai/sayso/go/internal/wire"
 
-	"github.com/xiaolai/sayso/go/openaihttp"
+	"github.com/xiaolai/sayso/go/failure"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -188,9 +188,9 @@ type response struct {
 	err       error
 }
 
-// codexError builds a codex-error failure; cause is scrubbed by openaihttp.Error.
+// codexError builds a codex-error failure; cause is scrubbed by failure.Error.
 func codexError(msg string, cause error) error {
-	return &openaihttp.Error{Class: openaihttp.ClassCodexError, Message: msg, Err: cause}
+	return &failure.Error{Class: failure.ClassCodexError, Message: msg, Err: cause}
 }
 
 // checkDir refuses a working directory that is set but is not an absolute path to an existing folder. The path is

@@ -14,7 +14,7 @@ import (
 	"unicode"
 
 	"github.com/xiaolai/sayso/go/codexapp"
-	"github.com/xiaolai/sayso/go/openaihttp"
+	"github.com/xiaolai/sayso/go/failure"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -39,7 +39,7 @@ const (
 // MinCodexVersion is the oldest Codex supported.
 const MinCodexVersion = "0.161.0"
 
-// Error is a failure to obtain a usable token. It unwraps to an *openaihttp.Error, so openaihttp.Classify gives
+// Error is a failure to obtain a usable token. It unwraps to a *failure.Error, so failure.Classify gives
 // auth-expired for StateExpired, codex-error for Codex and file failures, and auth-mode for the sign-in states.
 type Error struct {
 	State        State
@@ -107,20 +107,29 @@ func StateOf(err error) State {
 	return StateCodexError
 }
 
+// classOf is the class e carries; every *Error fail builds has one.
+func classOf(e *Error) failure.Class {
+	var f *failure.Error
+	if errors.As(e, &f) {
+		return f.Class
+	}
+	return failure.ClassInternal
+}
+
 // fail builds an *Error whose cause has the class that suits state. A cause the caller's cancellation produced keeps
 // the state but is cancelled: an interrupt is never reported as a credential failure.
 func fail(state State, msg string, cause error) *Error {
-	class := openaihttp.ClassAuthMode
+	class := failure.ClassAuthMode
 	switch state {
 	case StateExpired:
-		class = openaihttp.ClassAuthExpired
+		class = failure.ClassAuthExpired
 	case StateCodexError, StateNoCodex, StateCodexTooOld, StateAppServerAuthUnavailable:
-		class = openaihttp.ClassCodexError
+		class = failure.ClassCodexError
 	}
 	if errors.Is(cause, context.Canceled) {
-		class = openaihttp.ClassCancelled
+		class = failure.ClassCancelled
 	}
-	return &Error{State: state, Err: &openaihttp.Error{Class: class, Message: msg, Err: cause}}
+	return &Error{State: state, Err: &failure.Error{Class: class, Message: msg, Err: cause}}
 }
 
 const (

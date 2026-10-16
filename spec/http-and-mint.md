@@ -1,6 +1,7 @@
 # HTTP and minting (`NET-01`, `NET-02`, `NET-05`)
 
-Component `mint`. Product `RealtimeConnection` (Swift), packages `openaihttp` and `realtime` (Go).
+Component `mint`. Product `RealtimeConnection` (Swift), packages `openaihttp` and `realtime` (Go); the classes and the
+classified error are Go's leaf package `failure`, which `openaihttp` names again.
 Fixtures: `fixtures/mint/`.
 
 ## Origin policy (`NET-01`)

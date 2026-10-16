@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/xiaolai/sayso/go/codexapp"
-	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -318,7 +317,7 @@ func (c *Credentials) fetchLocked(ctx context.Context) error {
 	if e != nil {
 		e.CodexVersion = c.info.CodexVersion
 		c.cfg.Logger.Debug("codexauth: fetch failed", "source", c.info.Source, "state", e.State,
-			"class", openaihttp.Classify(e))
+			"class", classOf(e))
 		return e
 	}
 	c.cfg.Logger.Debug("codexauth: fetched a token", "source", c.info.Source, "refreshable", refreshable)
