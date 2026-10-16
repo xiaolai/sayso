@@ -1,5 +1,5 @@
 {
- "count": 813,
+ "count": 816,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1299,6 +1299,24 @@
   },
   {
    "id": "mint-expiry-beyond-double",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-beyond-time",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-int64-max",
+   "file": "mint/mint.json",
+   "component": "mint",
+   "requires": []
+  },
+  {
+   "id": "mint-expiry-int64-min",
    "file": "mint/mint.json",
    "component": "mint",
    "requires": []

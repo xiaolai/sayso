@@ -22,8 +22,6 @@ const (
 	mintPath = "/v1/realtime/client_secrets"
 	// maxMintReply bounds the mint reply; a longer reply is a protocol error.
 	maxMintReply = 1 << 20
-	// maxUnix is a Unix time time.Time holds without wrapping: about 146 billion years either side of 1970.
-	maxUnix = 1 << 62
 	// maxSecretBytes bounds the minted value.
 	maxSecretBytes = 4096
 )
@@ -181,7 +179,6 @@ func (m *Minter) post(ctx context.Context, tok secret.Token, body []byte) (secre
 	if err != nil || !ok || value == "" || len(value) > maxSecretBytes {
 		return secret.ClientSecret{}, refuse("mint reply value is missing, empty or longer than 4096 bytes")
 	}
-	// time.Time counts seconds from year 1 in an int64, so a Unix time beyond ±2⁶² would wrap; such an expiry is
-	// clamped, keeping its side of now, as Swift's Date does.
-	return secret.NewClientSecret(value, time.Unix(max(min(expires, maxUnix), -maxUnix), 0)), nil
+	// The exact integer is kept; ExpiresAt clamps it to what a time.Time holds without wrapping.
+	return secret.NewClientSecretUnix(value, expires), nil
 }
