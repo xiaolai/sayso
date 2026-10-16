@@ -27,7 +27,7 @@ enum Fixtures {
         for file in Set(wanted.compactMap { $0["file"] as? String }) {
             for object in try read(root.appendingPathComponent(file)) where object["component"] as? String == component {
                 guard let id = object["id"] as? String, byID[id] == nil else { throw FixtureError("fixture \(object["id"] ?? "?") appears twice") }
-                byID[id] = object
+                byID[id] = try expandRepeats(object, repeatable[component] ?? [], id: id)
             }
         }
         guard byID.count == wanted.count else { throw FixtureError("\(component): files hold \(byID.count) fixtures, the manifest \(wanted.count)") }
@@ -47,6 +47,47 @@ enum Fixtures {
         }
         guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw FixtureError("\(url.lastPathComponent) is not an array") }
         return array
+    }
+
+    /// The members a case may write as a repeat, per component (spec/fixtures.md).
+    static let repeatable = ["said-guard": ["script", "transcript"]]
+    /// Bounds the text a repeat stands for: 16 times the said guard's cap, room for a case past it.
+    static let maxRepeatBytes = 1 << 20
+
+    /// The case with each named member that is written as a repeat replaced by the string it stands for.
+    static func expandRepeats(_ object: [String: Any], _ names: [String], id: String) throws -> [String: Any] {
+        var out = object
+        for name in names {
+            guard let spec = object[name] as? [String: Any] else { continue }
+            do { out[name] = try repeatText(spec) } catch { throw FixtureError("fixture \(id): \(name): \(error)") }
+        }
+        return out
+    }
+
+    /// The text `{"repeat", "times", "prefix", "suffix"}` stands for: `prefix`, `repeat` written `times` times, then
+    /// `suffix`. Any other member, a missing, null or mistyped one, an empty `repeat`, `times` below 1 and a text over
+    /// `maxRepeatBytes` are refused, so a mistyped case fails its suite rather than testing a different input.
+    static func repeatText(_ spec: [String: Any]) throws -> String {
+        let names = ["repeat", "times", "prefix", "suffix"]
+        if let unknown = spec.keys.sorted().first(where: { !names.contains($0) }) {
+            throw FixtureError("repeat: unknown member \(unknown)")
+        }
+        func string(_ name: String) throws -> String {
+            guard let s = spec[name] as? String else { throw FixtureError("repeat: \(name) is missing or not a string") }
+            return s
+        }
+        let unit = try string("repeat"), prefix = try string("prefix"), suffix = try string("suffix")
+        // JSONSerialization delivers true and 2.0 as NSNumber too; only a whole number that is no bool is a count.
+        guard let n = spec["times"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), !CFNumberIsFloatType(n) else {
+            throw FixtureError("repeat: times is missing or not a whole number")
+        }
+        guard !unit.isEmpty else { throw FixtureError("repeat: repeat is empty") }
+        let times = n.int64Value
+        guard times >= 1 else { throw FixtureError("repeat: times \(n) is below 1") }
+        // unit is not empty, so a times over the cap is over it in bytes too; checking it first keeps the product in range.
+        guard times <= Int64(maxRepeatBytes), prefix.utf8.count + unit.utf8.count * Int(times) + suffix.utf8.count <= maxRepeatBytes
+        else { throw FixtureError("repeat: the text is over \(maxRepeatBytes) bytes") }
+        return prefix + String(repeating: unit, count: Int(times)) + suffix
     }
 
     /// The unsigned token a `{"$jwt": claims}` placeholder stands for (spec/fixtures.md).

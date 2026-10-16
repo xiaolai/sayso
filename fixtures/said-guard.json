@@ -5501,5 +5501,396 @@
   "language": "en",
   "expect": false,
   "note": "Marks after a number, however many, are each a symbol."
+ },
+ {
+  "id": "bound-malformed-group",
+  "component": "said-guard",
+  "script": "0.1,000",
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "A malformed number, a group after a decimal point: as written, and never a crash."
+ },
+ {
+  "id": "bound-malformed-sign",
+  "component": "said-guard",
+  "script": "-,",
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "A sign before a comma with no digits: never a crash."
+ },
+ {
+  "id": "bound-malformed-percent",
+  "component": "said-guard",
+  "script": "%1,0000%",
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "Percent signs around a malformed group: never a crash."
+ },
+ {
+  "id": "bound-english-rescan",
+  "component": "said-guard",
+  "script": {
+   "repeat": "one ",
+   "times": 16383,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "16,383 number words: a phrase is parsed across at most 48 words, so the scan stays linear."
+ },
+ {
+  "id": "bound-english-phrase-rescan",
+  "component": "said-guard",
+  "script": {
+   "repeat": "one hundred and ",
+   "times": 4095,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "4,095 times \"one hundred and\": British \"and\" throughout a long run of number words."
+ },
+ {
+  "id": "bound-domain-quadratic",
+  "component": "said-guard",
+  "script": {
+   "repeat": "dot.dot ",
+   "times": 8191,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": {
+   "repeat": "dot ",
+   "times": 16382,
+   "prefix": "",
+   "suffix": "x"
+  },
+  "language": "en",
+  "expect": false,
+  "note": "8,191 two-label domains against 16,382 \"dot\"s, then a word the script lacks: the matcher's work follows the frontier's span, not every (unit, position) pair."
+ },
+ {
+  "id": "bound-domain-middle",
+  "component": "said-guard",
+  "script": {
+   "repeat": "dot.dot ",
+   "times": 5000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": {
+   "repeat": "dot ",
+   "times": 12500,
+   "prefix": "",
+   "suffix": "x"
+  },
+  "language": "en",
+  "expect": false,
+  "note": "5,000 two-label domains against 12,500 \"dot\"s, then a word the script lacks."
+ },
+ {
+  "id": "bound-han-repeat-en",
+  "component": "said-guard",
+  "script": {
+   "repeat": "一亿",
+   "times": 10000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "一亿 10,000 times in en, where each character is a token of its own."
+ },
+ {
+  "id": "bound-han-repeat-zh",
+  "component": "said-guard",
+  "script": {
+   "repeat": "一亿",
+   "times": 10000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "zh",
+  "expect": false,
+  "note": "一亿 10,000 times in zh: repeated units fail the round trip, so the run is no numeral."
+ },
+ {
+  "id": "bound-hyphen-chain",
+  "component": "said-guard",
+  "script": {
+   "repeat": "ab",
+   "times": 8000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": {
+   "repeat": "a-b-",
+   "times": 8000,
+   "prefix": "",
+   "suffix": "x"
+  },
+  "language": "en",
+  "expect": false,
+  "note": "A 16,000-part hyphen chain against one 16,000-letter word: a chain joins at most 8 parts for matching."
+ },
+ {
+  "id": "bound-dash-chain",
+  "component": "said-guard",
+  "script": {
+   "repeat": "1-",
+   "times": 32767,
+   "prefix": "",
+   "suffix": "1"
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "32,767 dashes between digits: expressions are found in one pass, where this took minutes before."
+ },
+ {
+  "id": "bound-domain-hyphen-labels",
+  "component": "said-guard",
+  "script": {
+   "repeat": "e-mail.",
+   "times": 4000,
+   "prefix": "",
+   "suffix": "com"
+  },
+  "transcript": {
+   "repeat": "email dot e mail dot ",
+   "times": 2000,
+   "prefix": "",
+   "suffix": "x"
+  },
+  "language": "en",
+  "expect": false,
+  "note": "A domain of 4,000 hyphenated labels: one unit per label, so its readings grow linearly, not as 2^labels."
+ },
+ {
+  "id": "bound-quotation-marks",
+  "component": "said-guard",
+  "script": {
+   "repeat": "‘a’ b ",
+   "times": 6000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": {
+   "repeat": "a’ b ",
+   "times": 5999,
+   "prefix": "",
+   "suffix": "x"
+  },
+  "language": "en",
+  "expect": false,
+  "note": "6,000 quotations in one sentence: each mark is a local choice of its word, so the readings grow linearly."
+ },
+ {
+  "id": "bound-sentence-punctuation",
+  "component": "said-guard",
+  "script": {
+   "repeat": "!",
+   "times": 65535,
+   "prefix": "",
+   "suffix": "a"
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "65,535 \"!\" then a letter: a sentence's final punctuation looks past the run that follows it for a closing mark once, not per mark (17.8 s in Go before)."
+ },
+ {
+  "id": "bound-sentence-punctuation-mark",
+  "component": "said-guard",
+  "script": {
+   "repeat": ".",
+   "times": 65533,
+   "prefix": "",
+   "suffix": "’"
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "65,533 \".\" then a mark: the same scan, ending at a possible closing mark."
+ },
+ {
+  "id": "bound-free-dashes",
+  "component": "said-guard",
+  "script": {
+   "repeat": "a - ",
+   "times": 16384,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": {
+   "repeat": "a ",
+   "times": 16383,
+   "prefix": "",
+   "suffix": "x"
+  },
+  "language": "en",
+  "expect": false,
+  "note": "16,384 spaced dashes between words: free dashes, each spoken or silent."
+ },
+ {
+  "id": "bound-number-word-codes",
+  "component": "said-guard",
+  "script": {
+   "repeat": "TEN ",
+   "times": 16384,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "16,384 \"TEN\": a number word in capitals keeps its ordinary readings (T E N), up to 64 combined."
+ },
+ {
+  "id": "bound-mark-run",
+  "component": "said-guard",
+  "script": {
+   "repeat": "’",
+   "times": 21000,
+   "prefix": "五",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "A Han numeral then 21,000 marks: a run of marks is read as one, in one reverse pass."
+ },
+ {
+  "id": "bound-spaced-signs",
+  "component": "said-guard",
+  "script": {
+   "repeat": "- 5 ",
+   "times": 16000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "16,000 \"- 5\": each sign is decided by its operand, past spaces."
+ },
+ {
+  "id": "bound-double-mark-quotes",
+  "component": "said-guard",
+  "script": {
+   "repeat": "''a'' ",
+   "times": 10000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "10,000 ''a'': a run of marks opens or closes a quotation as a whole."
+ },
+ {
+  "id": "bound-unspaced-marks",
+  "component": "said-guard",
+  "script": {
+   "repeat": "甲’乙 - 丙 = ‘好’ ",
+   "times": 2000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "2,000 repeats of marks, a dash, an equals sign and quotation marks between unspaced characters."
+ },
+ {
+  "id": "bound-measurement-marks",
+  "component": "said-guard",
+  "script": {
+   "repeat": "5'10\" 3'' -五 ",
+   "times": 3000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "en",
+  "expect": false,
+  "note": "3,000 repeats of feet and inches marks and a signed Han numeral."
+ },
+ {
+  "id": "bound-spellout-words",
+  "component": "said-guard",
+  "script": {
+   "repeat": "vingt et un ",
+   "times": 5000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "fr",
+  "expect": false,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "5,000 \"vingt et un\": the spell-out reads a run of words as a number across at most 8 words."
+ },
+ {
+  "id": "bound-spellout-groups",
+  "component": "said-guard",
+  "script": {
+   "repeat": "1 000 ",
+   "times": 10000,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "fr",
+  "expect": false,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "10,000 thousands in the locale's grouping (\"1 000\")."
+ },
+ {
+  "id": "bound-spellout-long-group",
+  "component": "said-guard",
+  "script": {
+   "repeat": " 000",
+   "times": 16000,
+   "prefix": "1",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "fr",
+  "expect": false,
+  "requires": [
+   "spellout:fr"
+  ],
+  "note": "One number of 16,000 groups in the locale's grouping, far beyond the 15 digits the spell-out reads."
+ },
+ {
+  "id": "bound-spellout-compounds",
+  "component": "said-guard",
+  "script": {
+   "repeat": "zweitausendvierundzwanzig ",
+   "times": 2500,
+   "prefix": "",
+   "suffix": ""
+  },
+  "transcript": "wrong",
+  "language": "de",
+  "expect": false,
+  "requires": [
+   "spellout:de"
+  ],
+  "note": "2,500 German numerals written as one word."
  }
 ]

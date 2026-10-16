@@ -46,6 +46,16 @@ client starts one child per fetch or refresh. The scenario keys are documented a
 
 `script`, `transcript`, `language` (BCP 47), `expect` (bool), optional `requires`.
 
+`script` and `transcript` are each a string or a repeat, `{"repeat": r, "times": n, "prefix": p, "suffix": s}`, which
+stands for `p`, then `r` written `n` times, then `s`, so a long input is stated rather than pasted. A repeat has exactly
+these four members: `r` a non-empty string, `p` and `s` strings (`""` for none), `n` a whole number of at least 1, and
+the text it stands for is at most 1 MiB (1,048,576 bytes of UTF-8). Harnesses expand a repeat as they load the case and
+fail on any other shape.
+
+A case whose id starts `bound-` is an input that once crashed the guard or took seconds under the size cap. Besides its
+verdict, each test suite bounds the CPU time it takes, loosely enough to tell a linear algorithm from a quadratic one,
+with more room for an instrumented or debug build.
+
 ### `credentials` (`auth-file/`, `app-server/`)
 
 `setup`:
