@@ -4,7 +4,7 @@ import Darwin
 import Foundation
 import XCTest
 
-/// Event delivery under failure, close and re-entry, mirroring go/codexapp/lifecycle_test.go.
+/// Event delivery and outbound ordering under failure, close and re-entry, mirroring go/codexapp/lifecycle_test.go.
 /// Barriers, not sleeps, order the steps.
 final class AppServerLifecycleTests: XCTestCase {
     /// A python child: it answers initialize, reads initialized, then runs `then` (Python source).
@@ -160,6 +160,30 @@ final class AppServerLifecycleTests: XCTestCase {
             c.close()
             r.release.signal()
         }
+    }
+
+    /// An answer to a server request that cannot be written fails the client: the child would wait for it, and every
+    /// later request would be written ahead of it.
+    func testUnwritableRefusalFailsTheClient() throws {
+        // The child never reads again: its input pipe fills with refusals, and the next one cannot be written at all.
+        let (script, cleanup) = try fakeCodex(
+            "for i in range(3000):\n"
+                + "    sys.stdout.write(json.dumps({'id': 'srv-%d' % i, 'method': 'approve', 'params': {'pad': 'x' * 100}}) + '\\n')\n"
+                + "sys.stdout.flush()\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let c = try start(script, timeout: 3, nil)  // initialize too: long enough for the child to start under load
+        defer { c.close() }
+        var last = ""
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            do { _ = try c.call("echo") } catch { last = "\(error)" }
+            if last.contains("did not read the answer to a server request") || last.contains("cut off") { break }
+        }
+        XCTAssertTrue(
+            last.contains("did not read the answer to a server request") || last.contains("cut off"), "failure: \(last)")
+        let t0 = Date()
+        XCTAssertThrowsError(try c.call("echo"))
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 0.1, "a call after the failure did not fail at once")
     }
 }
 #endif

@@ -333,9 +333,18 @@ final class CredentialWorld {
             case "closeWithinMs":
                 let limit = ((v as? NSNumber)?.doubleValue ?? 0) / 1000
                 if elapsed > limit { p.append("took \(elapsed) s, limit \(limit) s") }
-            case "serverRequestAnswered":
-                let answered = rec.requests.contains { $0["method"] == nil && $0["id"] != nil && $0["error"] != nil }
+            case "serverRequestAnswered":  // with the method-not-found error
+                let answered = rec.requests.contains {
+                    $0["method"] == nil && $0["id"] != nil
+                        && Self.same(($0["error"] as? [String: Any])?["code"] ?? NSNull(), -32601)
+                }
                 if !answered { p.append("the server request got no error reply") }
+            case "outbound":  // every message the fake read, in order: a method, or "refusal:<id>" for an answer
+                let got = rec.requests.map { m -> String in
+                    if let method = m["method"] as? String { return method }
+                    return "refusal:\(m["id"].map { "\($0)" } ?? "nil")"
+                }
+                if !Self.same(got, v) { p.append("outbound \(got), want \(v)") }
             case "refreshCalls":
                 let n = rec.requests.filter {
                     $0["method"] as? String == "getAuthStatus"

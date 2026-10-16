@@ -77,7 +77,8 @@ client starts one child per fetch or refresh. The scenario keys are documented a
 | `binDir` | the folder the resolved executable is in |
 | `childrenExited` | no started child is alive when the probe returns, and no process the fake started in the child's group (`groupDescendant`) is alive a moment later, once its new parent has reaped it |
 | `closeWithinMs` | the probe, including closing the child, returns within this many milliseconds |
-| `serverRequestAnswered` | `error`: the server request got an error reply |
+| `serverRequestAnswered` | `error`: the server request got an error reply with code `-32601` |
+| `outbound` | every message the fake read, in order: its `method`, or `refusal:<id>` for an answer to a server request |
 | `refreshCalls` | `getAuthStatus` calls with `refreshToken: true` so far |
 | `notInDescription` | strings that no error description or log line may contain |
 

@@ -68,14 +68,17 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   field of the wrong type is `codex-error` (an error `code` is a signed 64-bit integer). A message is classified
   before its reply fields are read: one without `id` is a notification and is ignored whatever else it holds; one
   with both `id` and a `method` (a string, even `""`), such as an approval, is a server request, answered with a
-  JSON-RPC error and never acted on. The answers are queued and written in order by a writer of their own, so the
-  reader never waits on the child's input; answers still queued beyond 8 MiB (a child sending requests without
-  reading the answers) are `codex-error`. A request the client sends waits, within its timeout, until the answers
-  queued before it have been written (never the ones queued later), so the child reads each answer before any
-  request sent after the server request arrived; close waits up to 100 ms for the queued answers before it closes
-  the child's input, so a request sent before close is answered. Any other message is a reply, matched to a call by
-  its integer `id`. Once the client has failed, a reply read afterwards is not handed to its call, and nothing more
-  is read from the child.
+  JSON-RPC error and never acted on. Every message the client sends, requests and these answers alike, goes through
+  one ordered queue that a writer of its own drains, so the reader never waits on the child's input: a request is
+  written after every answer queued before it and ahead of every answer queued after it, so the child reads each
+  answer before any request sent after the server request arrived. A request that cannot get its turn within its
+  timeout is taken off the queue unwritten; one whose write has started is ended by its timeout. Each answer gets
+  the per-call timeout from when its write starts; an answer that cannot be written is `codex-error` and fails the
+  client, since the child would wait for it and every later request would be written ahead of it. Answers queued
+  beyond 8 MiB (a child sending requests without reading the answers) are `codex-error`. Close waits up to 100 ms
+  for the messages queued before it before it closes the child's input, so a request sent before close is
+  answered. Any other message is a reply, matched to a call by its integer `id`. Once the client has failed, a
+  reply read afterwards is not handed to its call, and nothing more is read from the child.
 - **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
   a string, and every server request after its refusal was queued, as an event: the method, the `params` member
   exactly as the child wrote it, byte for byte (absent when the message had none; `null` when it was null), and

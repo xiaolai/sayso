@@ -207,3 +207,28 @@ func TestEventCountBoundIsExact(t *testing.T) {
 		close(r.release)
 	}
 }
+
+// An answer to a server request that cannot be written fails the client: the child would wait for it, and every
+// later request would be written ahead of it.
+func TestUnwritableRefusalFailsTheClient(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	// The child never reads again: its input pipe fills with refusals, and the next one cannot be written at all.
+	script := fakeCodex(t, "for i in range(3000):\n"+
+		"    sys.stdout.write(json.dumps({'id': 'srv-%d' % i, 'method': 'approve', 'params': {'pad': 'x' * 100}}) + '\\n')\n"+
+		"sys.stdout.flush()\n"+
+		"time.sleep(30)\n")
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 3 * time.Second}) // initialize too: long enough for the child to start under load
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	waitFor(t, "the failure", func() bool { return c.k.failed() != nil })
+	if err := c.k.failed(); !strings.Contains(err.Error(), "did not read the answer to a server request") &&
+		!strings.Contains(err.Error(), "cut off") {
+		t.Errorf("failure: %v", err)
+	}
+	start := time.Now()
+	if err := c.Call(t.Context(), "echo", nil, nil); err == nil || time.Since(start) > 100*time.Millisecond {
+		t.Errorf("a call after the failure: %v after %v", err, time.Since(start))
+	}
+}
