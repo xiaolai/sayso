@@ -133,10 +133,11 @@ public final class RealtimeSession: Sendable {
         try await inbox.take()
     }
 
-    /// Writes one client event, an encoded JSON object, as a text message. Writes are serialised, as in Go. A task
-    /// cancelled before its write starts, while it waits behind another write included, throws `CancellationError`,
-    /// sends nothing and leaves the session open. Cancelling a write in flight ends the session, as in Go: a message
-    /// partly handed to the transport cannot be withdrawn, and a stalled write must not hold the caller.
+    /// Writes one client event, an encoded JSON object, as a text message. Writes are serialised, as in Go, and
+    /// ``close()`` releases every write still waiting with ``Closed``. A task cancelled before its write starts, while
+    /// it waits behind another write included, throws `CancellationError`, sends nothing and leaves the session open.
+    /// Cancelling a write in flight ends the session, as in Go: a message partly handed to the transport cannot be
+    /// withdrawn, and a stalled write must not hold the caller.
     public func send(_ event: Data) async throws {
         if inbox.isClosing { throw Closed() }
         try Task.checkCancellation()
@@ -180,6 +181,7 @@ public final class RealtimeSession: Sendable {
     /// more than once.
     public func close() async {
         inbox.markClosing()
+        writes.close()
         task.cancel(with: .normalClosure, reason: nil)
         let reader = self.reader
         let task = self.task
@@ -280,10 +282,12 @@ public struct UnknownTypeCount: Sendable, Equatable {
 }
 
 /// Serialises writes. A waiter cancelled before its turn leaves the queue and never writes; the transport is not
-/// touched, so a cancelled send queued behind a stalled one does not end the session.
+/// touched, so a cancelled send queued behind a stalled one does not end the session. Once closed, every waiter, now
+/// and later, gets ``RealtimeSession/Closed``, as Go's wait selects on the session closing.
 final class WriteGate: @unchecked Sendable {
     private let lock = NSLock()
     private var busy = false
+    private var closed = false
     private var waiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
     /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
     private var order = FIFO<UInt64>()
@@ -297,7 +301,10 @@ final class WriteGate: @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
                 lock.lock()
-                if Task.isCancelled {
+                if closed {
+                    lock.unlock()
+                    c.resume(throwing: RealtimeSession.Closed())
+                } else if Task.isCancelled {
                     lock.unlock()
                     c.resume(throwing: CancellationError())
                 } else if !busy {
@@ -331,6 +338,18 @@ final class WriteGate: @unchecked Sendable {
         }
         busy = false
         lock.unlock()
+    }
+
+    /// Ends the gate for ``RealtimeSession/close()``. The write in flight, if any, ends with the transport.
+    func close() {
+        lock.lock()
+        closed = true
+        var pending: [CheckedContinuation<Void, Error>] = []
+        while let id = order.popFirst() {
+            if let w = waiters.removeValue(forKey: id) { pending.append(w) }
+        }
+        lock.unlock()
+        for w in pending { w.resume(throwing: RealtimeSession.Closed()) }
     }
 }
 

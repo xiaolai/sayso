@@ -16,6 +16,7 @@ Component `session`. Product `RealtimeConnection` (Swift), package `realtime` (G
   than the limit is `protocol` and is never decoded.
 - Sessions take a secret source, never a sign-in: `RealtimeSecretSource` yields a client secret for a session
   object, so a later remote client changes no API.
+- Writes are serialised; closing the session releases every write still waiting for its turn, as closed.
 
 ## Close and error classification
 

@@ -20,6 +20,35 @@ final class SessionWriteTests: XCTestCase {
 
     // MARK: The write queue
 
+    func testCloseReleasesEveryQueuedWriter() async throws {
+        let gate = WriteGate()
+        try await gate.acquire()
+        let outcomes = Log()
+        let waiters = (0..<3).map { _ in
+            Task {
+                do {
+                    try await gate.acquire()
+                    outcomes.add("turn")
+                } catch is RealtimeSession.Closed { outcomes.add("closed") } catch { outcomes.add("\(error)") }
+            }
+        }
+        try await waitUntil { gate.waiting == 3 }
+        gate.close()
+        try await waitUntil { outcomes.values.count == 3 }  // bounded: a writer left queued would hang the test
+        XCTAssertEqual(outcomes.values, ["closed", "closed", "closed"])
+        for w in waiters { w.cancel() }
+        let late = Task {
+            do {
+                try await gate.acquire()
+                outcomes.add("late turn")
+            } catch is RealtimeSession.Closed { outcomes.add("late closed") } catch { outcomes.add("late \(error)") }
+        }
+        try await waitUntil { outcomes.values.count == 4 }
+        XCTAssertEqual(outcomes.values.last, "late closed", "a writer got the turn, or queued, after close")
+        late.cancel()
+        gate.release()
+    }
+
     func testCancelledWaitersAreSkippedInOrder() async throws {
         let gate = WriteGate()
         try await gate.acquire()
