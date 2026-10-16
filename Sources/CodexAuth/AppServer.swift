@@ -707,6 +707,11 @@ final class AppServerCore: @unchecked Sendable {
                     break
                 }
                 start = nl + 1
+                // The client is done (an overflow, a cut-off write, close): nothing more is read from the stream.
+                if lock.withLock({ failure != nil }) {
+                    failed = true
+                    break
+                }
             }
             if failed {
                 buffer = []

@@ -29,7 +29,7 @@ type clientSetup struct {
 }
 
 // clientKeys are the expectations client checks itself; the rest go to check.
-var clientKeys = map[string]bool{"startFails": true, "calls": true, "events": true, "eventCount": true, "eventSequence": true}
+var clientKeys = map[string]bool{"startFails": true, "calls": true, "callError": true, "events": true, "eventCount": true, "eventSequence": true}
 
 func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []string {
 	var (
@@ -82,7 +82,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	} else if !ok && err != nil {
 		p = append(p, "start: "+err.Error())
 	}
-	var outcomes []string
+	var outcomes, callErrors []string
 	if c != nil {
 		for _, call := range s.Calls {
 			var params any // a fixture without params sends Call's default
@@ -91,6 +91,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 			}
 			if err := c.Call(ctx, call.Method, params, nil); err != nil {
 				outcomes = append(outcomes, "error")
+				callErrors = append(callErrors, err.Error())
 			} else {
 				outcomes = append(outcomes, "ok")
 			}
@@ -131,6 +132,12 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 		case "calls":
 			if !same(outcomes, v) {
 				p = append(p, fmt.Sprintf("calls %v, want %v", outcomes, v))
+			}
+		case "callError": // every failed call names this failure
+			for i, e := range callErrors {
+				if !strings.Contains(e, v.(string)) {
+					p = append(p, fmt.Sprintf("failed call %d: %q does not name %q", i, e, v))
+				}
 			}
 		case "events":
 			list := v.([]any)

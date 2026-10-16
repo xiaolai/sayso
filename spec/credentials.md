@@ -74,7 +74,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   queued before it have been written (never the ones queued later), so the child reads each answer before any
   request sent after the server request arrived; close waits up to 100 ms for the queued answers before it closes
   the child's input, so a request sent before close is answered. Any other message is a reply, matched to a call by
-  its integer `id`.
+  its integer `id`. Once the client has failed, a reply read afterwards is not handed to its call, and nothing more
+  is read from the child.
 - **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
   a string, and every server request after its refusal was queued, as an event: the method, the `params` member as
   JSON (absent when the message had none; `null` when it was null) and whether it was a server request. Events are

@@ -85,7 +85,8 @@ A client case has `setup.client` and drives the app-server client itself, starte
 `$binDir/codex`, the case's environment and timeout: `handler` (`record`: keep every event; `block`: never return
 until the case ends; absent: no handler), `dir` (the working directory: `work`, a new `$work` folder in the case's
 temporary folder; `relative`; `missing`; `file`; absent: none), `experimentalAPI`, and `calls` (`method`, `params`) made
-in order. Its `expect` adds `startFails`, `calls` (`ok` or `error` per call), `events` (exactly these, in order:
+in order. Its `expect` adds `startFails`, `calls` (`ok` or `error` per call), `callError` (text every failed call's
+error contains), `events` (exactly these, in order:
 `method`; `params`, compared as JSON, with `$work` and `$callerCwd`, the harness's own working directory, after links
 are followed, replaced; `noParams: true` for none; `serverRequest: true`), `eventCount`, and `eventSequence` (the params
 member that holds each event's index); the other keys above apply too. The harness waits up to 5 s for the expected

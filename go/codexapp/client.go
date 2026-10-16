@@ -306,6 +306,9 @@ func (k *core) readLoop(r io.Reader) {
 			failure = codexError("Codex app-server sent malformed JSON", nil)
 			break
 		}
+		if k.failed() != nil {
+			break // the client is done (an overflow, a cut-off write, Close): nothing more is read from the stream
+		}
 	}
 	if failure == nil {
 		if err := sc.Err(); errors.Is(err, bufio.ErrTooLong) {
@@ -455,8 +458,14 @@ func (k *core) refuseLoop() {
 	}
 }
 
+// deliver hands a reply to its call. A reply read after the client failed is dropped: the failure came first, so the
+// call fails with it.
 func (k *core) deliver(id string, resp response) {
 	k.mu.Lock()
+	if k.failure != nil {
+		k.mu.Unlock()
+		return
+	}
 	ch, ok := k.pending[id]
 	delete(k.pending, id)
 	k.mu.Unlock()
