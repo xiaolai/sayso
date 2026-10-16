@@ -41,14 +41,17 @@ final class Box<T>: @unchecked Sendable {
     }
 }
 
-/// Runs async work from a synchronous test body.
-func blocking<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
+/// Runs async work from a synchronous test body; `cancelAfter` cancels the work that many seconds after it starts.
+func blocking<T: Sendable>(
+    cancelAfter: TimeInterval? = nil, _ body: @escaping @Sendable () async throws -> T
+) throws -> T {
     let done = DispatchSemaphore(value: 0)
     let result = Box<Result<T, Error>?>(nil)
-    Task {
+    let task = Task {
         do { result.value = .success(try await body()) } catch { result.value = .failure(error) }
         done.signal()
     }
+    if let cancelAfter { DispatchQueue.global().asyncAfter(deadline: .now() + cancelAfter) { task.cancel() } }
     done.wait()
     return try result.value!.get()
 }
@@ -171,8 +174,9 @@ final class CredentialWorld {
 
     func probe(_ want: [String: Any]) throws -> [String] {
         let cfg = self.cfg
+        let cancelAfter = (setup["cancelAfterMs"] as? NSNumber).map { $0.doubleValue / 1000 }
         let start = Date()
-        let status = try blocking { try await CodexAuthStatus.probe(cfg) }
+        let status = try blocking(cancelAfter: cancelAfter) { try await CodexAuthStatus.probe(cfg) }
         let elapsed = Date().timeIntervalSince(start)
         var token: Token?
         if status.state == .ready {
@@ -181,7 +185,8 @@ final class CredentialWorld {
             }
         }
         return try check(
-            want, state: status.state.rawValue, token: token, mode: status.mode, info: status.info, elapsed: elapsed,
+            want, state: status.state.rawValue, errorClass: status.error?.errorClass.rawValue ?? "", token: token,
+            mode: status.mode, info: status.info, elapsed: elapsed,
             description: status.error.map(String.init(describing:)) ?? "")
     }
 
@@ -212,7 +217,7 @@ final class CredentialWorld {
             let info = try blocking { await creds.info() }
             let found = try check(
                 step["expect"] as? [String: Any] ?? [:], state: CodexAuthError.state(of: failure).rawValue,
-                token: token, mode: "", info: info, elapsed: 0,
+                errorClass: ErrorClass.of(failure)?.rawValue ?? "", token: token, mode: "", info: info, elapsed: 0,
                 description: failure.map(String.init(describing:)) ?? "")
             problems += found.map { "step \(i): \($0)" }
         }
@@ -277,8 +282,8 @@ final class CredentialWorld {
     }
 
     func check(
-        _ want: [String: Any], state: String, token: Token?, mode: String, info: CodexAuthInfo, elapsed: TimeInterval,
-        description: String
+        _ want: [String: Any], state: String, errorClass: String, token: Token?, mode: String, info: CodexAuthInfo,
+        elapsed: TimeInterval, description: String
     ) throws -> [String] {
         let rec = try read()
         var p: [String] = []
@@ -286,6 +291,8 @@ final class CredentialWorld {
             switch key {
             case "state":
                 if state != v as? String { p.append("state \(state), want \(v)") }
+            case "class":
+                if errorClass != v as? String { p.append("class \(errorClass.debugDescription), want \(v)") }
             case "token":
                 if token?.bearer != Fixtures.substitute(v) as? String { p.append("token differs") }
             case "expiresAt":

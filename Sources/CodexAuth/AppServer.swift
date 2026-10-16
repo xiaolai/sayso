@@ -6,17 +6,21 @@ import RealtimeConnection
 /// A failure of the app-server child: it did not start, crashed, timed out, misbehaved, or answered a call with a
 /// JSON-RPC error. `message` never quotes the child's output; `rpcMessage` is scrubbed and kept out of
 /// `description`, because a misbehaving child may put a credential there.
-public struct AppServerError: Error, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
+public struct AppServerError: ClassifiedError, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     /// The JSON-RPC code of an error reply; nil for any other failure.
     public let rpcCode: Int?
     public let rpcMessage: String
     public let message: String
+    /// codex-error for a failure of Codex, cancelled for a call the caller gave up, internal for a configuration the
+    /// client refused, as in Go.
+    public let errorClass: ErrorClass
 
     /// Both strings are scrubbed.
-    public init(_ message: String, rpcCode: Int? = nil, rpcMessage: String = "") {
+    public init(_ message: String, rpcCode: Int? = nil, rpcMessage: String = "", errorClass: ErrorClass = .codexError) {
         self.message = Secret.scrub(message)
         self.rpcCode = rpcCode
         self.rpcMessage = Secret.scrub(rpcMessage)
+        self.errorClass = errorClass
     }
 
     /// The JSON-RPC code for an unknown method.
@@ -29,7 +33,9 @@ public struct AppServerError: Error, Sendable, Equatable, CustomStringConvertibl
 
     /// Reflection shows what `description` shows; `rpcMessage` stays out, as there.
     public var customMirror: Mirror {
-        Mirror(self, children: ["rpcCode": rpcCode as Any, "message": Secret.scrub(message)], displayStyle: .struct)
+        Mirror(
+            self, children: ["rpcCode": rpcCode as Any, "message": Secret.scrub(message), "errorClass": errorClass],
+            displayStyle: .struct)
     }
 }
 
@@ -243,15 +249,20 @@ public final class AppServerClient: @unchecked Sendable {
     /// As ``start(_:)``; `onSpawn` sees the client before the handshake, so a caller can cancel the handshake.
     static func start(_ cfg: Configuration, onSpawn: ((AppServerClient) -> Void)?) throws -> AppServerClient {
         guard cfg.bin.utf8.first == 0x2F, !cfg.bin.utf8.contains(0) else {
-            throw AppServerError("the Codex executable path is not absolute")
+            throw AppServerError("the Codex executable path is not absolute", errorClass: .internal)
         }
-        guard cfg.timeout > 0, cfg.timeout.isFinite else { throw AppServerError("a per-call timeout is required") }
+        guard cfg.timeout > 0, cfg.timeout.isFinite else {
+            throw AppServerError("a per-call timeout is required", errorClass: .internal)
+        }
         if let dir = cfg.workingDirectory {
             // The path is not quoted: a caller's folder name is not ours to print.
             var st = stat()
             guard dir.utf8.first == 0x2F, !dir.utf8.contains(0), stat(dir, &st) == 0,
                 st.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR)
-            else { throw AppServerError("the working directory is not an absolute path to an existing folder") }
+            else {
+                throw AppServerError(
+                    "the working directory is not an absolute path to an existing folder", errorClass: .internal)
+            }
         }
         // A name holding "=" would become another variable in the child ("OPENAI_API_KEY=x" with value "y" is
         // OPENAI_API_KEY=x=y) and slip past the removal list; a NUL would cut the string short. Go cannot be given
@@ -260,10 +271,14 @@ public final class AppServerClient: @unchecked Sendable {
             !name.utf8.contains(0x3D) && !name.utf8.contains(0) && !value.utf8.contains(0)
         }
         guard passable, !(cfg.codexHome?.utf8.contains(0) ?? false)
-        else { throw AppServerError("the environment holds a name with \"=\" or a NUL, which cannot be passed on") }
+        else {
+            throw AppServerError(
+                "the environment holds a name with \"=\" or a NUL, which cannot be passed on", errorClass: .internal)
+        }
         if let guardStart = cfg.guardStart {
             do { try guardStart(cfg.bin) } catch {
-                throw AppServerError("starting Codex was refused: \(Secret.scrub(String(describing: error)))")
+                throw AppServerError(
+                    "starting Codex was refused: \(Secret.scrub(String(describing: error)))", errorClass: .internal)
             }
         }
         let env = CodexExecutable.childEnvironment(cfg.environment, bin: cfg.bin, codexHome: cfg.codexHome)
@@ -357,7 +372,7 @@ public final class AppServerClient: @unchecked Sendable {
     public func close() { core.close() }
 
     /// Ends every call in progress with a failure; for a caller that gave up. The client is unusable afterwards.
-    func cancel() { core.fail(AppServerError("Codex app-server call was cancelled")) }
+    func cancel() { core.fail(AppServerError("Codex app-server call was cancelled", errorClass: .cancelled)) }
 
     /// Whether the child has been reaped.
     var hasExited: Bool { core.hasExited }
@@ -856,7 +871,7 @@ final class AppServerCore: @unchecked Sendable {
     private static func encode(_ message: [String: Any]) throws -> Data {
         guard encodable(message),
             var data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])
-        else { throw AppServerError("a request could not be encoded") }
+        else { throw AppServerError("a request could not be encoded", errorClass: .internal) }
         data.append(0x0A)
         return data
     }

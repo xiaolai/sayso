@@ -4,6 +4,7 @@
 package codexauth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,7 +99,8 @@ func StateOf(err error) State {
 	return StateCodexError
 }
 
-// fail builds an *Error whose cause has the class that suits state.
+// fail builds an *Error whose cause has the class that suits state. A cause the caller's cancellation produced keeps
+// the state but is cancelled: an interrupt is never reported as a credential failure.
 func fail(state State, msg string, cause error) *Error {
 	class := openaihttp.ClassAuthMode
 	switch state {
@@ -106,6 +108,9 @@ func fail(state State, msg string, cause error) *Error {
 		class = openaihttp.ClassAuthExpired
 	case StateCodexError, StateNoCodex, StateCodexTooOld, StateAppServerAuthUnavailable:
 		class = openaihttp.ClassCodexError
+	}
+	if errors.Is(cause, context.Canceled) {
+		class = openaihttp.ClassCancelled
 	}
 	return &Error{State: state, Err: &openaihttp.Error{Class: class, Message: msg, Err: cause}}
 }

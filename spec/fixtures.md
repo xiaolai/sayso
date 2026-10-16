@@ -71,6 +71,7 @@ with more room for an instrumented or debug build.
 | `file` | `auth.json` in the `CODEX_HOME` in force: `{"kind": "regular", "json": …}`, `{"kind": "regular", "raw": "…"}`, `{"kind": "regular", "rawRepeat": {"text", "count"}}`, `{"kind": "regular", "hex": "…"}` (bytes), `{"kind": "missing"}`, `{"kind": "symlink", "json": …}` (a link to a file elsewhere in `$home`), `{"kind": "fifo"}`, `{"kind": "directory"}`; `padTo` pads `json` with trailing spaces to that many bytes |
 | `retry` | the content the file holds at the one re-read after a parse failure |
 | `timeoutMs` | the per-call app-server timeout |
+| `cancelAfterMs` | the caller cancels the probe this many milliseconds after it starts |
 | `server` | the fake's scenario (top of `tools/fake-app-server.py`) |
 
 `expect` (or, for a timeline, each step's `expect`):
@@ -78,6 +79,7 @@ with more room for an instrumented or debug build.
 | Key | Meaning |
 |---|---|
 | `state` | the state ([credentials](credentials.md)) |
+| `class` | the error's class ([HTTP and mint](http-and-mint.md)); `""` for no error |
 | `token`, `expiresAt` | for `ready`: the token and its expiry (`null`: unknown) |
 | `mode`, `codexVersion` | the reported mode or version |
 | `spawns` | how many times `codex` was started |

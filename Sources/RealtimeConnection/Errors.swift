@@ -15,6 +15,34 @@ public enum ErrorClass: String, Sendable, Equatable, CaseIterable {
     case cancelled
     /// Programming errors only.
     case `internal`
+
+    /// The class of an error, as Go's `openaihttp.Classify`: a ``ClassifiedError``'s own, found through an NSError's
+    /// underlying errors too; cancelled for `CancellationError` and a cancelled URL load; network for an expired
+    /// ``RealtimeDeadline`` and any other URL failure; internal for anything else; nil for no error.
+    public static func of(_ error: Error?) -> ErrorClass? {
+        guard let error else { return nil }
+        var next: Error? = error
+        // As CodexAuthError.state(of:): every object seen is kept until the walk ends, so a released bridging box
+        // cannot free its address for the next one, and a chain that loops back ends there.
+        var seen: [ObjectIdentifier: AnyObject] = [:]
+        while let e = next {
+            if let c = e as? ClassifiedError { return c.errorClass }
+            if e is CancellationError { return .cancelled }
+            if e is RealtimeDeadline.Expired { return .network }
+            if let u = e as? URLError { return u.code == .cancelled ? .cancelled : .network }
+            let underlying = (e as NSError).userInfo[NSUnderlyingErrorKey]
+            if let object = underlying as AnyObject? {
+                guard seen.updateValue(object, forKey: ObjectIdentifier(object)) == nil else { break }
+            }
+            next = underlying as? Error
+        }
+        return .internal
+    }
+}
+
+/// An error that carries its class: ``RealtimeError``, and the CodexAuth errors. ``ErrorClass/of(_:)`` reads it.
+public protocol ClassifiedError: Error {
+    var errorClass: ErrorClass { get }
 }
 
 /// A string scrubbed whenever it is stored, so neither a field set after construction nor reflection (`dump`,
@@ -32,7 +60,7 @@ public struct Scrubbed: Sendable, Equatable {
 /// A classified failure. `type`, `code`, `param` and `message` come from the provider's error body or event; every
 /// string is scrubbed whenever it is stored, and ``description`` scrubs again. No header or bearer is ever stored.
 /// `message` is for diagnostics, never for display.
-public struct RealtimeError: Error, Sendable, Equatable, CustomStringConvertible {
+public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringConvertible {
     public var errorClass: ErrorClass
     /// The HTTP status; 0 if none.
     public var status: Int

@@ -1,5 +1,5 @@
 {
- "count": 1003,
+ "count": 1004,
  "fixtures": [
   {
    "id": "app-ready",
@@ -165,6 +165,12 @@
   },
   {
    "id": "app-line-over-limit",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-cancelled-mid-fetch",
    "file": "app-server/app-server.jsonl",
    "component": "credentials",
    "requires": []

@@ -190,7 +190,12 @@ final class CredentialsBoundaryTests: XCTestCase {
         let task = Task { try await creds.token() }
         try await Task.sleep(nanoseconds: 500_000_000)
         task.cancel()
-        _ = try? await task.value
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled handshake succeeded")
+        } catch {
+            XCTAssertEqual(ErrorClass.of(error), .cancelled, "\(error)")
+        }
         XCTAssertLessThan(Date().timeIntervalSince(t0), 5, "the handshake ran on after the cancellation")
     }
 }

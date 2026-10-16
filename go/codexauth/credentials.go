@@ -268,8 +268,9 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			// The caller gave up; Codex did not fail, so no backoff is spent.
-			return secret.Token{}, fail(StateExpired, "the refresh was cancelled", err)
+			// The caller gave up; Codex did not fail, so no backoff is spent. The caller's cancellation is joined to
+			// the cause, which may be the timeout or the failure it produced.
+			return secret.Token{}, fail(StateExpired, "the refresh was cancelled", errors.Join(err, ctx.Err()))
 		}
 		if c.backoff == 0 {
 			c.backoff = backoffStart

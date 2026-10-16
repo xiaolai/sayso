@@ -180,8 +180,12 @@ func TestTokenHonoursContextWhileWaiting(t *testing.T) {
 	defer c.release()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := c.Token(ctx); err == nil {
-		t.Fatal("Token returned while the lock was held")
+	start := time.Now()
+	if _, err := c.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Token while the lock was held: %v, want the deadline", err)
+	}
+	if d := time.Since(start); d < 40*time.Millisecond {
+		t.Fatalf("Token returned after %v, before the deadline", d)
 	}
 }
 
@@ -254,8 +258,12 @@ func TestCancelledRefreshSpendsNoBackoff(t *testing.T) {
 		cancel()
 		return secret.Token{}, ctx.Err()
 	}
-	if _, err := c.Token(ctx); err == nil {
+	_, err = c.Token(ctx)
+	if err == nil {
 		t.Fatal("a cancelled refresh succeeded")
+	}
+	if StateOf(err) != StateExpired || openaihttp.Classify(err) != openaihttp.ClassCancelled {
+		t.Fatalf("a cancelled refresh: state %s class %s, want expired, cancelled", StateOf(err), openaihttp.Classify(err))
 	}
 	if c.backoff != 0 || !c.retryAt.IsZero() {
 		t.Fatalf("a cancelled refresh set a backoff of %v", c.backoff)

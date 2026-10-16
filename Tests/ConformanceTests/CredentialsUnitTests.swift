@@ -148,6 +148,67 @@ final class CredentialsUnitTests: XCTestCase {
         XCTAssertEqual(started.value, 1)
     }
 
+    /// A refresh the caller cancels while it runs spends no backoff, and its failure keeps the state but is
+    /// cancelled, never a credential failure.
+    func testCancelledRefreshSpendsNoBackoff() async throws {
+        let creds = try Credentials(CodexAuthConfiguration(margin: 60, timeout: 1, source: .codex, environment: [:]))
+        let tok = Token(bearer: "opaque-cancel", expires: nil)
+        creds.seedForTesting(tok, refreshable: true)
+        let calls = Counter()
+        let release = DispatchSemaphore(value: 0)
+        creds.refresher = {
+            calls.increment()
+            _ = release.wait(timeout: .now() + 5)
+            throw CodexAuthError(.codexError, message: "interrupted")
+        }
+        let task = Task { try await creds.refresh(after: tok) }
+        for _ in 0..<500 where calls.value == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(calls.value, 1, "the refresh did not start")
+        task.cancel()
+        release.signal()
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled refresh succeeded")
+        } catch let e as CodexAuthError {
+            XCTAssertEqual(e.state, .expired)
+            XCTAssertEqual(e.errorClass, .cancelled, "\(e)")
+        }
+        release.signal()  // the next refresh fails at once
+        do {
+            _ = try await creds.refresh(after: tok)
+            XCTFail("the second refresh succeeded")
+        } catch let e as CodexAuthError {
+            XCTAssertEqual(e.errorClass, .authExpired, "a refresh that Codex failed is not cancelled: \(e)")
+        }
+        XCTAssertEqual(calls.value, 2, "the cancelled refresh set a backoff")
+    }
+
+    /// ErrorClass.of reads an error's class as Go's Classify does, through NSError wrapping too.
+    func testErrorClassOf() {
+        XCTAssertNil(ErrorClass.of(nil))
+        XCTAssertEqual(ErrorClass.of(CancellationError()), .cancelled)
+        XCTAssertEqual(ErrorClass.of(URLError(.cancelled)), .cancelled)
+        XCTAssertEqual(ErrorClass.of(URLError(.timedOut)), .network)
+        XCTAssertEqual(ErrorClass.of(RealtimeDeadline.Expired()), .network)
+        XCTAssertEqual(ErrorClass.of(RealtimeError(.rateLimited)), .rateLimited)
+        XCTAssertEqual(ErrorClass.of(CodexAuthError(.expired)), .authExpired)
+        XCTAssertEqual(ErrorClass.of(CodexAuthError(.notSignedIn)), .authMode)
+        XCTAssertEqual(ErrorClass.of(AppServerError("Codex app-server exited unexpectedly")), .codexError)
+        XCTAssertEqual(ErrorClass.of(CocoaError(.fileReadNoSuchFile)), .internal)
+        let wrapped = NSError(domain: "app", code: 1, userInfo: [NSUnderlyingErrorKey: CodexAuthError(.apiKey)])
+        XCTAssertEqual(ErrorClass.of(wrapped), .authMode)
+        let twice = NSError(domain: "app", code: 2, userInfo: [NSUnderlyingErrorKey: wrapped])
+        XCTAssertEqual(ErrorClass.of(twice), .authMode)
+    }
+
+    /// The configurations a client refuses are programming errors, as in Go; a call the caller gave up is cancelled.
+    func testAppServerRefusalsAreInternal() {
+        let relative = AppServerClient.Configuration(bin: "codex", environment: [:], timeout: 1)
+        XCTAssertThrowsError(try AppServerClient.start(relative)) { XCTAssertEqual(ErrorClass.of($0), .internal) }
+        let noTimeout = AppServerClient.Configuration(bin: "/bin/false", environment: [:], timeout: 0)
+        XCTAssertThrowsError(try AppServerClient.start(noTimeout)) { XCTAssertEqual(ErrorClass.of($0), .internal) }
+    }
+
     /// A child that stops reading cannot hold a call past its timeout, nor close past the grace; a client released
     /// without close still ends its child.
     func testWritesHaveADeadlineAndAReleasedClientEndsItsChild() throws {

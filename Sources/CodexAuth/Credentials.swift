@@ -181,7 +181,8 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     }
 
     /// Runs `body` on the queue. A task cancelled while it waits its turn is released at once and its body never
-    /// runs; one cancelled while the body runs ends the Codex call in progress.
+    /// runs; one cancelled while the body runs ends the Codex call in progress, and the failure that produces keeps
+    /// its state but has the class cancelled (spec/credentials.md).
     private func run<T: Sendable>(_ body: @escaping @Sendable (Operation) throws -> T) async throws -> T {
         let op = Operation()
         return try await withTaskCancellationHandler {
@@ -189,12 +190,19 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
                 guard op.install({ cont.resume(with: $0.map { $0 as! T }) }) else { return }
                 queue.async {
                     guard op.begin() else { return }
-                    op.finish(Result { try body(op) })
+                    op.finish(Result { try body(op) }.mapError { op.isCancelled ? Self.interrupted($0) : $0 })
                 }
             }
         } onCancel: {
             op.cancel()
         }
+    }
+
+    /// `error` as the caller's cancellation left it: an interrupt is never reported as a credential failure.
+    private static func interrupted(_ error: Error) -> Error {
+        guard var e = error as? CodexAuthError else { return error }
+        e.errorClass = .cancelled
+        return e
     }
 
     /// Installs `tok` as if a fetch had returned it; for tests, with ``refresher``.
@@ -578,7 +586,11 @@ public struct CodexAuthStatus: Sendable {
                 state: .ready, info: await c.info(), mode: modeChatGPT, expires: tok.expires, error: nil,
                 credentials: c)
         } catch {
-            let e = (error as? CodexAuthError) ?? CodexAuthError(.codexError, cause: String(describing: error))
+            var e = (error as? CodexAuthError) ?? CodexAuthError(.codexError, cause: String(describing: error))
+            if error is CancellationError {  // cancelled while it waited its turn, as Go's context error
+                e.message = "the call was cancelled"
+                e.errorClass = .cancelled
+            }
             return CodexAuthStatus(
                 state: e.state, info: await c.info(), mode: e.mode, expires: nil, error: e, credentials: c)
         }

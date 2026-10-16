@@ -24,7 +24,7 @@ public let minimumCodexVersion = "0.161.0"
 /// A failure to obtain a usable token. `errorClass` is auth-expired for ``CodexAuthState/expired``, codex-error for
 /// Codex and file failures, and auth-mode for the sign-in states. Every string is scrubbed; `message` and `cause`
 /// are diagnostics, never for display.
-public struct CodexAuthError: Error, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
+public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     // Read-only outside the package, and sanitised on every assignment inside it, so a field read or `dump(e)` never
     // shows what the initialiser would have removed.
     public internal(set) var state: CodexAuthState

@@ -26,6 +26,9 @@ Exactly one applies after a probe.
 
 Apps map states to their own text; this package has no user-facing strings.
 
+A fetch or refresh the caller cancels while it runs keeps the state it reached, but its error has the class
+`cancelled`, not that state's class: an interrupt is never reported as a credential failure.
+
 ## Executable (`AUTH-01`)
 
 In order: an explicit path from the caller; then `PATH`; then the GUI candidates, because an app launched from the

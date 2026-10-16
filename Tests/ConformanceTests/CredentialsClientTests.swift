@@ -130,7 +130,10 @@ extension CredentialWorld {
                 if !Self.clientKeys.contains(key) { rest[key] = v }
             }
         }
-        return p + (try check(rest, state: "", token: nil, mode: "", info: CodexAuthInfo(), elapsed: 0, description: ""))
+        return p
+            + (try check(
+                rest, state: "", errorClass: "", token: nil, mode: "", info: CodexAuthInfo(), elapsed: 0,
+                description: ""))
     }
 }
 #endif

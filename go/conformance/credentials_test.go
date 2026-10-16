@@ -21,6 +21,7 @@ import (
 	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/codexauth"
 	"github.com/xiaolai/sayso/go/internal/fixtures"
+	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -38,6 +39,7 @@ type credSetup struct {
 	File          *credFile         `json:"file"`
 	Retry         *credFile         `json:"retry"`
 	TimeoutMs     int64             `json:"timeoutMs"`
+	CancelAfterMs int64             `json:"cancelAfterMs"`
 	Server        json.RawMessage   `json:"server"`
 	Client        *clientSetup      `json:"client"`
 }
@@ -73,6 +75,7 @@ type world struct {
 	cfg                                   codexauth.Config
 	logs                                  *bytes.Buffer
 	now                                   time.Time
+	cancelAfter                           time.Duration // the caller cancels the probe this long after it starts
 }
 
 func TestCredentials(t *testing.T) {
@@ -114,6 +117,7 @@ func build(t *testing.T, s credSetup, python, fake string) (*world, error) {
 	w := &world{root: root, home: filepath.Join(root, "home"), binDir: filepath.Join(root, "bin"),
 		record: filepath.Join(root, "record.jsonl"), logs: &bytes.Buffer{}}
 	w.now = time.Unix(cmp(s.Now, 1800000000), 0)
+	w.cancelAfter = time.Duration(s.CancelAfterMs) * time.Millisecond
 	t.Cleanup(func() { // what the fake started outlives a failing case; end it with the case
 		rec, err := w.read()
 		if err != nil {
@@ -399,8 +403,15 @@ func (w *world) subst(s string) string {
 
 // probe runs one probe and checks every expectation key.
 func (w *world) probe(want map[string]any) []string {
+	ctx := context.Background()
+	if w.cancelAfter > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		time.AfterFunc(w.cancelAfter, cancel)
+	}
 	start := time.Now()
-	st, err := codexauth.Probe(context.Background(), w.cfg)
+	st, err := codexauth.Probe(ctx, w.cfg)
 	elapsed := time.Since(start)
 	if err != nil {
 		return []string{"probe: " + err.Error()}
@@ -419,16 +430,20 @@ func (w *world) probe(want map[string]any) []string {
 	if st.Err != nil {
 		desc = st.Err.Error()
 	}
-	return w.check(want, string(st.State), tok, st.Mode, st.Info, rec, elapsed, desc)
+	return w.check(want, string(st.State), string(openaihttp.Classify(st.Err)), tok, st.Mode, st.Info, rec, elapsed, desc)
 }
 
-func (w *world) check(want map[string]any, state string, tok secret.Token, mode string, info codexauth.Info, rec recorded, elapsed time.Duration, desc string) []string {
+func (w *world) check(want map[string]any, state, class string, tok secret.Token, mode string, info codexauth.Info, rec recorded, elapsed time.Duration, desc string) []string {
 	var p []string
 	for key, v := range want {
 		switch key {
 		case "state":
 			if state != v {
 				p = append(p, fmt.Sprintf("state %s, want %v", state, v))
+			}
+		case "class":
+			if class != v {
+				p = append(p, fmt.Sprintf("class %q, want %v", class, v))
 			}
 		case "token":
 			if exp := fmt.Sprint(fixtures.Substitute(v)); tok.Bearer() != exp {
@@ -625,7 +640,7 @@ func (w *world) timeline(cc credCase) []string {
 		if err != nil {
 			desc = err.Error()
 		}
-		for _, problem := range w.check(step.Expect, string(codexauth.StateOf(err)), tok, "", creds.Info(), rec, 0, desc) {
+		for _, problem := range w.check(step.Expect, string(codexauth.StateOf(err)), string(openaihttp.Classify(err)), tok, "", creds.Info(), rec, 0, desc) {
 			p = append(p, fmt.Sprintf("step %d: %s", i, problem))
 		}
 	}
