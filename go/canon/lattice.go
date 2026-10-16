@@ -31,12 +31,18 @@ func (g *graph) pieceGraph(at int, piece string, w *budget) (int, bool) {
 		return 0, false
 	}
 	end := g.node()
+	// A key is a place in the input lattice and the stages' states there: a span boundary (edge -1), or the boundary
+	// before field pos of edge edge from node. The walk advances one field at a time, so ways that reach the same
+	// place in the same state merge, and the readings of a span of many fields are arcs of the output graph rather
+	// than a list of every way through it: a run of guesses that each stay open (years read across punctuation)
+	// grows the graph by a constant per field instead of doubling it.
 	type key struct {
-		node int
-		c    cascade
+		node, edge, pos int
+		c               cascade
 	}
-	nodes := map[key]int{{0, cascade{}}: at}
-	todo := []key{{0, cascade{}}}
+	start := key{0, -1, 0, cascade{}}
+	nodes := map[key]int{start: at}
+	todo := []key{start}
 	type arcKey struct {
 		a, b  int
 		words string
@@ -53,6 +59,15 @@ func (g *graph) pieceGraph(at int, piece string, w *budget) (int, bool) {
 		}
 		return true
 	}
+	reach := func(from int, to key, words []string) bool {
+		n, ok := nodes[to]
+		if !ok {
+			n = g.node()
+			nodes[to] = n
+			todo = append(todo, to)
+		}
+		return path(from, n, words)
+	}
 	for len(todo) > 0 {
 		k := todo[len(todo)-1]
 		todo = todo[:len(todo)-1]
@@ -61,7 +76,7 @@ func (g *graph) pieceGraph(at int, piece string, w *budget) (int, bool) {
 		if !w.spend(1 + len(k.c.join.letters)) {
 			return 0, false
 		}
-		if k.node == in.final {
+		if k.edge < 0 && k.node == in.final {
 			ok := true
 			k.c.finish(0, nil, func(out *emitted) { ok = ok && path(from, end, out.words()) })
 			if !ok {
@@ -69,19 +84,30 @@ func (g *graph) pieceGraph(at int, piece string, w *budget) (int, bool) {
 			}
 			continue
 		}
-		for _, e := range in.next[k.node] {
-			if !w.spend(1 + len(e.fields)) {
+		// At a span boundary every span from it is read from its first field; inside a span, the next field.
+		edges, pos := in.next[k.node], k.pos
+		if k.edge >= 0 {
+			edges = edges[k.edge : k.edge+1]
+		}
+		for i, e := range edges {
+			if k.edge >= 0 {
+				i = k.edge
+			}
+			if !w.spend(1) {
 				return 0, false
 			}
-			for _, b := range k.c.read(e.fields) {
-				to := key{e.to, b.c}
-				n, ok := nodes[to]
-				if !ok {
-					n = g.node()
-					nodes[to] = n
-					todo = append(todo, to)
+			if len(e.fields) == 0 {
+				if !reach(from, key{e.to, -1, 0, k.c}, nil) {
+					return 0, false
 				}
-				if !path(from, n, b.out) {
+				continue
+			}
+			for _, b := range k.c.read(e.fields[pos : pos+1]) {
+				to := key{k.node, i, pos + 1, b.c}
+				if pos+1 == len(e.fields) {
+					to = key{e.to, -1, 0, b.c}
+				}
+				if !reach(from, to, b.out) {
 					return 0, false
 				}
 			}

@@ -113,3 +113,22 @@ func TestEquivalentWorstCase(t *testing.T) {
 		t.Error("a text over MaxBytes was compared")
 	}
 }
+
+// A run of year guesses that each stay open, read across punctuation inside one span, costs work linear in its
+// length: the walk merges ways by state field by field. Listing every way through the span doubled them per pair,
+// spent far past the budget before checking it, and reported a text unequal to itself (audit).
+func TestOpenYearGuessesCostLinearWork(t *testing.T) {
+	for _, n := range []int{10, 40, 400 / raceFactor} {
+		a := strings.Repeat("nineteen;twenty;", n)
+		b := strings.Repeat("1920;", n)
+		for _, c := range [][2]string{{a, a}, {a, b}} {
+			ok, work := equivalentWithin(c[0], c[1])
+			if !ok || work > 300*n {
+				t.Errorf("n=%d: equivalent %v with work %d; want true within %d", n, ok, work, 300*n)
+			}
+		}
+	}
+	if Equivalent(strings.Repeat("nineteen;twenty;", 40), strings.Repeat("1920;", 39)+"1921;") {
+		t.Error("a different last year was accepted")
+	}
+}
