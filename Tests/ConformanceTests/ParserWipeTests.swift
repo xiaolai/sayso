@@ -3,8 +3,45 @@ import XCTest
 
 @testable import RealtimeConnection
 
-/// The parser's copy of a document is wiped where it lives, not in a copy.
+/// The bytes the parser reads a secret from are wiped where they live, not in a copy.
 final class ParserWipeTests: XCTestCase {
+    /// Records whether a buffer held only zeros when it was freed.
+    private final class Freed: @unchecked Sendable {
+        private let lock = NSLock()
+        private var zeroed: [Bool] = []
+        func record(_ z: Bool) { lock.withLock { zeroed.append(z) } }
+        var results: [Bool] { lock.withLock { zeroed } }
+    }
+
+    /// A reply whose body is freed through `freed`, so a test sees the storage the minter received, not a copy.
+    private func reply(_ text: String, _ freed: Freed) -> HTTPReply? {
+        let bytes = Array(text.utf8)
+        let storage = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 1)
+        storage.copyMemory(from: bytes, byteCount: bytes.count)
+        let body = Data(bytesNoCopy: storage, count: bytes.count, deallocator: .custom { p, n in
+            freed.record(!UnsafeRawBufferPointer(start: p, count: n).contains { $0 != 0 })
+            p.deallocate()
+        })
+        return HTTPReply(status: 200, headers: ["x-request-id": "req_wipe"], body: body)
+    }
+
+    func testMintReplyIsWipedInPlaceOnEveryExit() throws {
+        let replies = [
+            #"{"value":"ek_wipe_canary","expires_at":1800000600}"#,
+            #"{"value":"ek_wipe_canary","expires_at":1800000600"#,
+            #"{"value":"ek_wipe_canary"}"#,
+            #"{"value":"","expires_at":1800000600}"#,
+        ]
+        for (i, text) in replies.enumerated() {
+            let freed = Freed()
+            var r = reply(text, freed)
+            let secret = try? Minter.secret(from: &r)
+            XCTAssertNil(r, "\(i): the reply is taken")
+            XCTAssertEqual(secret != nil, i == 0, "\(i)")
+            XCTAssertEqual(freed.results, [true], "\(i): the body was freed unwiped, or not freed")
+        }
+    }
+
     /// The wipe reports where it wrote, so a document can tell an in-place wipe from one that cleared a copy.
     func testWipeTellsAnInPlaceWipeFromACopy() {
         var alone = [UInt8](repeating: 7, count: 16)
