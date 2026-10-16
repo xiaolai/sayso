@@ -924,7 +924,13 @@ final class AppServerCore: @unchecked Sendable {
     /// before its reply fields are read: a notification (no id) is ignored whatever else it holds, unless `onEvent`
     /// takes it, and a message with a method, even "", is a server request. Keys are exact.
     private func handle(_ line: ArraySlice<UInt8>) -> Bool {
-        let trimmed = line.drop { Self.isSpace($0) }.reversed().drop { Self.isSpace($0) }.reversed()
+        // Trimmed by index, so the line stays one contiguous slice: a lazily reversed view is read element by element,
+        // which took seconds for each pass over a 1 MiB line.
+        var lo = line.startIndex
+        var hi = line.endIndex
+        while lo < hi, Self.isSpace(line[lo]) { lo += 1 }
+        while hi > lo, Self.isSpace(line[hi - 1]) { hi -= 1 }
+        let trimmed = line[lo..<hi]
         if trimmed.isEmpty { return true }
         guard isPlainJSON(trimmed),
             let value = try? JSONSerialization.jsonObject(with: Data(trimmed), options: [.fragmentsAllowed])
@@ -1140,10 +1146,13 @@ final class AppServerCore: @unchecked Sendable {
 /// neither, and no JSON text holds a raw NUL.
 func isPlainJSON<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
     // The strict grammar also refuses duplicate keys and invalid UTF-8, which JSONSerialization and Go's
-    // encoding/json each settle their own way; Codex's serde refuses both. The depth bound comes first and copies
-    // nothing.
-    !bytes.contains(0) && !bytes.starts(with: [0xEF, 0xBB, 0xBF]) && withinBounds(bytes, maxCodexJSONDepth)
-        && WireJSON.isValid(Data(bytes))
+    // encoding/json each settle their own way; Codex's serde refuses both. The depth bound comes before the grammar,
+    // whose parser recurses. The bytes are copied once and every check reads them contiguously: a generic collection
+    // is read element by element, which is slow for a long line.
+    let data = Data(bytes)
+    return data.withUnsafeBytes { raw in
+        !raw.contains(0) && !raw.starts(with: [0xEF, 0xBB, 0xBF]) && withinBounds(raw, maxCodexJSONDepth)
+    } && WireJSON.isValid(data)
 }
 
 /// How deeply Codex's JSON (a reply, auth.json, a JWT payload) may nest, as in Go (`codexapp.MaxJSONDepth`). Codex's
