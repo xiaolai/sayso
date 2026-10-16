@@ -351,6 +351,10 @@ public final class AppServerClient: @unchecked Sendable {
 
     /// Whether the child has been reaped.
     var hasExited: Bool { core.hasExited }
+
+    /// What the client still holds, for tests: the messages waiting to be written, the refusal bytes charged, and the
+    /// events waiting for the handler with their charge.
+    var held: (outbound: Int, refusalBytes: Int, events: Int, eventBytes: Int) { core.held }
 }
 
 /// The child's process, pipes, readers and pending calls.
@@ -620,6 +624,10 @@ final class AppServerCore: @unchecked Sendable {
 
     var hasExited: Bool { reaped(by: .now()) }
 
+    var held: (outbound: Int, refusalBytes: Int, events: Int, eventBytes: Int) {
+        lock.withLock { (out.count, refusalBytes, events.count, eventBytes) }
+    }
+
     /// Whether the child has exited by `deadline` (it stays unreaped until close); the semaphore keeps its signal for
     /// the next look.
     private func reaped(by deadline: DispatchTime) -> Bool {
@@ -708,7 +716,9 @@ final class AppServerCore: @unchecked Sendable {
                     o.done.signal()
                 } else if o.isRefusal {
                     let ok = (try? write(o.data, deadline: .now() + timeout)) != nil
-                    lock.withLock { refusalBytes -= o.data.count }
+                    lock.withLock {
+                        if failure == nil { refusalBytes -= o.data.count }  // a failure released the counts with the queue
+                    }
                     if !ok {
                         fail(AppServerError("Codex app-server did not read the answer to a server request"))
                         return
@@ -926,7 +936,8 @@ final class AppServerCore: @unchecked Sendable {
         return n.int64Value
     }
 
-    /// Marks the client unusable and releases every pending call.
+    /// Marks the client unusable and releases every pending call. The outbound queue is dropped with it: nothing is
+    /// written after a failure, so a failed or closed client keeps none of the encoded messages.
     func fail(_ e: AppServerError) {
         lock.withLock {
             if failure == nil { failure = e }
@@ -937,12 +948,13 @@ final class AppServerCore: @unchecked Sendable {
             }
             pending.removeAll()
             // Every caller still waiting for its turn to write is released with the failure.
-            out.forEach { o in
-                guard o.state == .queued, !o.isRefusal else { return }  // a refusal has no caller
+            while let o = out.popFirst() {
+                guard o.state == .queued, !o.isRefusal else { continue }  // a refusal has no caller
                 o.state = .abandoned
                 o.error = failure
                 o.done.signal()
             }
+            refusalBytes = 0
         }
         outWake.signal()  // the writer ends
         eventWake.signal()  // the event loop delivers what is queued, then ends
@@ -1159,11 +1171,6 @@ struct FIFO<Element> {
             head = 0
         }
         return e
-    }
-
-    /// Calls `body` with each element still queued, in order.
-    func forEach(_ body: (Element) -> Void) {
-        for case let e? in slots[head...] { body(e) }
     }
 
     mutating func removeAll() {

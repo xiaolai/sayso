@@ -38,5 +38,44 @@ final class AppServerQueueTests: XCTestCase {
         XCTAssertNil(q.popFirst())
     }
 
+    /// A python child: it answers initialize, reads initialized, then runs `then` (Python source).
+    private func fakeCodex(_ then: String) throws -> (String, () -> Void) {
+        let python = try XCTUnwrap(CredentialWorld.lookPath("python3"))
+        let dir = NSTemporaryDirectory() + "sayso-queue-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let script = dir + "/codex"
+        let body = "#!\(python)\nimport sys, json, time\nm = json.loads(sys.stdin.readline())\n"
+            + "print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n"
+            + "sys.stdin.readline()\n" + then
+        FileManager.default.createFile(atPath: script, contents: Data(body.utf8))
+        chmod(script, 0o755)
+        return (script, { try? FileManager.default.removeItem(atPath: dir) })
+    }
+
+    private func start(_ script: String, timeout: TimeInterval, _ onEvent: (@Sendable (AppServerEvent) -> Void)?)
+        throws -> AppServerClient
+    {
+        try AppServerClient.start(
+            AppServerClient.Configuration(
+                bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: timeout, onEvent: onEvent))
+    }
+
+    /// A failure drops the outbound queue: answers the child never read are not kept, and their charge is released.
+    func testFailureDropsTheOutboundQueue() throws {
+        // Ten answers of about 20 KB each are more than the child's input pipe holds; it never reads them, then breaks
+        // its output.
+        let (script, cleanup) = try fakeCodex(
+            "call = json.loads(sys.stdin.readline())\nfor i in range(10):\n"
+                + "    sys.stdout.write(json.dumps({'id': 'x' * 20000 + str(i), 'method': 'approve'}) + '\\n')\n"
+                + "sys.stdout.write('not json\\n')\nsys.stdout.flush()\ntime.sleep(30)\n")
+        defer { cleanup() }
+        let c = try start(script, timeout: 5, nil)
+        defer { c.close() }
+        XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("malformed"), "\($0)") }
+        let held = c.held
+        XCTAssertEqual(held.outbound, 0, "messages kept after the failure")
+        XCTAssertEqual(held.refusalBytes, 0, "refusal charge kept after the failure")
+    }
+
 }
 #endif
