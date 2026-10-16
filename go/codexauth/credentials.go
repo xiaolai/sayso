@@ -77,8 +77,7 @@ type Credentials struct {
 	cfg *Config // never changed after New
 	// env returns a copy of the child's environment. The variables live in a closure, which fmt prints as an address
 	// and reflection cannot read, so neither formatting nor reflection on Credentials reaches them.
-	env  func() []string
-	path string // PATH of the inherited environment
+	env func() []string
 
 	lock chan struct{} // held across a fetch or refresh
 	// The mutable state sits behind a pointer, so formatting a copy of the value (the redacting methods take the
@@ -129,12 +128,9 @@ func New(cfg Config) (*Credentials, error) {
 		}
 		cfg.Home = h
 	}
-	path := ""
 	for _, v := range kv {
 		if name, value, _ := strings.Cut(v, "="); name == "CODEX_HOME" && cfg.CodexHome == "" {
 			cfg.CodexHome = value
-		} else if name == "PATH" {
-			path = value
 		}
 	}
 	if cfg.Candidates == nil {
@@ -149,9 +145,21 @@ func New(cfg Config) (*Credentials, error) {
 	held := kv
 	cfg.Env = codexapp.Env{}
 	env := func() []string { return slices.Clone(held) }
-	c := &Credentials{cfg: &cfg, env: env, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
+	c := &Credentials{cfg: &cfg, env: env, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
 	c.refresh = c.refreshCodex
 	return c, nil
+}
+
+// searchPath is the PATH of the child's environment, read from env each time so that no copy of a variable sits in a
+// field that formatting or reflection could reach.
+func (c *Credentials) searchPath() string {
+	path := ""
+	for _, v := range c.env() {
+		if name, value, _ := strings.Cut(v, "="); name == "PATH" {
+			path = value
+		}
+	}
+	return path
 }
 
 // acquire takes the lock unless ctx has ended. select picks at random between ready cases, so a cancelled caller is
@@ -308,7 +316,7 @@ func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
 		tok, e := c.fileToken(false)
 		return tok, false, e
 	}
-	bin, err := codexapp.Resolve(c.cfg.Bin, c.path, c.cfg.Candidates)
+	bin, err := codexapp.Resolve(c.cfg.Bin, c.searchPath(), c.cfg.Candidates)
 	if err != nil {
 		if c.cfg.Bin != "" || c.cfg.Source == SourceCodex {
 			c.info.MissingBin = c.cfg.Bin
@@ -434,7 +442,7 @@ func (c *Credentials) storeFallback(ctx context.Context, bin string) (secret.Tok
 
 // refreshCodex asks a fresh child to refresh the sign-in.
 func (c *Credentials) refreshCodex(ctx context.Context) (secret.Token, error) {
-	bin, err := codexapp.Resolve(c.cfg.Bin, c.path, c.cfg.Candidates)
+	bin, err := codexapp.Resolve(c.cfg.Bin, c.searchPath(), c.cfg.Candidates)
 	if err != nil {
 		return secret.Token{}, err
 	}

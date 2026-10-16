@@ -53,7 +53,7 @@ func reach(v reflect.Value, needle string, seen map[uintptr]bool) bool {
 // environment, which lives in a closure.
 func TestCredentialsEnvironmentIsBeyondReflection(t *testing.T) {
 	c, err := New(Config{Source: SourceFile, Margin: time.Minute, Timeout: time.Second, Home: t.TempDir(),
-		Env: codexapp.EnvOf([]string{"OPENAI_API_KEY=opaque-canary-env-6", "PATH=/usr/bin"})})
+		Env: codexapp.EnvOf([]string{"OPENAI_API_KEY=opaque-canary-env-6", "PATH=/usr/bin:/opaque-canary-path"})})
 	if err != nil {
 		t.Fatal(err)
 	}
