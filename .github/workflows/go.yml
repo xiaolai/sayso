@@ -13,6 +13,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: SAYSO_RESULTS="$RUNNER_TEMP/results-go.json" go test -count=1 -race ./...
