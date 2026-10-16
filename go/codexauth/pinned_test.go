@@ -132,3 +132,27 @@ func TestAuthFileLinkToItsOwnInodeIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// An ancestor the user may search but not read, as a 0711 home folder is to others, does not refuse CODEX_HOME:
+// walking a path needs search permission only, so each folder is opened for search (O_SEARCH, O_PATH on Linux).
+// 0311 on the user's own folder stands in for a folder another user owns.
+func TestSearchableUnreadableAncestorIsWalked(t *testing.T) {
+	base := tree(t)
+	a := filepath.Join(base, "confine", "a")
+	if err := os.Chmod(a, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(a, 0o700) }()
+	if _, err := os.ReadDir(a); err == nil {
+		t.Skip("the folder is readable anyway (running as root?)")
+	}
+	loc, e := authFilePath(filepath.Join(a, "b"), base, filepath.Join(base, "confine"))
+	if e != nil {
+		t.Fatalf("authFilePath: %v", e)
+	}
+	defer loc.close()
+	tok, e := readAuthFile(loc, nil)
+	if e != nil || tok.Bearer() != "confine-token" {
+		t.Fatalf("read through a searchable, unreadable ancestor: %v", e)
+	}
+}

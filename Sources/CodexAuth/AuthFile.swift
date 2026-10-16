@@ -70,9 +70,10 @@ enum AuthFile {
 
     /// The folder at `path`, an absolute path holding no link, opened from "/" one component at a time without
     /// following a link and without blocking on a FIFO, each component checked to be a folder on its own descriptor;
-    /// nil on failure.
+    /// nil on failure. Each folder is opened for search only (O_SEARCH): walking a path needs search permission on
+    /// its folders, not read permission, so an ancestor such as a 0711 home folder does not refuse it.
     static func openResolved(_ path: String) -> Int32? {
-        let flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+        let flags = O_SEARCH | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
         guard path.utf8.first == 0x2F, !path.utf8.contains(0) else { return nil }
         var fd = open("/", flags)
         guard fd >= 0 else { return nil }
