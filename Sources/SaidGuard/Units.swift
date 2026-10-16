@@ -142,7 +142,8 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
         // domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
         var j = k + 1
         var labels = [k]
-        while low == r.text && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+        let lowercase = low == r.text
+        while lowercase && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
             labels.append(j)
             j += 1
         }
@@ -274,7 +275,7 @@ func svWordUnit(
     var unit: SvUnit = [lit(parts)]
     if parts.count > 1 { unit.append(lit(parts.joined())) }  // "e-mail" = "email"
     if !english { return svWithCodeReadings(unit, raws, k, low) }
-    let bare = r.text.hasSuffix(".") ? String(r.text.dropLast()) : r.text
+    let bare = r.text  // the lexer keeps no dot in a word ("e.g." is "e.g")
     // A title only with its capital and before a name: "ms" is milliseconds, "5 Ms." is no one. "Dr" and "St" after a
     // capitalised word inside a sentence are a road ("Take Oak Dr.", "Main St. Next").
     let road =

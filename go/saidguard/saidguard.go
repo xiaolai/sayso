@@ -1361,8 +1361,8 @@ func svScriptUnits(s, language string) []svUnit {
 		// A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
 		// sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
 		// domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
-		labels, j := []string{low}, k+1
-		for low == r.text && j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+		labels, j, lowercase := []string{low}, k+1, low == r.text
+		for lowercase && j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
 			labels = append(labels, lower(j))
 			j++
 		}
@@ -1519,7 +1519,7 @@ func svWordUnit(raws []svRaw, k int, low string, english bool, innerCapital, nex
 	if !english {
 		return svWithCodeReadings(unit, raws, k, low)
 	}
-	bare := strings.TrimSuffix(r.text, ".")
+	bare := r.text // the lexer keeps no dot in a word ("e.g." is "e.g")
 	// A title only with its capital and before a name: "ms" is milliseconds, "5 Ms." is no one. "Dr" and "St" after
 	// a capitalised word inside a sentence are a road ("Take Oak Dr.", "Main St. Next").
 	road := !strings.ContainsAny(r.gap, svSentenceEnds) && (innerCapital(k-1) || word(raws, k-1) && svIsCapitalised(raws[k-1].text) && !nextCapital(k))
