@@ -169,13 +169,37 @@ public struct ClientSecret: Sendable, Equatable, CustomStringConvertible, Custom
     CustomReflectable, Encodable
 {
     public let bearer: String
+    /// The expiry as a `Date`. A `Date` is a `Double`, which loses whole seconds beyond 2^53; ``expiresAtUnix`` keeps
+    /// them.
     public let expiresAt: Date
+    /// The expiry in Unix seconds exactly as minted (`expires_at`), as Go keeps it.
+    public let expiresAtUnix: Int64
 
-    /// Registers `bearer` with the scrubber.
+    /// Registers `bearer` with the scrubber. ``expiresAtUnix`` is `expiresAt` rounded down to a whole second,
+    /// saturated at the bounds of Int64.
     public init(bearer: String, expiresAt: Date) {
         Secret.register(bearer)
         self.bearer = bearer
         self.expiresAt = expiresAt
+        self.expiresAtUnix = Self.unixSeconds(expiresAt)
+    }
+
+    /// Registers `bearer` with the scrubber and keeps `expiresAtUnix` exactly.
+    public init(bearer: String, expiresAtUnix: Int64) {
+        Secret.register(bearer)
+        self.bearer = bearer
+        self.expiresAt = Date(timeIntervalSince1970: TimeInterval(expiresAtUnix))
+        self.expiresAtUnix = expiresAtUnix
+    }
+
+    /// `date` in whole Unix seconds, rounded down; saturated rather than trapping beyond Int64 (2^63 itself is out
+    /// of range, and `Double(Int64.max)` rounds up to it).
+    static func unixSeconds(_ date: Date) -> Int64 {
+        let t = date.timeIntervalSince1970.rounded(.down)
+        if t.isNaN { return 0 }
+        if t >= 0x1p63 { return .max }
+        if t < -0x1p63 { return .min }
+        return Int64(t)
     }
 
     public var description: String { Secret.redacted }
@@ -188,7 +212,7 @@ public struct ClientSecret: Sendable, Equatable, CustomStringConvertible, Custom
 
     /// Byte equality, as for ``Token``.
     public static func == (a: ClientSecret, b: ClientSecret) -> Bool {
-        a.bearer.utf8.elementsEqual(b.bearer.utf8) && a.expiresAt == b.expiresAt
+        a.bearer.utf8.elementsEqual(b.bearer.utf8) && a.expiresAt == b.expiresAt && a.expiresAtUnix == b.expiresAtUnix
     }
 }
 

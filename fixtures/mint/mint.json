@@ -64,6 +64,71 @@
   }
  },
  {
+  "id": "mint-expiry-beyond-double",
+  "component": "mint",
+  "setup": {
+   "now": 1800000000,
+   "origin": "test",
+   "session": {
+    "type": "realtime",
+    "model": "gpt-realtime",
+    "output_modalities": [
+     "audio"
+    ]
+   },
+   "lifetimeSeconds": 600,
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "refreshTo": {
+    "$jwt": {
+     "exp": 1800007200
+    }
+   },
+   "replies": [
+    {
+     "status": 200,
+     "json": {
+      "value": "ek_fixture_secret",
+      "expires_at": 9007199254740993,
+      "session": {
+       "type": "realtime"
+      }
+     }
+    }
+   ]
+  },
+  "expect": {
+   "class": null,
+   "secret": "ek_fixture_secret",
+   "expiresAt": 9007199254740993,
+   "requests": 1,
+   "refreshCalls": 0,
+   "request": {
+    "method": "POST",
+    "path": "/v1/realtime/client_secrets",
+    "authorization": "Bearer $token",
+    "contentType": "application/json",
+    "body": {
+     "session": {
+      "type": "realtime",
+      "model": "gpt-realtime",
+      "output_modalities": [
+       "audio"
+      ]
+     },
+     "expires_after": {
+      "anchor": "created_at",
+      "seconds": 600
+     }
+    }
+   }
+  },
+  "note": "expires_at is kept as the exact integer minted: 2^53 + 1 has no Double, so a Date alone would report 2^53."
+ },
+ {
   "id": "mint-missing-value",
   "component": "mint",
   "setup": {
