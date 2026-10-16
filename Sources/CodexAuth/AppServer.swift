@@ -84,7 +84,8 @@ public struct AppServerEvent: Sendable, Equatable, CustomStringConvertible, Cust
     CustomReflectable
 {
     public let method: String
-    /// The params member as JSON; empty when absent (a `"params": null` is `null`).
+    /// The params member exactly as the child wrote it, strict JSON; empty when absent (a `"params": null` is
+    /// `null`).
     public let params: Data
     /// Set for a server request (it had an id), which was refused before the event was queued.
     public let isServerRequest: Bool
@@ -771,7 +772,7 @@ final class AppServerCore: @unchecked Sendable {
         if value is NSNull { return true }
         guard let m = value as? [String: Any] else { return false }
         guard let id = m["id"], !(id is NSNull) else {
-            queueEvent(m, serverRequest: false)
+            queueEvent(m, line: trimmed, serverRequest: false)
             return true  // a notification, whatever else it holds
         }
         var hasMethod = false
@@ -781,7 +782,7 @@ final class AppServerCore: @unchecked Sendable {
         }
         if hasMethod {
             refuse(id)
-            queueEvent(m, serverRequest: true)
+            queueEvent(m, line: trimmed, serverRequest: true)
             return true
         }
         let result: Result<Any, AppServerError>
@@ -840,18 +841,14 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Hands one notification or server request to ``eventLoop()``. Without a handler it does nothing, so a
     /// notification is ignored as before; a notification whose method is absent or not a string is ignored too.
-    /// Events beyond `eventCap`, from a handler that does not keep up, fail the client.
-    private func queueEvent(_ m: [String: Any], serverRequest: Bool) {
+    /// The params are the exact bytes of the line, as Go keeps them. Events beyond `eventCap`, from a handler that
+    /// does not keep up, fail the client.
+    private func queueEvent<C: Collection>(_ m: [String: Any], line: C, serverRequest: Bool) where C.Element == UInt8 {
         guard onEvent != nil, let method = m["method"] as? String else { return }
-        var params = Data()
-        if let p = m["params"] {
-            // A parsed JSON value, so this encodes.
-            params =
-                (try? JSONSerialization.data(withJSONObject: p, options: [.fragmentsAllowed, .withoutEscapingSlashes]))
-                ?? Data()
-        }
-        let event = AppServerEvent(method: method, params: params, isServerRequest: serverRequest)
-        let size = method.utf8.count + params.count
+        // The line was validated, so this reads.
+        let params = (try? WireJSON.memberBytes(Data(line), "params")) ?? nil
+        let event = AppServerEvent(method: method, params: params ?? Data(), isServerRequest: serverRequest)
+        let size = method.utf8.count + event.params.count
         let over = lock.withLock { () -> Bool? in
             guard failure == nil else { return nil }  // the client is done: nothing more is delivered
             guard eventBytes + size <= Self.eventCap else { return true }

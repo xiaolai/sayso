@@ -77,8 +77,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   its integer `id`. Once the client has failed, a reply read afterwards is not handed to its call, and nothing more
   is read from the child.
 - **Events.** A caller may give the client an event handler. It then receives every notification whose `method` is
-  a string, and every server request after its refusal was queued, as an event: the method, the `params` member as
-  JSON (absent when the message had none; `null` when it was null) and whether it was a server request. Events are
+  a string, and every server request after its refusal was queued, as an event: the method, the `params` member
+  exactly as the child wrote it, byte for byte (absent when the message had none; `null` when it was null), and
+  whether it was a server request. Events are
   delivered one at a time, in the order the child wrote them, from a thread or goroutine of the client's own, so the
   reader never waits for the handler; a reply may reach its caller before the handler has seen the events written
   before it. Events still queued beyond 8 MiB (a handler that does not keep up) are `codex-error`, which fails the

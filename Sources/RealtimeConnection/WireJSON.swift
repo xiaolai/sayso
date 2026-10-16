@@ -36,6 +36,15 @@ package enum WireJSON {
         return Node(doc: doc, range: range)
     }
 
+    /// The exact bytes of the member `name` of the JSON object `data`, as the sender wrote them; nil when absent.
+    /// Throws ``Invalid`` unless `data` is one strict JSON object. For the other modules of this package, which
+    /// cannot see ``Node``: CodexAuth hands an app-server event's params on byte for byte, as Go does.
+    package static func memberBytes(_ data: Data, _ name: String) throws -> Data? {
+        let root = try parse(data)
+        guard let n = try root.members()[Array(name.utf8)] else { return nil }
+        return Data(root.doc.bytes[n.range])
+    }
+
     final class Document: Sendable {
         let bytes: [UInt8]
         init(_ bytes: [UInt8]) { self.bytes = bytes }

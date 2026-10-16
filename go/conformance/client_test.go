@@ -190,6 +190,9 @@ func checkClientEvent(i int, got codexapp.Event, want map[string]any, expand *st
 			p = append(p, fmt.Sprintf("event %d params differ", i))
 		}
 	}
+	if raw, ok := want["paramsRaw"].(string); ok && string(got.Params()) != raw { // the bytes as the child wrote them
+		p = append(p, fmt.Sprintf("event %d params bytes %q, want %q", i, got.Params(), raw))
+	}
 	return p
 }
 

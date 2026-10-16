@@ -113,6 +113,10 @@ extension CredentialWorld {
                             ? nil : try? JSONSerialization.jsonObject(with: e.params, options: [.fragmentsAllowed])
                         if params == nil || !Self.same(params!, expand(wp)) { p.append("event \(i) params differ") }
                     }
+                    // The bytes as the child wrote them.
+                    if let raw = w["paramsRaw"] as? String, e.params != Data(raw.utf8) {
+                        p.append("event \(i) params bytes \(String(decoding: e.params, as: UTF8.self).debugDescription), want \(raw.debugDescription)")
+                    }
                 }
             case "eventCount":
                 if !Self.same(got.count, v) { p.append("\(got.count) events, want \(v)") }
