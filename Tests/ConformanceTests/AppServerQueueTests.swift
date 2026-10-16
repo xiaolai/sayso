@@ -1,5 +1,6 @@
 #if os(macOS)
 @testable import CodexAuth
+import RealtimeConnection
 import Darwin
 import Foundation
 import XCTest

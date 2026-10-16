@@ -284,7 +284,9 @@ public struct UnknownTypeCount: Sendable, Equatable {
 final class WriteGate: @unchecked Sendable {
     private let lock = NSLock()
     private var busy = false
-    private var queue: [(id: UInt64, c: CheckedContinuation<Void, Error>)] = []
+    private var waiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
+    /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
+    private var order = FIFO<UInt64>()
     private var nextID: UInt64 = 0
 
     func acquire() async throws {
@@ -303,30 +305,32 @@ final class WriteGate: @unchecked Sendable {
                     lock.unlock()
                     c.resume()
                 } else {
-                    queue.append((id, c))
+                    waiters[id] = c
+                    order.append(id)
                     lock.unlock()
                 }
             }
         } onCancel: {
-            lock.lock()
-            let at = queue.firstIndex { $0.id == id }
-            let waiter = at.map { queue.remove(at: $0).c }
-            lock.unlock()
+            let waiter = lock.withLock { waiters.removeValue(forKey: id) }
             waiter?.resume(throwing: CancellationError())
         }
     }
 
+    /// How many waiters are queued; for tests.
+    var waiting: Int { lock.withLock { waiters.count } }
+
     /// Hands the turn to the next waiter, or frees the gate.
     func release() {
         lock.lock()
-        if queue.isEmpty {
-            busy = false
-            lock.unlock()
-        } else {
-            let next = queue.removeFirst().c
-            lock.unlock()
-            next.resume()
+        while let id = order.popFirst() {
+            if let next = waiters.removeValue(forKey: id) {
+                lock.unlock()
+                next.resume()
+                return
+            }
         }
+        busy = false
+        lock.unlock()
     }
 }
 
@@ -338,7 +342,8 @@ final class Inbox: @unchecked Sendable {
     private var terminal: Error?
     private var closing = false
     private var waiters: [UInt64: CheckedContinuation<RealtimeMessage, Error>] = [:]
-    private var order: [UInt64] = []
+    /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
+    private var order = FIFO<UInt64>()
     private var nextID: UInt64 = 0
     private var space: CheckedContinuation<Bool, Never>?
     private var unknown: [UnknownTypeCount] = []
@@ -368,6 +373,15 @@ final class Inbox: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// The waiters in arrival order, taken from the queue; called under the lock.
+    private func takeWaiters() -> [CheckedContinuation<RealtimeMessage, Error>] {
+        var pending: [CheckedContinuation<RealtimeMessage, Error>] = []
+        while let id = order.popFirst() {
+            if let w = waiters.removeValue(forKey: id) { pending.append(w) }
+        }
+        return pending
+    }
+
     /// Ends the inbox for ``RealtimeSession/close()``: a buffered message is dropped, and every waiter, now and later,
     /// gets ``RealtimeSession/Closed``.
     func markClosing() {
@@ -376,8 +390,7 @@ final class Inbox: @unchecked Sendable {
         buffered = nil
         terminal = RealtimeSession.Closed()  // after close every call gets Closed, an earlier failure included, as in Go
         let error = terminal!
-        let pending = order.compactMap { waiters.removeValue(forKey: $0) }
-        order = []
+        let pending = takeWaiters()
         let s = space
         space = nil
         lock.unlock()
@@ -408,11 +421,12 @@ final class Inbox: @unchecked Sendable {
             lock.unlock()
             return
         }
-        if let id = order.first, let waiter = waiters.removeValue(forKey: id) {
-            order.removeFirst()
-            lock.unlock()
-            waiter.resume(with: result)
-            return
+        while let id = order.popFirst() {
+            if let waiter = waiters.removeValue(forKey: id) {
+                lock.unlock()
+                waiter.resume(with: result)
+                return
+            }
         }
         buffered = result
         lock.unlock()
@@ -423,8 +437,7 @@ final class Inbox: @unchecked Sendable {
         lock.lock()
         if terminal == nil { terminal = error }  // after close(), the reader's own error is not the session's
         let error = terminal!
-        let pending = order.compactMap { waiters.removeValue(forKey: $0) }
-        order = []
+        let pending = takeWaiters()
         let s = space
         space = nil
         lock.unlock()
@@ -462,7 +475,6 @@ final class Inbox: @unchecked Sendable {
         } onCancel: {
             lock.lock()
             let waiter = waiters.removeValue(forKey: id)
-            order.removeAll { $0 == id }
             lock.unlock()
             waiter?.resume(throwing: CancellationError())
         }

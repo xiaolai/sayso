@@ -1219,37 +1219,3 @@ private func bool(_ v: Any) -> Bool? {
     return n.boolValue
 }
 #endif
-
-/// A first-in, first-out queue that lets go of each element as it is taken, so what it holds is only what it still
-/// queues: a consumed slot is emptied at once, and the emptied front is cut off once it is most of the storage, which
-/// keeps taking O(1) amortised.
-struct FIFO<Element> {
-    private var slots: [Element?] = []
-    private var head = 0
-
-    var count: Int { slots.count - head }
-
-    var first: Element? { head < slots.count ? slots[head] : nil }
-
-    mutating func append(_ e: Element) { slots.append(e) }
-
-    mutating func popFirst() -> Element? {
-        guard head < slots.count else { return nil }
-        let e = slots[head]
-        slots[head] = nil
-        head += 1
-        if head == slots.count {
-            slots = []
-            head = 0
-        } else if head > 1024 && head * 2 > slots.count {
-            slots.removeFirst(head)
-            head = 0
-        }
-        return e
-    }
-
-    mutating func removeAll() {
-        slots = []
-        head = 0
-    }
-}
