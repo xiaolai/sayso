@@ -4,7 +4,6 @@
 package canon
 
 import (
-	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -20,7 +19,7 @@ import (
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
 // to Canon's output or to Equivalent's verdicts: cache keys and verification provenance record it.
-const CanonVersion = 14 // 14: Equivalent cuts beside a number, zero, "and", "a" or "point" word when the other word is inert, and lists 2^8 combinations of a piece
+const CanonVersion = 15 // 15: Equivalent reads every combination of a piece's compounds, through a lattice of its spans
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -36,18 +35,9 @@ func Canon(s string) []string { return texts(canon(s)) }
 // year read as a pair on either side ("nineteen ninety-nine" = "1999", whose
 // canonical form is the cardinal). A pair reads as a year where a number starts,
 // or after punctuation: "1999; twenty ten" holds two years, "2010, 20" no pair
-// "ten twenty". Each side is a graph of its readings, linear in its length, and
-// the two are walked together, so no combination of choices is listed.
-// Only a piece of more than maxCompounds compounds in which every space stands
-// between two words that read each other ("twenty-one twenty-one ...": number
-// words, single letters, abbreviations, words that are not letters) is read
-// with its compounds joined or split together.
+// "ten twenty". Each side is a graph of its readings, built without listing the
+// combinations of its choices (lattice.go), and the two are walked together.
 func Equivalent(a, b string) bool { return readings(a).meets(readings(b)) }
-
-// maxCompounds bounds the compounds of one piece of text whose combinations are listed: 2^8 readings. Pieces are cut
-// at every space Canon reads the same either way, so a piece holds only words that read each other and stays short;
-// a piece beyond the bound is read with every compound joined or every one split.
-const maxCompounds = 8
 
 // tok is a Canon token, and whether punctuation stood before it in the text: Equivalent reads a year pair after a
 // number only across punctuation.
@@ -64,25 +54,13 @@ func texts(toks []tok) []string {
 	return out
 }
 
-// readings is the graph of the token strings s may canonicalise to. s is cut where Canon reads the text on either side
-// on its own (pieces); a piece's readings are its compounds' combinations, and each reading adds a path for every
-// year pair in it.
+// readings is the graph of the token strings s may canonicalise to: s is cut where Canon reads the text on either side
+// on its own (pieces), and each piece adds the graph of its readings (pieceGraph).
 func readings(s string) *graph {
 	g := &graph{next: [][]arc{nil}}
 	at := 0
 	for _, piece := range pieces(s) {
-		end := g.node()
-		seen := map[string]bool{}
-		for _, v := range compoundVariants(piece) {
-			toks := canon(v)
-			key := fmt.Sprint(toks)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			g.reading(at, end, toks)
-		}
-		at = end
+		at = g.pieceGraph(at, piece)
 	}
 	g.end = at
 	return g
@@ -117,31 +95,6 @@ func (g *graph) path(a, b int, words []string) {
 		}
 		g.next[a] = append(g.next[a], arc{w, to})
 		a = to
-	}
-}
-
-// reading adds toks from node a to node b, and beside every year pair in them ("nineteen ninety nine") a path
-// spelling its cardinal. A pair starts a number ("two thousand ten twenty", "2010, 20" once the comma is gone, holds
-// no pair "ten twenty") or follows punctuation ("1999; twenty ten"). A piece starts after a word Canon reads alone,
-// never a number word, so a pair at its start starts a number.
-func (g *graph) reading(a, b int, toks []tok) {
-	at := make([]int, len(toks)+1)
-	at[0], at[len(toks)] = a, b
-	for i := 1; i < len(toks); i++ {
-		at[i] = g.node()
-	}
-	if len(toks) == 0 {
-		g.path(a, b, nil)
-		return
-	}
-	words := texts(toks)
-	for i, t := range toks {
-		g.next[at[i]] = append(g.next[at[i]], arc{t.text, at[i+1]})
-	}
-	for i := range toks {
-		if v, n := yearPairAt(words, i); n > 0 && (i == 0 || toks[i].brk || !isNumberWord(words[i-1]) && !isScale(words[i-1])) {
-			g.path(at[i], at[i+n], cardinal(uint64(v)))
-		}
 	}
 }
 
@@ -312,44 +265,11 @@ func edge(w string) (kind int, letter bool) {
 	return edgeInert, letter
 }
 
-// compoundVariants is s with each hyphen between two letters kept or removed, every combination up to maxCompounds,
-// beyond it all kept or all removed; the hyphens of numbers ("3-4", "COVID-19") are never removed, as Canon reads them
-// as separators.
-func compoundVariants(s string) []string {
-	// Compounds are found in the text Canon reads: a full-width hyphen ("e－mail") is a hyphen after NFKC, and a
-	// decomposed accent composes ("café-au-lait"). A mark that does not compose still ends the letter run before it.
-	rs := []rune(width.Fold.String(norm.NFKC.String(strings.ToValidUTF8(s, " "))))
-	var at []int
-	for i := 1; i+1 < len(rs); i++ {
-		if isHyphen(rs[i]) && (unicode.IsLetter(rs[i-1]) || unicode.IsMark(rs[i-1])) && unicode.IsLetter(rs[i+1]) {
-			at = append(at, i)
-		}
-	}
-	join := func(mask func(int) bool) string {
-		var b strings.Builder
-		k := 0
-		for i, r := range rs {
-			if k < len(at) && at[k] == i {
-				k++
-				if mask(k - 1) {
-					continue
-				}
-			}
-			b.WriteRune(r)
-		}
-		return b.String()
-	}
-	if len(at) > maxCompounds {
-		return []string{string(rs), join(func(int) bool { return true })}
-	}
-	out := make([]string, 0, 1<<len(at))
-	for m := 0; m < 1<<len(at); m++ {
-		out = append(out, join(func(k int) bool { return m&(1<<k) != 0 }))
-	}
-	return out
-}
+func canon(s string) []tok { return tokenPasses(marked(fields(s))) }
 
-func canon(s string) []tok {
+// fields is s after the passes that read text, as Canon's fields: tokens, and "\x00" for each punctuation mark. None of
+// these passes reads across a space or a hyphen, but "St" reads the capital of the next word: readings relies on it.
+func fields(s string) []string {
 	// An invalid byte ends up a separator anyway; making it one first keeps the number pass
 	// from stalling on it ("\xf7¾" would keep "3 4" as digits, and a second pass read them).
 	s = strings.ToValidUTF8(s, " ")
@@ -385,14 +305,18 @@ func canon(s string) []tok {
 			b.WriteString(" \x00 ") // punctuation: a separator, and a mark for the token after it
 		}
 	}
-	// Letters join before abbreviations expand, or a second pass would expand what the first
-	// joined ("M s" -> "ms" -> "miz").
 	// Dropping an apostrophe can bring a letter and a combining mark together ("A'̆"), which a
 	// second pass would compose; compose them now.
-	// Joining can make a number word ("T W O" -> "two"), so the number rewrites run again after it,
-	// or a second pass would read a following "oh" as zero or drop an "and" before it.
+	return strings.Fields(norm.NFKC.String(b.String()))
+}
+
+// tokenPasses are the passes that read tokens. Letters join before abbreviations expand, or a second pass would expand
+// what the first joined ("M s" -> "ms" -> "miz"). Joining can make a number word ("T W O" -> "two"), so the number
+// rewrites run again after it, or a second pass would read a following "oh" as zero or drop an "and" before it. The
+// stages in lattice.go are these passes, one token at a time.
+func tokenPasses(toks []tok) []tok {
 	numberWords := func(t []tok) []tok { return spokenZeros(scaleArticle(dropNumberAnd(t))) }
-	return expandTokens(numberWords(joinLetters(numberWords(marked(strings.Fields(norm.NFKC.String(b.String())))))))
+	return expandTokens(numberWords(joinLetters(numberWords(toks))))
 }
 
 // marked drops the punctuation marks from fields, setting brk on the token after each.
