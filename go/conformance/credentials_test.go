@@ -426,15 +426,16 @@ func (w *world) probe(want map[string]any) []string {
 	if err != nil {
 		return []string{"record: " + err.Error()}
 	}
-	desc := ""
-	if st.Err != nil {
-		desc = st.Err.Error()
-	}
-	return w.check(want, string(st.State), string(openaihttp.Classify(st.Err)), tok, st.Mode, st.Info, rec, elapsed, desc)
+	return w.check(want, string(st.State), st.Err, tok, st.Mode, st.Info, rec, elapsed)
 }
 
-func (w *world) check(want map[string]any, state, class string, tok secret.Token, mode string, info codexauth.Info, rec recorded, elapsed time.Duration, desc string) []string {
+// check compares one outcome with want: state is the reported state, err the failure (nil for none).
+func (w *world) check(want map[string]any, state string, err error, tok secret.Token, mode string, info codexauth.Info, rec recorded, elapsed time.Duration) []string {
 	var p []string
+	class, desc := string(openaihttp.Classify(err)), ""
+	if err != nil {
+		desc = err.Error()
+	}
 	for key, v := range want {
 		switch key {
 		case "state":
@@ -548,6 +549,20 @@ func (w *world) check(want map[string]any, state, class string, tok secret.Token
 			}
 		case "notInDescription":
 			p = append(p, leaks(strings_(v), desc, w.logs.String())...)
+		case "inDescription":
+			for _, s := range strings_(v) {
+				if !strings.Contains(desc, s) {
+					p = append(p, fmt.Sprintf("the description does not name %q: %s", s, desc))
+				}
+			}
+		case "retryAt": // Unix seconds; null for none
+			var got any
+			if e := (*codexauth.Error)(nil); errors.As(err, &e) && !e.RetryAt.IsZero() {
+				got = float64(e.RetryAt.Unix())
+			}
+			if !same(got, v) {
+				p = append(p, fmt.Sprintf("retryAt %v, want %v", got, v))
+			}
 		default:
 			p = append(p, "unknown expectation "+key)
 		}
@@ -636,11 +651,7 @@ func (w *world) timeline(cc credCase) []string {
 		if rerr != nil {
 			return []string{rerr.Error()}
 		}
-		desc := ""
-		if err != nil {
-			desc = err.Error()
-		}
-		for _, problem := range w.check(step.Expect, string(codexauth.StateOf(err)), string(openaihttp.Classify(err)), tok, "", creds.Info(), rec, 0, desc) {
+		for _, problem := range w.check(step.Expect, string(codexauth.StateOf(err)), err, tok, "", creds.Info(), rec, 0) {
 			p = append(p, fmt.Sprintf("step %d: %s", i, problem))
 		}
 	}

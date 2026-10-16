@@ -185,9 +185,8 @@ final class CredentialWorld {
             }
         }
         return try check(
-            want, state: status.state.rawValue, errorClass: status.error?.errorClass.rawValue ?? "", token: token,
-            mode: status.mode, info: status.info, elapsed: elapsed,
-            description: status.error.map(String.init(describing:)) ?? "")
+            want, state: status.state.rawValue, error: status.error, token: token, mode: status.mode, info: status.info,
+            elapsed: elapsed)
     }
 
     func timeline(_ steps: [[String: Any]]) throws -> [String] {
@@ -217,8 +216,7 @@ final class CredentialWorld {
             let info = try blocking { await creds.info() }
             let found = try check(
                 step["expect"] as? [String: Any] ?? [:], state: CodexAuthError.state(of: failure).rawValue,
-                errorClass: ErrorClass.of(failure)?.rawValue ?? "", token: token, mode: "", info: info, elapsed: 0,
-                description: failure.map(String.init(describing:)) ?? "")
+                error: failure, token: token, mode: "", info: info, elapsed: 0)
             problems += found.map { "step \(i): \($0)" }
         }
         return problems
@@ -281,12 +279,15 @@ final class CredentialWorld {
             .replacingOccurrences(of: "$binDir", with: binDir)
     }
 
+    /// Compares one outcome with `want`: `state` is the reported state, `error` the failure (nil for none).
     func check(
-        _ want: [String: Any], state: String, errorClass: String, token: Token?, mode: String, info: CodexAuthInfo,
-        elapsed: TimeInterval, description: String
+        _ want: [String: Any], state: String, error: Error?, token: Token?, mode: String, info: CodexAuthInfo,
+        elapsed: TimeInterval
     ) throws -> [String] {
         let rec = try read()
         var p: [String] = []
+        let errorClass = ErrorClass.of(error)?.rawValue ?? ""
+        let description = error.map(String.init(describing:)) ?? ""
         for (key, v) in want {
             switch key {
             case "state":
@@ -363,6 +364,14 @@ final class CredentialWorld {
                 for s in v as? [String] ?? [] where texts.contains(where: { $0.contains(s) }) {
                     p.append("\(s.debugDescription) leaked")
                 }
+            case "inDescription":
+                for s in v as? [String] ?? [] where !description.contains(s) {
+                    p.append("the description does not name \(s.debugDescription): \(description)")
+                }
+            case "retryAt":  // Unix seconds; null for none
+                let at = (error as? CodexAuthError)?.retryAt
+                let got: Any = at.map { NSNumber(value: Int64($0.timeIntervalSince1970)) } ?? NSNull()
+                if !Self.same(got, v) { p.append("retryAt \(got), want \(v)") }
             default:
                 p.append("unknown expectation \(key)")
             }

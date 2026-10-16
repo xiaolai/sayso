@@ -131,9 +131,7 @@ extension CredentialWorld {
             }
         }
         return p
-            + (try check(
-                rest, state: "", errorClass: "", token: nil, mode: "", info: CodexAuthInfo(), elapsed: 0,
-                description: ""))
+            + (try check(rest, state: "", error: nil, token: nil, mode: "", info: CodexAuthInfo(), elapsed: 0))
     }
 }
 #endif

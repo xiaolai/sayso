@@ -134,6 +134,8 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
     private var refused: String?
     private var backoff: TimeInterval = 0
     private var retryAt: Date?
+    /// The refresh failure that started the backoff, reported as the cause of each call it refuses.
+    private var lastFailure = ""
     private var latest = CodexAuthInfo()
     /// Counts successful refreshes; read off the queue. A caller that refused a token while a refresh was running
     /// takes that refresh's result instead of starting another, even when Codex returned the same bearer.
@@ -256,7 +258,10 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
                 .expired, message: "the token in auth.json is expiring, and the file source cannot refresh")
         }
         if let retryAt, cfg.now() < retryAt {
-            throw CodexAuthError(.expired, message: "the last refresh failed; the next attempt waits for the backoff")
+            var e = CodexAuthError(
+                .expired, message: "the last refresh failed; the next attempt waits for the backoff", cause: lastFailure)
+            e.retryAt = retryAt
+            throw e
         }
         do {
             let tok = try (refresher ?? { try self.refreshCodex(op) })()
@@ -265,6 +270,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             }
             backoff = 0
             retryAt = nil
+            lastFailure = ""
             refused = nil
             current = tok
             refreshes.increment()
@@ -276,14 +282,16 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             }
             backoff = backoff == 0 ? Self.backoffStart : min(2 * backoff, Self.backoffMax)
             retryAt = cfg.now().addingTimeInterval(backoff)  // from the failure, so a slow attempt keeps the wait
+            lastFailure = String(describing: error)
             // The refresh reply named another sign-in: classified as in step 3 (spec/credentials.md), not expired.
             if let e = error as? CodexAuthError,
                 [.notSignedIn, .apiKey, .unsupportedAuth, .providerWithoutOpenAIAuth].contains(e.state)
             {
                 throw e
             }
-            throw CodexAuthError(
-                .expired, message: "the refresh did not renew the sign-in", cause: String(describing: error))
+            var failed = CodexAuthError(.expired, message: "the refresh did not renew the sign-in", cause: lastFailure)
+            failed.retryAt = retryAt
+            throw failed
         }
     }
 

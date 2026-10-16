@@ -179,8 +179,9 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   sign-in's state (`not-signed-in`, `api-key`, `unsupported-auth`, `provider-without-openai-auth`, as in sequence
   step 4). Either way it spends no permanent budget: the next refresh is allowed after a
   backoff of 60 s, doubling to at most 15 min, reset by a success, counted from when the failure completed. Within
-  the backoff a call fails as `expired` without starting Codex. A refresh the caller cancelled is not a failure and
-  spends no backoff.
+  the backoff a call fails as `expired` without starting Codex. The failed refresh and every call the backoff refuses
+  carry the time the next refresh may run (Go `Error.RetryAt`, Swift `CodexAuthError.retryAt`), and a refusal's cause
+  is the failure that started the wait. A refresh the caller cancelled is not a failure and spends no backoff.
 
 ## Hygiene (`AUTH-05`)
 

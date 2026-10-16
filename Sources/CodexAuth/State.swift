@@ -35,6 +35,9 @@ public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomString
     public internal(set) var errorClass: ErrorClass
     public internal(set) var message: String { didSet { message = Secret.scrub(message) } }
     public internal(set) var cause: String { didSet { cause = Secret.scrub(cause) } }
+    /// For a refresh that failed or a call the backoff refused, when the next refresh may run; nil otherwise. The
+    /// refusal's `cause` is the failure that started the wait.
+    public internal(set) var retryAt: Date?
 
     public init(
         _ state: CodexAuthState, mode: String = "", codexVersion: String = "", message: String = "",
@@ -70,6 +73,7 @@ public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomString
             children: [
                 "state": state, "mode": Secret.scrub(mode), "codexVersion": Secret.scrub(codexVersion),
                 "errorClass": errorClass, "message": Secret.scrub(message), "cause": Secret.scrub(cause),
+                "retryAt": retryAt as Any,
             ], displayStyle: .struct)
     }
 

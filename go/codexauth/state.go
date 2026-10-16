@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/xiaolai/sayso/go/codexapp"
@@ -44,7 +45,10 @@ type Error struct {
 	State        State
 	Mode         string // the reported sign-in mode (api-key, unsupported-auth), scrubbed and bounded; "" otherwise
 	CodexVersion string // "" when unknown
-	Err          error
+	// RetryAt is, for a refresh that failed or a call the backoff refused, when the next refresh may run; zero
+	// otherwise. The refusal's Err is the failure that started the wait.
+	RetryAt time.Time
+	Err     error
 }
 
 func (e *Error) Error() string {
@@ -77,9 +81,13 @@ func (e Error) Format(f fmt.State, verb rune) {
 	}
 }
 
-// MarshalJSON encodes the state, the mode and the version, scrubbed, and the cause as its scrubbed text.
+// MarshalJSON encodes the state, the mode and the version, scrubbed, the retry time when set, and the cause as its
+// scrubbed text.
 func (e Error) MarshalJSON() ([]byte, error) {
 	m := map[string]string{"state": string(e.State), "mode": secret.Scrub(e.Mode), "codexVersion": secret.Scrub(e.CodexVersion)}
+	if !e.RetryAt.IsZero() {
+		m["retryAt"] = e.RetryAt.UTC().Format(time.RFC3339)
+	}
 	if e.Err != nil {
 		m["error"] = secret.Scrub(e.Err.Error())
 	}

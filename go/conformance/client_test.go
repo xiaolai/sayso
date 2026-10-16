@@ -170,7 +170,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 	if err != nil {
 		return append(p, "record: "+err.Error())
 	}
-	return append(p, w.check(rest, "", "", secret.Token{}, "", codexauth.Info{}, rec, 0, "")...)
+	return append(p, w.check(rest, "", nil, secret.Token{}, "", codexauth.Info{}, rec, 0)...)
 }
 
 func checkClientEvent(i int, got codexapp.Event, want map[string]any, expand *strings.Replacer) []string {

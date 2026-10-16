@@ -93,6 +93,8 @@ with more room for an instrumented or debug build.
 | `outbound` | every message the fake read, in order: its `method`, or `refusal:<id>` for an answer to a server request |
 | `refreshCalls` | `getAuthStatus` calls with `refreshToken: true` so far |
 | `notInDescription` | strings that no error description or log line may contain |
+| `inDescription` | strings the error description must contain |
+| `retryAt` | when the error says the next refresh may run, in Unix seconds (`null`: it names no time) |
 
 A client case has `setup.client` and drives the app-server client itself, started with the fake at
 `$binDir/codex`, the case's environment and timeout: `handler` (`record`: keep every event; `block`: never return

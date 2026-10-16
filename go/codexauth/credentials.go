@@ -99,7 +99,9 @@ type state struct {
 	refused string
 	backoff time.Duration
 	retryAt time.Time
-	info    Info
+	// lastFailure is the refresh failure that started the backoff, reported as the cause of each call it refuses.
+	lastFailure error
+	info        Info
 }
 
 // New validates cfg and returns credentials that fetch on first use.
@@ -260,7 +262,9 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		return secret.Token{}, fail(StateExpired, "the token in auth.json is expiring, and the file source cannot refresh", nil)
 	}
 	if c.cfg.Now().Before(c.retryAt) {
-		return secret.Token{}, fail(StateExpired, "the last refresh failed; the next attempt waits for the backoff", nil)
+		e := fail(StateExpired, "the last refresh failed; the next attempt waits for the backoff", c.lastFailure)
+		e.RetryAt = c.retryAt
+		return secret.Token{}, e
 	}
 	tok, err := c.refresh(ctx)
 	if err == nil && !c.fresh(tok) {
@@ -278,13 +282,16 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 			c.backoff = min(2*c.backoff, backoffMax)
 		}
 		c.retryAt = c.cfg.Now().Add(c.backoff) // from the failure, so a slow attempt does not use up the wait
+		c.lastFailure = err
 		var e *Error
 		if errors.As(err, &e) && signInChanged(e.State) {
 			return secret.Token{}, e // the refresh reply named another sign-in: classified as in step 3
 		}
-		return secret.Token{}, fail(StateExpired, "the refresh did not renew the sign-in", err)
+		failed := fail(StateExpired, "the refresh did not renew the sign-in", err)
+		failed.RetryAt = c.retryAt
+		return secret.Token{}, failed
 	}
-	c.backoff, c.retryAt, c.refused = 0, time.Time{}, ""
+	c.backoff, c.retryAt, c.lastFailure, c.refused = 0, time.Time{}, nil, ""
 	c.cur = &tok
 	c.refreshes.Add(1)
 	return tok, nil
