@@ -1,5 +1,5 @@
 {
- "count": 751,
+ "count": 752,
  "fixtures": [
   {
    "id": "app-ready",
@@ -1143,6 +1143,12 @@
   },
   {
    "id": "event-usage-count-int64",
+   "file": "events/events.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "event-usage-counts-int64-range",
    "file": "events/events.json",
    "component": "session",
    "requires": []

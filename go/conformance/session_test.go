@@ -141,7 +141,7 @@ func observe(ev realtime.Event) map[string]any {
 		m["responseId"], m["delta"] = e.ResponseID, e.Delta
 	case realtime.ResponseDone:
 		m["responseId"], m["status"], m["statusReason"], m["metadata"] = e.ResponseID, string(e.Status), e.StatusReason, e.Metadata
-		m["usage"] = map[string]int{
+		m["usage"] = map[string]int64{
 			"inputTokens": e.Usage.InputTokens, "outputTokens": e.Usage.OutputTokens, "inputTextTokens": e.Usage.InputTextTokens,
 			"outputTextTokens": e.Usage.OutputTextTokens, "outputAudioTokens": e.Usage.OutputAudioTokens,
 		}

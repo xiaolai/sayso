@@ -48,7 +48,7 @@ is `session_expired`, `invalid_api_key` or `session_not_found`, or its type is `
 | `response.created` | `response.id` | response id, metadata |
 | `response.output_audio.delta` | `response_id`, `delta` (base64) | response id, PCM bytes |
 | `response.output_audio_transcript.delta` | `response_id`, `delta` | response id, text |
-| `response.done` | `response.id`, `response.status` ∈ completed, failed, incomplete, cancelled | id, status, `status_details.reason`, token usage, metadata |
+| `response.done` | `response.id`, `response.status` ∈ completed, failed, incomplete, cancelled | id, status, `status_details.reason`, token usage (signed 64-bit counts), metadata |
 | `rate_limits.updated` | `rate_limits[].remaining` | name, limit, remaining, reset seconds per entry |
 | `error` | `error.type` | the classified error |
 | `input_audio_buffer.committed` | `item_id` | item id |
