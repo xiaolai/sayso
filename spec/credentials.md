@@ -82,8 +82,10 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   reader never waits for the handler; a reply may reach its caller before the handler has seen the events written
   before it. Events still queued beyond 8 MiB (a handler that does not keep up) are `codex-error`, which fails the
   client. Once the client has failed nothing more is queued, but what was queued is still delivered; after close
-  begins, no event that has not started is delivered. Formatting an event shows its kind, its scrubbed method and the
-  size of its params, never the params. Without a handler, notifications are ignored as before. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
+  begins, no event that has not started is delivered. Formatting an event, by any path (in Go every verb, a wrapper
+  field of any visibility, JSON and structured logs; reflection cannot reach the params either), shows its kind, its
+  method scrubbed and quoted with every unprintable character escaped as Go's `strconv.Quote` does, and the size of
+  its params, never the params. Without a handler, notifications are ignored as before. Stderr is kept up to 64 KiB, scrubbed, for diagnostics a caller chooses to show; it is never written to a log line,
   because the scrubber cannot recognise every credential format.
   Every call has a caller-supplied timeout, which bounds writing the request as well as waiting for the reply (a
   child that stops reading cannot hold a call); expiry is `codex-error`.

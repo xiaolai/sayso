@@ -77,8 +77,9 @@ public struct AuthStatus: Sendable, Equatable, CustomStringConvertible, CustomDe
 }
 
 /// A message from the child that is not a reply: a notification, or a server request, which the client has already
-/// answered with an error (``isServerRequest``). Formatting and reflection show the kind, the scrubbed method and the
-/// size of ``params``, never the params themselves: a notification may carry what the user said, or a credential.
+/// answered with an error (``isServerRequest``). Formatting and reflection show the kind, the method scrubbed and
+/// escaped (so a control character in it cannot forge a log line or reach a terminal) and the size of ``params``,
+/// never the params themselves: a notification may carry what the user said, or a credential.
 public struct AppServerEvent: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible,
     CustomReflectable
 {
@@ -106,15 +107,49 @@ public struct AppServerEvent: Sendable, Equatable, CustomStringConvertible, Cust
     }
 
     public var description: String {
-        "AppServerEvent{\(isServerRequest ? "server request" : "notification") \(Secret.scrub(method)), \(params.count) bytes}"
+        "AppServerEvent{\(isServerRequest ? "server request" : "notification") \(Self.quoted(Secret.scrub(method))), \(params.count) bytes}"
     }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
         Mirror(
             self,
             children: [
-                "method": Secret.scrub(method), "params": "\(params.count) bytes", "isServerRequest": isServerRequest,
+                "method": Self.quoted(Secret.scrub(method)), "params": "\(params.count) bytes",
+                "isServerRequest": isServerRequest,
             ], displayStyle: .struct)
+    }
+
+    /// `s` in double quotes, with a quote, a backslash and every scalar that is not printable (controls, format
+    /// characters such as a bidirectional override, separators other than the space) escaped, as Go's strconv.Quote
+    /// writes them.
+    static func quoted(_ s: String) -> String {
+        var out = "\""
+        for u in s.unicodeScalars {
+            switch u {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\u{07}": out += "\\a"
+            case "\u{08}": out += "\\b"
+            case "\u{0C}": out += "\\f"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case "\u{0B}": out += "\\v"
+            default:
+                if u.value < 0x20 || u.value == 0x7F {
+                    out += "\\x" + String(format: "%02x", u.value)
+                    continue
+                }
+                switch u.properties.generalCategory {
+                case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate, .unassigned, .privateUse,
+                    .spaceSeparator where u != " ":
+                    out += u.value <= 0xFFFF
+                        ? "\\u" + String(format: "%04x", u.value) : "\\U" + String(format: "%08x", u.value)
+                default: out.unicodeScalars.append(u)
+                }
+            }
+        }
+        return out + "\""
     }
 }
 

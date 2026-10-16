@@ -148,7 +148,7 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 		case "eventSequence":
 			for i, e := range got {
 				var params map[string]any
-				if err := json.Unmarshal(e.Params, &params); err != nil || !same(params[v.(string)], i) {
+				if err := json.Unmarshal(e.Params(), &params); err != nil || !same(params[v.(string)], i) {
 					p = append(p, fmt.Sprintf("event %d out of order", i))
 					break
 				}
@@ -168,18 +168,18 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 
 func checkClientEvent(i int, got codexapp.Event, want map[string]any, expand *strings.Replacer) []string {
 	var p []string
-	if got.Method != want["method"] {
-		p = append(p, fmt.Sprintf("event %d is %s, want %v", i, got.Method, want["method"]))
+	if got.Method() != want["method"] {
+		p = append(p, fmt.Sprintf("event %d is %s, want %v", i, got.Method(), want["method"]))
 	}
-	if req, _ := want["serverRequest"].(bool); got.Request != req {
-		p = append(p, fmt.Sprintf("event %d: server request %v, want %v", i, got.Request, req))
+	if req, _ := want["serverRequest"].(bool); got.Request() != req {
+		p = append(p, fmt.Sprintf("event %d: server request %v, want %v", i, got.Request(), req))
 	}
-	if none, _ := want["noParams"].(bool); none && got.Params != nil {
+	if none, _ := want["noParams"].(bool); none && got.Params() != nil {
 		p = append(p, fmt.Sprintf("event %d has params", i))
 	}
 	if wantParams, ok := want["params"]; ok {
 		var params any
-		if got.Params == nil || json.Unmarshal(got.Params, &params) != nil || !same(params, expandAll(wantParams, expand)) {
+		if got.Params() == nil || json.Unmarshal(got.Params(), &params) != nil || !same(params, expandAll(wantParams, expand)) {
 			p = append(p, fmt.Sprintf("event %d params differ", i))
 		}
 	}
@@ -210,7 +210,7 @@ func expandAll(v any, r *strings.Replacer) any {
 func methods(events []codexapp.Event) string {
 	names := make([]string, len(events))
 	for i, e := range events {
-		names[i] = e.Method
+		names[i] = e.Method()
 	}
 	return strings.Join(names, ",")
 }

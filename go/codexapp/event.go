@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/xiaolai/sayso/go/internal/wire"
@@ -15,23 +16,50 @@ import (
 const eventCap = 2 * maxLine
 
 // Event is a message from the child that is not a reply: a notification, or a server request, which the client has
-// already answered with an error (Request). Formatting shows the kind, the scrubbed method and the size of Params,
-// never Params itself: a notification may carry what the user said, or a credential.
-type Event struct {
-	Method string
-	// Params is the params member as the child sent it, strict JSON; nil when absent (a "params": null is "null").
-	Params json.RawMessage
-	// Request is set for a server request (it had an id), which was refused before the event was queued.
-	Request bool
+// already answered with an error (Request). Its contents are held where neither formatting, by any verb and through
+// any wrapper, nor JSON, slog or reflection can reach them; Method, Params and Request read them. Formatting shows
+// the kind, the scrubbed and escaped method and the size of the params, never the params: a notification may carry
+// what the user said, or a credential.
+type Event struct{ get func() eventData }
+
+type eventData struct {
+	method  string
+	params  json.RawMessage
+	request bool
 }
 
-// String shows the kind, the scrubbed method and the size of Params.
+func newEvent(method string, params json.RawMessage, request bool) Event {
+	d := eventData{method, params, request}
+	return Event{get: func() eventData { return d }}
+}
+
+func (e Event) data() eventData {
+	if e.get == nil {
+		return eventData{}
+	}
+	return e.get()
+}
+
+// Method is the method the child sent, verbatim.
+func (e Event) Method() string { return e.data().method }
+
+// Params is a copy of the params member exactly as the child wrote it, strict JSON; nil when absent (a
+// "params": null is "null").
+func (e Event) Params() json.RawMessage { return slices.Clone(e.data().params) }
+
+// Request reports a server request (it had an id), which was refused before the event was queued.
+func (e Event) Request() bool { return e.data().request }
+
+// String shows the kind, the method scrubbed and quoted (so a control character in it cannot forge a log line or
+// reach a terminal), and the size of the params.
 func (e Event) String() string {
+	d := e.data()
 	kind := "notification"
-	if e.Request {
+	if d.request {
 		kind = "server request"
 	}
-	return "codexapp.Event{" + kind + " " + secret.Scrub(e.Method) + ", " + strconv.Itoa(len(e.Params)) + " bytes}"
+	return "codexapp.Event{" + kind + " " + strconv.Quote(secret.Scrub(d.method)) + ", " + strconv.Itoa(len(d.params)) +
+		" bytes}"
 }
 
 // GoString redacts like String.
@@ -42,6 +70,9 @@ func (e Event) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(e.String())) 
 
 // LogValue redacts like String.
 func (e Event) LogValue() slog.Value { return slog.StringValue(e.String()) }
+
+// MarshalJSON redacts like String, so an Event inside a value a JSON log handler encodes shows no params.
+func (e Event) MarshalJSON() ([]byte, error) { return json.Marshal(e.String()) }
 
 // queueEvent hands one notification or server request to the event goroutine. Without a handler it does nothing, so
 // a notification is ignored as before. A notification whose method is absent or not a string is ignored too. Events
@@ -66,7 +97,7 @@ func (k *core) queueEvent(m wire.Object, request bool) {
 	}
 	over := k.eventBytes+size > eventCap
 	if !over {
-		k.events = append(k.events, Event{Method: method, Params: params, Request: request})
+		k.events = append(k.events, newEvent(method, params, request))
 		k.eventBytes += size
 	}
 	k.mu.Unlock()
@@ -104,7 +135,8 @@ func (k *core) eventLoop() {
 			e := k.events[0]
 			k.events[0] = Event{}
 			k.events = k.events[1:]
-			k.eventBytes -= len(e.Method) + len(e.Params)
+			d := e.data()
+			k.eventBytes -= len(d.method) + len(d.params)
 			k.mu.Unlock()
 			k.onEvent(e)
 		}
