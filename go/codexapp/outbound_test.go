@@ -96,6 +96,22 @@ func TestCallBetweenEarlierAndLaterRefusals(t *testing.T) {
 	}
 }
 
+// A real answer to a server request read after a request was queued is written after it: refuse admits the answer
+// behind whatever is already queued.
+func TestLaterAnswerIsWrittenAfterAQueuedRequest(t *testing.T) {
+	k, r, start := bareCore(t)
+	done := sendAsync(t, k, map[string]string{"call": "A"})
+	recv(t, "the answer to be queued", refuseAsync(t, k, "srv-1"))
+	start()
+	got := readLines(t, r, 2)
+	if got[0] != `{"call":"A"}` || !strings.Contains(got[1], `"srv-1"`) || !strings.Contains(got[1], "-32601") {
+		t.Errorf("written %q; want the call, then the answer to srv-1", got)
+	}
+	if err := recv(t, "the send", done); err != nil {
+		t.Errorf("send: %v", err)
+	}
+}
+
 // A failure while a write is blocked on a child that stopped reading interrupts it: the caller returns the failure at
 // once, not a timeout at its deadline.
 func TestFailureInterruptsABlockedWrite(t *testing.T) {
@@ -197,21 +213,27 @@ func TestAnswerIsAdmittedBeforeItIsEncoded(t *testing.T) {
 func TestWriterWaitsAtAnAnswerBeingEncoded(t *testing.T) {
 	k, r, start := bareCore(t)
 	admitted, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	free := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(free) // a failed assertion must not leave refuse blocked
 	k.testRefusalAdmitted = func() { close(admitted); <-release }
+	waiting := make(chan struct{}, 8)
+	k.testWriterWaiting = func() { waiting <- struct{}{} }
 	refused := refuseAsync(t, k, "srv-1")
-	<-admitted
+	recv(t, "the answer's admission", admitted)
 	start()
-	done := sendAsync(t, k, map[string]string{"call": "B"}) // queued behind the slot, not written past it
+	done := sendAsync(t, k, map[string]string{"call": "B"}) // its wake-up brings the writer to the slot
+	recv(t, "the writer to reach the answer's slot", waiting)
 	if q := queuedLines(k); len(q) != 2 || q[0] != "" {
-		t.Fatalf("queue %q while the answer is encoded; want its empty slot, then the call", q)
+		t.Fatalf("queue %q while the writer waits at the answer; want its empty slot, then the call", q)
 	}
-	close(release)
-	<-refused
+	free()
+	recv(t, "the answer to be encoded", refused)
 	got := readLines(t, r, 2)
 	if !strings.Contains(got[0], `"srv-1"`) || got[1] != `{"call":"B"}` {
 		t.Errorf("written %q; want the answer to srv-1, then the call", got)
 	}
-	if err := <-done; err != nil {
+	if err := recv(t, "the send", done); err != nil {
 		t.Errorf("send: %v", err)
 	}
 }

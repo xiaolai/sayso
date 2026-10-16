@@ -295,8 +295,13 @@ func TestEventsHeldAtAnOverflowAreDelivered(t *testing.T) {
 	_ = c.Close()
 	goleak.VerifyNone(t, baseline) // the event goroutine has ended: the count is final
 	seen := r.seen()
-	if len(seen) != maxEvents || seen[0] != "e0" || seen[maxEvents-1] != "e"+strconv.Itoa(maxEvents-1) {
-		t.Errorf("delivered %d events (first %q, last %q), want e0..e%d", len(seen), seen[0], seen[len(seen)-1], maxEvents-1)
+	if len(seen) != maxEvents {
+		t.Fatalf("delivered %d events, want %d", len(seen), maxEvents)
+	}
+	for i, m := range seen {
+		if want := "e" + strconv.Itoa(i); m != want {
+			t.Fatalf("event %d is %q, want %q", i, m, want)
+		}
 	}
 }
 

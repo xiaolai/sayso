@@ -167,6 +167,7 @@ type core struct {
 	// before its bytes are encoded, testEventAdmitted after an event is admitted and before the handler is called.
 	testRefusalAdmitted func()
 	testEventAdmitted   func()
+	testWriterWaiting   func() // runs when writeLoop stops at an answer still being encoded
 }
 
 type response struct {
@@ -503,6 +504,9 @@ func (k *core) writeLoop() {
 			o := k.out[0]
 			if o.state == outReserved { // an answer still being encoded: refuse wakes us when it is in
 				k.mu.Unlock()
+				if k.testWriterWaiting != nil {
+					k.testWriterWaiting()
+				}
 				break
 			}
 			k.out[0] = nil
