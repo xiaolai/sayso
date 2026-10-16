@@ -1,5 +1,5 @@
 {
- "count": 976,
+ "count": 1002,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5678,6 +5678,170 @@
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []
+  },
+  {
+   "id": "bound-malformed-group",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-malformed-sign",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-malformed-percent",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-english-rescan",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-english-phrase-rescan",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-domain-quadratic",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-domain-middle",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-han-repeat-en",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-han-repeat-zh",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-hyphen-chain",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-dash-chain",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-domain-hyphen-labels",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-quotation-marks",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-sentence-punctuation",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-sentence-punctuation-mark",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-free-dashes",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-number-word-codes",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-mark-run",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-spaced-signs",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-double-mark-quotes",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-unspaced-marks",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-measurement-marks",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "bound-spellout-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "bound-spellout-groups",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "bound-spellout-long-group",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:fr"
+   ]
+  },
+  {
+   "id": "bound-spellout-compounds",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": [
+    "spellout:de"
+   ]
   },
   {
    "id": "ws-close-1006",

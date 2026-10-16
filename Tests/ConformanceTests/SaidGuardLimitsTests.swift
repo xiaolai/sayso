@@ -3,12 +3,12 @@ import SaidGuard
 import XCTest
 
 final class SaidGuardLimitsTests: XCTestCase {
-    /// Inputs that once crashed the generator or took seconds under the size cap (Go's limits_test.go). Each must
-    /// return false, without crashing, within the bound. The bound is loose on purpose: an earlier memo-table matcher
-    /// took seconds here, so it separates the algorithms without timing the machine; a debug build gets more room. The
-    /// time is this thread's CPU time, so a loaded machine does not fail it (wall time measured 5–12 s at load 140
-    /// where the CPU time was 0.9 s).
-    func testBounds() {
+    /// The bound- fixtures are inputs that once crashed the generator or took seconds under the size cap; the
+    /// conformance suite checks that each returns false (spec/fixtures.md). Here each must also return within the
+    /// bound. The bound is loose on purpose: an earlier memo-table matcher took seconds on such inputs, so it separates
+    /// the algorithms without timing the machine; a debug build gets more room. The time is this thread's CPU time, so a
+    /// loaded machine does not fail it (wall time measured 5–12 s at load 140 where the CPU time was 0.9 s).
+    func testBounds() throws {
         func cpu() -> Double {
             var t = timespec()
             clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)
@@ -19,47 +19,19 @@ final class SaidGuardLimitsTests: XCTestCase {
         #else
             let bound = 5.0
         #endif
-        let cases: [(name: String, script: String, transcript: String)] = [
-            ("malformed-group", "0.1,000", "wrong"),
-            ("malformed-sign", "-,", "wrong"),
-            ("malformed-percent", "%1,0000%", "wrong"),
-            ("english-rescan", String(repeating: "one ", count: 16383), "wrong"),
-            ("english-phrase-rescan", String(repeating: "one hundred and ", count: 4095), "wrong"),
-            ("domain-quadratic", String(repeating: "dot.dot ", count: 8191), String(repeating: "dot ", count: 16382) + "x"),
-            ("domain-middle", String(repeating: "dot.dot ", count: 5000), String(repeating: "dot ", count: 12500) + "x"),
-            ("han-repeat", String(repeating: "一亿", count: 10000), "wrong"),
-            ("hyphen-chain", String(repeating: "ab", count: 8000), String(repeating: "a-b-", count: 8000) + "x"),
-            ("dash-chain", String(repeating: "1-", count: 32767) + "1", "wrong"),
-            (
-                "domain-hyphen-labels", String(repeating: "e-mail.", count: 4000) + "com",
-                String(repeating: "email dot e mail dot ", count: 2000) + "x"
-            ),
-            ("quotation-marks", String(repeating: "‘a’ b ", count: 6000), String(repeating: "a’ b ", count: 5999) + "x"),
-            // A sentence's final punctuation looks past the run that follows it for a closing mark: once, not per mark.
-            ("sentence-punctuation", String(repeating: "!", count: 65535) + "a", "wrong"),
-            ("sentence-punctuation-mark", String(repeating: ".", count: 65533) + "’", "wrong"),
-            ("free-dashes", String(repeating: "a - ", count: 16384), String(repeating: "a ", count: 16383) + "x"),
-            ("number-word-codes", String(repeating: "TEN ", count: 16384), "wrong"),
-            ("mark-run", "五" + String(repeating: "’", count: 21000), "wrong"),
-            ("spaced-signs", String(repeating: "- 5 ", count: 16000), "wrong"),
-            ("double-mark-quotes", String(repeating: "''a'' ", count: 10000), "wrong"),
-            ("unspaced-marks", String(repeating: "甲’乙 - 丙 = ‘好’ ", count: 2000), "wrong"),
-            ("measurement-marks", String(repeating: "5'10\" 3'' -五 ", count: 3000), "wrong"),
-            ("spellout-words", String(repeating: "vingt et un ", count: 5000), "wrong"),
-            ("spellout-groups", String(repeating: "1 000 ", count: 10000), "wrong"),
-            ("spellout-long-group", "1" + String(repeating: " 000", count: 16000), "wrong"),
-            ("spellout-compounds", String(repeating: "zweitausendvierundzwanzig ", count: 2500), "wrong"),
-        ]
+        let cases = try Fixtures.load("said-guard").filter { $0.id.hasPrefix("bound-") }
+        XCTAssertFalse(cases.isEmpty, "no bound- fixtures to time")
         for c in cases {
-            XCTAssertLessThanOrEqual(c.script.utf8.count, saidGuardMaxBytes, "\(c.name) would not exercise the matcher")
-            XCTAssertLessThanOrEqual(c.transcript.utf8.count, saidGuardMaxBytes, "\(c.name) would not exercise the matcher")
+            guard let script = c.object["script"] as? String, let transcript = c.object["transcript"] as? String,
+                let language = c.object["language"] as? String
+            else { throw FixtureError("\(c.id): bad case") }
+            XCTAssertLessThanOrEqual(script.utf8.count, saidGuardMaxBytes, "\(c.id) would not exercise the matcher")
+            XCTAssertLessThanOrEqual(transcript.utf8.count, saidGuardMaxBytes, "\(c.id) would not exercise the matcher")
             let start = cpu()
-            var got = saidMatches(c.transcript, c.script, language: c.name == "spellout-compounds" ? "de" : c.name.hasPrefix("spellout") ? "fr" : "en")
-            if c.name == "han-repeat" { got = got || saidMatches(c.transcript, c.script, language: "zh") }
+            _ = saidMatches(transcript, script, language: language)
             let elapsed = cpu() - start
-            XCTAssertFalse(got, "\(c.name): matched, want false")
-            XCTAssertLessThan(elapsed, bound, "\(c.name): took \(elapsed) s")
-            print("\(c.name): \(String(format: "%.3f", elapsed)) s")
+            XCTAssertLessThan(elapsed, bound, "\(c.id): took \(elapsed) s")
+            print("\(c.id): \(String(format: "%.3f", elapsed)) s")
         }
     }
 

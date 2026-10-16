@@ -1,57 +1,47 @@
 package saidguard
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xiaolai/sayso/go/internal/fixtures"
 )
 
-// Inputs that once crashed the generator or took seconds under the size cap. Each must return false, without
-// panicking, well inside a second. The bound is loose on purpose: an earlier memo-table matcher took
-// 3.2 and 5.7 seconds here, so it separates the algorithms without timing the machine. The time is CPU time
-// (cpuTime), so a loaded machine does not fail it: at load 140 english-rescan took 10.2 s of wall time.
+// The bound- fixtures are inputs that once crashed the generator or took seconds under the size cap; the conformance
+// suite checks that each returns false (spec/fixtures.md). Here each must also return well inside a second. The bound
+// is loose on purpose: an earlier memo-table matcher took 3.2 and 5.7 seconds on such inputs, so it separates the
+// algorithms without timing the machine. The time is CPU time (cpuTime), so a loaded machine does not fail it: at
+// load 140 bound-english-rescan took 10.2 s of wall time.
 func TestBounds(t *testing.T) {
-	cases := []struct{ name, script, transcript string }{
-		{"malformed-group", "0.1,000", "wrong"},
-		{"malformed-sign", "-,", "wrong"},
-		{"malformed-percent", "%1,0000%", "wrong"},
-		{"english-rescan", strings.Repeat("one ", 16383), "wrong"},
-		{"english-phrase-rescan", strings.Repeat("one hundred and ", 4095), "wrong"},
-		{"domain-quadratic", strings.Repeat("dot.dot ", 8191), strings.Repeat("dot ", 16382) + "x"},
-		{"domain-middle", strings.Repeat("dot.dot ", 5000), strings.Repeat("dot ", 12500) + "x"},
-		{"han-repeat", strings.Repeat("一亿", 10000), "wrong"},
-		{"hyphen-chain", strings.Repeat("ab", 8000), strings.Repeat("a-b-", 8000) + "x"},
-		{"dash-chain", strings.Repeat("1-", 32767) + "1", "wrong"},
-		{"domain-hyphen-labels", strings.Repeat("e-mail.", 4000) + "com", strings.Repeat("email dot e mail dot ", 2000) + "x"},
-		{"quotation-marks", strings.Repeat("‘a’ b ", 6000), strings.Repeat("a’ b ", 5999) + "x"},
-		// A sentence's final punctuation looks past the run that follows it for a closing mark: once, not per mark.
-		{"sentence-punctuation", strings.Repeat("!", 65535) + "a", "wrong"},
-		{"sentence-punctuation-mark", strings.Repeat(".", 65533) + "’", "wrong"},
-		{"free-dashes", strings.Repeat("a - ", 16384), strings.Repeat("a ", 16383) + "x"},
-		{"number-word-codes", strings.Repeat("TEN ", 16384), "wrong"},
-		{"mark-run", "五" + strings.Repeat("’", 21000), "wrong"},
-		{"spaced-signs", strings.Repeat("- 5 ", 16000), "wrong"},
-		{"double-mark-quotes", strings.Repeat("''a'' ", 10000), "wrong"},
-		{"unspaced-marks", strings.Repeat("甲’乙 - 丙 = ‘好’ ", 2000), "wrong"},
-		{"measurement-marks", strings.Repeat("5'10\" 3'' -五 ", 3000), "wrong"},
+	cases, err := fixtures.Load("said-guard")
+	if err != nil {
+		t.Fatal(err)
 	}
+	timed := 0
 	for _, c := range cases {
-		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {
-			t.Fatalf("%s: input exceeds the cap and would not exercise the matcher", c.name)
+		if !strings.HasPrefix(c.ID, "bound-") {
+			continue
+		}
+		var f struct{ Script, Transcript, Language string }
+		if err := json.Unmarshal(c.Raw, &f); err != nil {
+			t.Fatalf("%s: %v", c.ID, err)
+		}
+		if len(f.Script) > MaxBytes || len(f.Transcript) > MaxBytes {
+			t.Fatalf("%s: input exceeds the cap and would not exercise the matcher", c.ID)
 		}
 		start := cpuTime()
-		got := Matches(c.transcript, c.script, "en")
-		if c.name == "han-repeat" {
-			got = got || Matches(c.transcript, c.script, "zh")
-		}
+		Matches(f.Transcript, f.Script, f.Language)
 		elapsed := cpuTime() - start
-		if got {
-			t.Errorf("%s: matched, want false", c.name)
-		}
 		if elapsed > raceFactor*time.Second {
-			t.Errorf("%s: took %v", c.name, elapsed)
+			t.Errorf("%s: took %v", c.ID, elapsed)
 		}
-		t.Logf("%s: %v", c.name, elapsed)
+		t.Logf("%s: %v", c.ID, elapsed)
+		timed++
+	}
+	if timed == 0 {
+		t.Fatal("no bound- fixtures to time")
 	}
 }
 
