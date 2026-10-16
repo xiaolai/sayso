@@ -19,7 +19,7 @@ import (
 
 // CanonVersion identifies the canonicaliser's behaviour. Bump it on any change
 // to Canon's output or to Equivalent's verdicts: cache keys and verification provenance record it.
-const CanonVersion = 15 // 15: Equivalent reads every combination of a piece's compounds, through a lattice of its spans
+const CanonVersion = 16 // 16: Equivalent reports false past MaxBytes or its work budget; 15: it reads every combination of a piece's compounds, through a lattice of its spans
 
 // Canon canonicalises s into comparison tokens : NFKC and width
 // folding, abbreviation expansion, lower case, numbers to English words (one
@@ -37,7 +37,46 @@ func Canon(s string) []string { return texts(canon(s)) }
 // or after punctuation: "1999; twenty ten" holds two years, "2010, 20" no pair
 // "ten twenty". Each side is a graph of its readings, built without listing the
 // combinations of its choices (lattice.go), and the two are walked together.
-func Equivalent(a, b string) bool { return readings(a).meets(readings(b)) }
+//
+// Equivalent takes untrusted text, so it fails closed, reporting false as for texts that differ, on a text longer than
+// MaxBytes and on a call that would do more than equivalentWork units of work (see budget).
+func Equivalent(a, b string) bool {
+	if len(a) > MaxBytes || len(b) > MaxBytes {
+		return false
+	}
+	w := &budget{left: equivalentWork}
+	if !w.spend(len(a) + len(b)) {
+		return false
+	}
+	ga, ok := readings(a, w)
+	if !ok {
+		return false
+	}
+	gb, ok := readings(b, w)
+	return ok && ga.meets(gb, w)
+}
+
+// MaxBytes is the longest text Equivalent compares, as saidguard.MaxBytes is the longest the said guard reads.
+const MaxBytes = 64 << 10
+
+// equivalentWork is the work one Equivalent call may do, in budget units: 4,194,304. Two 64 KiB texts of prose with a
+// compound or a number in every other word need about 350,000, and the costliest real shape measured, runs of
+// hyphenated zeros, about 1,300,000 (TestEquivalentWorstCase).
+const equivalentWork = 1 << 22
+
+// budget counts the work of one Equivalent call beyond Canon's own passes over the two texts, which are linear in
+// their length. A unit is a byte of input; a span, or a rune of a span's text that Canon's text passes read (a word of
+// h compound hyphens has (h+1)(h+2)/2 spans, counted before any is built); a graph node, with the letters its state
+// holds; a field read along a span; a token emitted; or a pair of nodes or of arcs compared in meets. Every loop of
+// readings and meets spends before it works, and none does more than a constant amount of work or allocation per unit
+// spent (the ways a span's fields can go are at most a constant number: each guessed reading is checked within a few
+// tokens), so the time and memory of one call are linear in MaxBytes and equivalentWork whatever the input.
+type budget struct{ left int }
+
+func (b *budget) spend(n int) bool {
+	b.left -= n
+	return b.left >= 0
+}
 
 // tok is a Canon token, and whether punctuation stood before it in the text: Equivalent reads a year pair after a
 // number only across punctuation.
@@ -56,14 +95,18 @@ func texts(toks []tok) []string {
 
 // readings is the graph of the token strings s may canonicalise to: s is cut where Canon reads the text on either side
 // on its own (pieces), and each piece adds the graph of its readings (pieceGraph).
-func readings(s string) *graph {
+// It reports false when the budget runs out.
+func readings(s string, w *budget) (*graph, bool) {
 	g := &graph{next: [][]arc{nil}}
 	at := 0
 	for _, piece := range pieces(s) {
-		at = g.pieceGraph(at, piece)
+		var ok bool
+		if at, ok = g.pieceGraph(at, piece, w); !ok {
+			return nil, false
+		}
 	}
 	g.end = at
-	return g
+	return g, true
 }
 
 // graph is an automaton over tokens: a path from node 0 to end spells one reading. An arc with no token is empty.
@@ -99,8 +142,8 @@ func (g *graph) path(a, b int, words []string) {
 }
 
 // meets reports whether g and h share a reading: a walk over pairs of nodes, each step one token on both sides or an
-// empty arc on one.
-func (g *graph) meets(h *graph) bool {
+// empty arc on one. It reports false when the budget runs out.
+func (g *graph) meets(h *graph, w *budget) bool {
 	type pair struct{ x, y int }
 	seen := map[pair]bool{}
 	var todo []pair
@@ -116,6 +159,9 @@ func (g *graph) meets(h *graph) bool {
 		todo = todo[:len(todo)-1]
 		if p.x == g.end && p.y == h.end {
 			return true
+		}
+		if !w.spend(1 + len(g.next[p.x])*(1+len(h.next[p.y]))) {
+			return false
 		}
 		for _, e := range g.next[p.x] {
 			if e.tok == "" {
@@ -196,7 +242,9 @@ func separable(left, right string) bool {
 	left = strings.TrimRightFunc(left, func(r rune) bool { return strings.ContainsRune(".,;:!?)]}\"”»…", r) })
 	right = strings.TrimLeftFunc(right, func(r rune) bool { return strings.ContainsRune("([{\"“«¿¡", r) })
 	lp, rp := strings.FieldsFunc(left, isHyphen), strings.FieldsFunc(right, isHyphen)
-	if len(lp) == 0 || len(rp) == 0 || !wordShaped(left) || !wordShaped(right) {
+	// Not cutting is always sound, so a word of many parts is never cut beside: its forms would cost its parts times its
+	// length here, and the lattice reads the larger piece within the budget.
+	if len(lp) == 0 || len(rp) == 0 || len(lp)+len(rp) > maxCutParts || !wordShaped(left) || !wordShaped(right) {
 		return false
 	}
 	var lf, rf []string // the forms at the space
@@ -230,6 +278,9 @@ func separable(left, right string) bool {
 	_, rone := edge(rf[0])
 	return !lone || !rone
 }
+
+// maxCutParts bounds the hyphen-separated parts of the two words separable reads.
+const maxCutParts = 16
 
 func wordShaped(w string) bool {
 	for _, r := range w {

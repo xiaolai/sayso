@@ -117,7 +117,11 @@ func (g *graph) language() map[string]bool {
 
 func sameLanguage(t *testing.T, s string) {
 	t.Helper()
-	got, want := readings(s).language(), enumReadings(s).language()
+	g, ok := readings(s, &budget{left: equivalentWork})
+	if !ok {
+		t.Fatalf("%q: out of budget", s)
+	}
+	got, want := g.language(), enumReadings(s).language()
 	for w := range want {
 		if !got[w] {
 			t.Fatalf("%q: the lattice lacks the reading %q", s, w)

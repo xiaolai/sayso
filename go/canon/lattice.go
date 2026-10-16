@@ -23,9 +23,13 @@ import (
 // read. A node of the output graph is a span boundary and the stages' states, so the graph grows with the spans and
 // the states reached, never with the combinations; the walk in meets compares two such graphs.
 
-// pieceGraph adds to g, from node at, the readings of piece, and returns the node they end at.
-func (g *graph) pieceGraph(at int, piece string) int {
-	in := spans(piece)
+// pieceGraph adds to g, from node at, the readings of piece, and returns the node they end at; false when the budget
+// runs out.
+func (g *graph) pieceGraph(at int, piece string, w *budget) (int, bool) {
+	in, ok := spans(piece, w)
+	if !ok {
+		return 0, false
+	}
 	end := g.node()
 	type key struct {
 		node int
@@ -38,24 +42,37 @@ func (g *graph) pieceGraph(at int, piece string) int {
 		words string
 	}
 	seen := map[arcKey]bool{}
-	path := func(a, b int, words []string) { // two ways often emit the same tokens between the same nodes
+	path := func(a, b int, words []string) bool { // two ways often emit the same tokens between the same nodes
+		if !w.spend(1 + len(words)) {
+			return false
+		}
 		k := arcKey{a, b, strings.Join(words, " ")}
 		if !seen[k] {
 			seen[k] = true
 			g.path(a, b, words)
 		}
+		return true
 	}
 	for len(todo) > 0 {
 		k := todo[len(todo)-1]
 		todo = todo[:len(todo)-1]
 		from := nodes[k]
+		// A state holds at most the letters of a run being joined; the rest is a few flags.
+		if !w.spend(1 + len(k.c.join.letters)) {
+			return 0, false
+		}
 		if k.node == in.final {
-			for _, words := range k.c.finish(0) {
-				path(from, end, words)
+			ok := true
+			k.c.finish(0, nil, func(out *emitted) { ok = ok && path(from, end, out.words()) })
+			if !ok {
+				return 0, false
 			}
 			continue
 		}
 		for _, e := range in.next[k.node] {
+			if !w.spend(1 + len(e.fields)) {
+				return 0, false
+			}
 			for _, b := range k.c.read(e.fields) {
 				to := key{e.to, b.c}
 				n, ok := nodes[to]
@@ -64,11 +81,13 @@ func (g *graph) pieceGraph(at int, piece string) int {
 					nodes[to] = n
 					todo = append(todo, to)
 				}
-				path(from, n, b.out)
+				if !path(from, n, b.out) {
+					return 0, false
+				}
 			}
 		}
 	}
-	return end
+	return end, true
 }
 
 // spanLattice: node 0 is the piece's start and final its end; next[n] are the spans from node n.
@@ -82,8 +101,9 @@ type span struct {
 	to     int
 }
 
-// spans is the lattice of piece's spans (see pieceGraph).
-func spans(piece string) spanLattice {
+// spans is the lattice of piece's spans (see pieceGraph); false when the budget runs out, which a word of many
+// hyphens does before any span is read: its spans are counted first.
+func spans(piece string, work *budget) (spanLattice, bool) {
 	rs := []rune(width.Fold.String(norm.NFKC.String(strings.ToValidUTF8(piece, " "))))
 	type word struct{ start, end int }
 	var words []word
@@ -115,6 +135,11 @@ func spans(piece string) spanLattice {
 	l.final = len(l.next)
 	first[len(words)] = l.final
 	l.next = append(l.next, nil)
+	for _, hy := range hyphens {
+		if n := len(hy) + 1; !work.spend(n * (n + 1) / 2) {
+			return spanLattice{}, false
+		}
+	}
 	for w, wd := range words {
 		hy := hyphens[w]
 		starts := append([]int{wd.start}, make([]int, len(hy))...)
@@ -124,36 +149,47 @@ func spans(piece string) spanLattice {
 		// After the word, "St" reads the next word's first letter; before a kept hyphen it reads the hyphen.
 		nextUpper := w+1 < len(words) && unicode.IsUpper(rs[words[w+1].start])
 		stops := append(slices.Clone(hy), wd.end)
+		// The word's parts in lower case, joined, so a span of ASCII letters is a substring of it, read in constant time.
+		var joined strings.Builder
+		at := make([]int, len(starts)+1)        // at[k]: where part k starts in joined
+		asciiUpTo := make([]int, len(starts)+1) // asciiUpTo[k]: how many of the parts before k are ASCII letters
+		for k := range starts {
+			part := rs[starts[k]:stops[k]]
+			at[k] = joined.Len()
+			joined.WriteString(strings.ToLower(string(part)))
+			asciiUpTo[k+1] = asciiUpTo[k]
+			if asciiLetters(part) {
+				asciiUpTo[k+1]++
+			}
+		}
+		at[len(starts)] = joined.Len()
+		lowered := joined.String()
 		for a := range starts {
-			var text []rune
-			var lower strings.Builder
-			ascii := true
 			for b := a; b <= len(hy); b++ {
 				to, upper := first[w+1], nextUpper
 				if b < len(hy) {
 					to, upper = first[w]+b+1, false
 				}
-				part := rs[starts[b]:stops[b]]
-				text = append(text, part...)
-				ascii = ascii && asciiLetters(part)
 				var f []string
-				if ascii {
-					for _, r := range part {
-						lower.WriteRune(unicode.ToLower(r))
+				// Every text pass leaves ASCII letters that are no abbreviation (three letters at most) as they are, in
+				// lower case.
+				if sub := lowered[at[a]:at[b+1]]; asciiUpTo[b+1]-asciiUpTo[a] == b+1-a && (len(sub) > 3 || !IsAbbreviation(sub)) {
+					f = []string{sub}
+				} else {
+					var text []rune
+					for k := a; k <= b; k++ {
+						text = append(text, rs[starts[k]:stops[k]]...)
 					}
-					if !IsAbbreviation(lower.String()) {
-						// Every text pass leaves ASCII letters that are no abbreviation as they are, but in lower case.
-						f = []string{lower.String()}
+					if !work.spend(len(text)) {
+						return spanLattice{}, false
 					}
-				}
-				if f == nil {
 					f = spanFields(string(text), upper)
 				}
 				l.next[first[w]+a] = append(l.next[first[w]+a], span{f, to})
 			}
 		}
 	}
-	return l
+	return l, true
 }
 
 func asciiLetters(rs []rune) bool {
@@ -200,11 +236,42 @@ type branch struct {
 	out []string
 }
 
-// read feeds a span's fields through the passes: every way they can go, with the tokens each way emits.
+// emitted is the tokens a way has emitted, newest first: ways that split share what they emitted before.
+type emitted struct {
+	word string
+	prev *emitted
+	n    int
+}
+
+func (e *emitted) add(w string) *emitted {
+	n := 1
+	if e != nil {
+		n = e.n + 1
+	}
+	return &emitted{w, e, n}
+}
+
+func (e *emitted) words() []string {
+	if e == nil {
+		return nil
+	}
+	out := make([]string, e.n)
+	for ; e != nil; e = e.prev {
+		out[e.n-1] = e.word
+	}
+	return out
+}
+
+// read feeds a span's fields through the passes: every way they can go, with the tokens each way emits. The ways
+// share what they emitted before they split, so a span of many fields costs its length.
 func (c cascade) read(fields []string) []branch {
-	cur := []branch{{c, nil}}
+	type way struct {
+		c   cascade
+		out *emitted
+	}
+	cur := []way{{c, nil}}
 	for _, f := range fields {
-		var next []branch
+		var next []way
 		for _, b := range cur {
 			if f == "\x00" {
 				b.c.mark = true
@@ -213,50 +280,47 @@ func (c cascade) read(fields []string) []branch {
 			}
 			t := tok{f, b.c.mark}
 			b.c.mark = false
-			for _, d := range b.c.flow(0, []tok{t}) {
-				next = append(next, branch{d.c, append(slices.Clone(b.out), d.out...)})
-			}
+			b.c.flow(0, []tok{t}, b.out, func(d cascade, out *emitted) { next = append(next, way{d, out}) })
 		}
 		cur = next
 	}
-	return cur
+	ways := make([]branch, len(cur))
+	for i, b := range cur {
+		ways[i] = branch{b.c, b.out.words()}
+	}
+	return ways
 }
 
-// flow pushes toks through stage k and the stages after it.
-func (c cascade) flow(k int, toks []tok) []branch {
+// flow pushes toks through stage k and the stages after it, and calls emit with each way's state and tokens.
+func (c cascade) flow(k int, toks []tok, out *emitted, emit func(cascade, *emitted)) {
+	if len(toks) == 0 {
+		emit(c, out)
+		return
+	}
 	if k == stages {
-		return []branch{{c, texts(toks)}}
-	}
-	cur := []branch{{c, nil}}
-	for _, t := range toks {
-		var next []branch
-		for _, b := range cur {
-			for _, s := range b.c.push(k, t) {
-				for _, d := range s.c.flow(k+1, s.toks) {
-					next = append(next, branch{d.c, append(slices.Clone(b.out), d.out...)})
-				}
-			}
+		for _, t := range toks {
+			out = out.add(t.text)
 		}
-		cur = next
+		emit(c, out)
+		return
 	}
-	return cur
+	st := c.push(k, toks[0])
+	for _, s := range st.s[:st.n] {
+		s.c.flow(k+1, s.toks, out, func(d cascade, o *emitted) { d.flow(k, toks[1:], o, emit) })
+	}
 }
 
 // finish ends the passes from stage k on: what each stage still holds goes through the stages after it, which then end
-// too. A way whose guess the end refutes yields nothing.
-func (c cascade) finish(k int) [][]string {
+// too, and emit is called with each way's tokens. A way whose guess the end refutes yields nothing.
+func (c cascade) finish(k int, out *emitted, emit func(*emitted)) {
 	if k == stages {
-		return [][]string{nil}
+		emit(out)
+		return
 	}
-	var out [][]string
-	for _, s := range c.end(k) {
-		for _, d := range s.c.flow(k+1, s.toks) {
-			for _, tail := range d.c.finish(k + 1) {
-				out = append(out, append(slices.Clone(d.out), tail...))
-			}
-		}
+	st := c.end(k)
+	for _, s := range st.s[:st.n] {
+		s.c.flow(k+1, s.toks, out, func(d cascade, o *emitted) { d.finish(k+1, o, emit) })
 	}
-	return out
 }
 
 type step struct {
@@ -264,86 +328,84 @@ type step struct {
 	toks []tok
 }
 
-func (c cascade) push(k int, t tok) []step {
-	one := func(c cascade, toks []tok) []step { return []step{{c, toks}} }
+// steps are the ways one token can go through one stage: at most two, a guess and its alternative.
+type steps struct {
+	s [2]step
+	n int
+}
+
+func one(c cascade, toks []tok) steps { return steps{[2]step{{c, toks}}, 1} }
+
+func (c cascade) push(k int, t tok) steps {
+	var out []tok
 	switch k {
 	case 0:
-		var out []tok
 		c.and1, out = c.and1.push(t)
-		return one(c, out)
 	case 1:
-		var out []tok
 		c.art1, out = c.art1.push(t)
-		return one(c, out)
 	case 2:
-		var steps []step
+		var st steps
 		for _, z := range c.zero1.push(t) {
 			d := c
 			d.zero1 = z.s
-			steps = append(steps, step{d, z.toks})
+			st.s[st.n] = step{d, z.toks}
+			st.n++
 		}
-		return steps
+		return st
 	case 3:
-		var out []tok
 		c.join, out = c.join.push(t)
-		return one(c, out)
 	case 4:
-		var out []tok
 		c.and2, out = c.and2.push(t)
-		return one(c, out)
 	case 5:
-		var out []tok
 		c.art2, out = c.art2.push(t)
-		return one(c, out)
 	case 6:
-		var steps []step
+		var st steps
 		for _, z := range c.zero2.push(t) {
 			d := c
 			d.zero2 = z.s
-			steps = append(steps, step{d, expandTokens(z.toks)})
+			st.s[st.n] = step{d, expandTokens(z.toks)}
+			st.n++
 		}
-		return steps
+		return st
 	default:
-		var steps []step
+		var st steps
 		for _, y := range c.year.push(t) {
 			d := c
 			d.year = y.s
-			steps = append(steps, step{d, y.toks})
+			st.s[st.n] = step{d, y.toks}
+			st.n++
 		}
-		return steps
+		return st
 	}
+	return one(c, out)
 }
 
-func (c cascade) end(k int) []step {
+func (c cascade) end(k int) steps {
 	switch k {
 	case 0:
-		return []step{{c, c.and1.end()}}
+		return one(c, c.and1.end())
 	case 1:
-		return []step{{c, c.art1.end()}}
+		return one(c, c.art1.end())
 	case 2:
-		toks, ok := c.zero1.end()
-		if !ok {
-			return nil
+		if toks, ok := c.zero1.end(); ok {
+			return one(c, toks)
 		}
-		return []step{{c, toks}}
 	case 3:
-		return []step{{c, c.join.end()}}
+		return one(c, c.join.end())
 	case 4:
-		return []step{{c, c.and2.end()}}
+		return one(c, c.and2.end())
 	case 5:
-		return []step{{c, c.art2.end()}}
+		return one(c, c.art2.end())
 	case 6:
-		toks, ok := c.zero2.end()
-		if !ok {
-			return nil
+		if toks, ok := c.zero2.end(); ok {
+			return one(c, expandTokens(toks))
 		}
-		return []step{{c, expandTokens(toks)}}
 	default:
-		if !c.year.end() {
-			return nil
+		if c.year.end() {
+			return one(c, nil)
 		}
-		return []step{{c, nil}}
 	}
+	return steps{}
 }
 
 // andStage is dropNumberAnd: an "and" after a scale word is held until the next token shows whether it is a number
