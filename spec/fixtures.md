@@ -17,7 +17,9 @@ Fixtures are data: a case says what to set up and what to observe, never how an 
 
 A `.json` file holds an array of cases; a `.jsonl` file holds one case per line. Every case has a unique `id`
 across all files and names its `component`. A case may list `requires` (capabilities); see [parity](parity.md).
-`note` explains a case and is never read by a harness.
+`note` explains a case and is never read by a harness. A member this document does not define for its component is
+refused, by `tools/manifest.py` and by every harness: no harness would read it, so the case would pass whatever it
+says.
 
 ## Conventions
 
