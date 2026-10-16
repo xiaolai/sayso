@@ -29,7 +29,7 @@ type svUnit []svSeq // the alternative readings of one script unit
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
 // reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
-const Version = 6
+const Version = 7
 
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
@@ -337,20 +337,26 @@ func svLex(s string, hanNumbers bool) []svRaw {
 // svUnquote replaces a pair of single quotation marks around words ("Say ‘hello’.", "'yes'") with an unspoken '"',
 // so the words inside are not read as elisions or possessives. An opener stands at a word start after a space, an
 // opening bracket or the start, and never before a leading elision (svElisions: "’Tis the students’ books" holds two
-// apostrophes, not a quotation); a closer at a word end before a space, punctuation or the end; a pair stays within
-// a sentence. An unpaired mark is an apostrophe ("’tis", "the students’ books", "rock ’n’ roll").
+// apostrophes, not a quotation); a closer at a word end, after any punctuation that ends the quoted words ("‘hello!’",
+// "‘yes,’"), before a space, punctuation or the end; a pair stays within a sentence, and a sentence ends at its
+// final punctuation only where no closer follows it ("‘Wait.’" is one quotation). An unpaired mark is an apostrophe
+// ("’tis", "the students’ books", "rock ’n’ roll").
 func svUnquote(rs []rune) []rune {
 	open := -1
 	for i, r := range rs {
 		if !isApostrophe(r) {
-			if strings.ContainsRune(svSentenceEnds, r) {
+			if strings.ContainsRune(svSentenceEnds, r) && !isApostrophe(svAfterPunct(rs, i+1)) {
 				open = -1
 			}
 			continue
 		}
 		opener := (i == 0 || unicode.IsSpace(rs[i-1]) || strings.ContainsRune("([{\"“«", rs[i-1])) && i+1 < len(rs) && svLetter(rs[i+1]) &&
 			!svElisionAt(rs, i+1)
-		closer := i > 0 && (svLetter(rs[i-1]) || unicode.IsMark(rs[i-1]) || svDigit(rs[i-1])) &&
+		k := i - 1
+		for k >= 0 && svInnerPunct(rs[k]) {
+			k--
+		}
+		closer := k >= 0 && (svLetter(rs[k]) || unicode.IsMark(rs[k]) || svDigit(rs[k])) &&
 			(i+1 == len(rs) || unicode.IsSpace(rs[i+1]) || strings.ContainsRune(svUnspokenPunct, rs[i+1]) && !isApostrophe(rs[i+1]))
 		switch {
 		case closer && open >= 0:
@@ -361,6 +367,23 @@ func svUnquote(rs []rune) []rune {
 		}
 	}
 	return rs
+}
+
+// svInnerPunct reports unspoken punctuation that may stand between quoted words and their closing mark ("hello!’"):
+// anything unspoken but a space or another apostrophe.
+func svInnerPunct(r rune) bool {
+	return strings.ContainsRune(svUnspokenPunct, r) && !isApostrophe(r)
+}
+
+// svAfterPunct is the first scalar from rs[i] on that is not svInnerPunct, or 0 at the end.
+func svAfterPunct(rs []rune, i int) rune {
+	for i < len(rs) && svInnerPunct(rs[i]) {
+		i++
+	}
+	if i == len(rs) {
+		return 0
+	}
+	return rs[i]
 }
 
 // svElisions are the English words written with a leading apostrophe for dropped letters ("’tis", "’em", "’n’"). A
