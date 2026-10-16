@@ -3,7 +3,6 @@
 package codexapp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -326,12 +325,28 @@ func closeAll(files ...*os.File) {
 
 // readLoop matches replies to pending calls until the child's stdout ends or misbehaves. A server request is
 // answered with an error and never acted on; it and every notification are queued for OnEvent when one is set.
+//
+// Every line is read into the reader's one buffer (lineReader) and cleared once it is handled, and the buffer is
+// cleared before a failure is recorded, so a call that returns, whatever its outcome, leaves no line of the child's
+// behind; what the child writes after a failure is read and cleared.
 func (k *core) readLoop(r io.Reader) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), maxLine+1) // a line of exactly maxLine bytes fits with its newline
+	lines := newLineReader(r)
 	var failure error
-	for sc.Scan() {
-		if !k.handle(trimJSONSpace(sc.Bytes())) {
+	for {
+		line, err := lines.next()
+		if errors.Is(err, errLineTooLong) {
+			failure = codexError("Codex app-server sent a line longer than 4 MiB", nil)
+			break
+		} else if errors.Is(err, io.EOF) {
+			failure = codexError("Codex app-server exited unexpectedly", nil)
+			break
+		} else if err != nil {
+			failure = codexError("Codex app-server output could not be read", nil)
+			break
+		}
+		ok := k.handle(trimJSONSpace(line))
+		clear(line)
+		if !ok {
 			// The line is never quoted: it may carry a credential.
 			failure = codexError("Codex app-server sent malformed JSON", nil)
 			break
@@ -340,17 +355,11 @@ func (k *core) readLoop(r io.Reader) {
 			break // the client is done (an overflow, a cut-off write, Close): nothing more is read from the stream
 		}
 	}
-	if failure == nil {
-		if err := sc.Err(); errors.Is(err, bufio.ErrTooLong) {
-			failure = codexError("Codex app-server sent a line longer than 4 MiB", nil)
-		} else if err != nil {
-			failure = codexError("Codex app-server output could not be read", nil)
-		} else {
-			failure = codexError("Codex app-server exited unexpectedly", nil)
-		}
+	lines.wipe()
+	if failure != nil { // nil when the client had already failed
+		k.fail(failure)
 	}
-	k.fail(failure)
-	_, _ = io.Copy(io.Discard, r) // keep the child from blocking on a full pipe
+	lines.drain() // keep the child from blocking on a full pipe
 }
 
 // trimJSONSpace removes JSON's own whitespace (space, tab, line feed, carriage return) from both ends, and nothing
