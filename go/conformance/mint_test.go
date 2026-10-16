@@ -29,7 +29,9 @@ type mintReply struct {
 }
 
 type mintCase struct {
+	caseHead
 	Setup struct {
+		Now             int64           `json:"now"` // the clock (spec/fixtures.md); minting reads none
 		Origin          string          `json:"origin"`
 		Session         json.RawMessage `json:"session"`
 		LifetimeSeconds int             `json:"lifetimeSeconds"`
@@ -123,7 +125,11 @@ func checkMint(t *testing.T, mc mintCase) []string {
 	sec, err := m.Secret(context.Background(), session)
 
 	want := mc.Expect
-	var p []string
+	p := unknownKeys("expect", want, "class", "secret", "expiresAt", "status", "type", "code", "param", "requestId",
+		"requests", "refreshCalls", "tokenCalls", "request", "secondAuthorization", "scrubs", "notInDescription")
+	if r, ok := want["request"].(map[string]any); ok {
+		p = append(p, unknownKeys("expect.request", r, "method", "path", "authorization", "contentType", "body")...)
+	}
 	mu.Lock()
 	requests := append([]seenRequest(nil), seen...)
 	mu.Unlock()

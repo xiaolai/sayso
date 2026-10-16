@@ -17,7 +17,9 @@ Fixtures are data: a case says what to set up and what to observe, never how an 
 
 A `.json` file holds an array of cases; a `.jsonl` file holds one case per line. Every case has a unique `id`
 across all files and names its `component`. A case may list `requires` (capabilities); see [parity](parity.md).
-`note` explains a case and is never read by a harness.
+`note` explains a case and is never read by a harness. A member this document does not define for its component is
+refused, by `tools/manifest.py` and by every harness: no harness would read it, so the case would pass whatever it
+says.
 
 ## Conventions
 
@@ -101,8 +103,9 @@ A client case has `setup.client` and drives the app-server client itself, starte
 `$binDir/codex`, the case's environment and timeout: `handler` (`record`: keep every event; `block`: never return
 until the case ends; absent: no handler), `dir` (the working directory: `work`, a new `$work` folder in the case's
 temporary folder; `relative`; `missing`; `file`; absent: none), `experimentalAPI`, and `calls` (`method`, `params`) made
-in order. Its `expect` adds `startFails`, `calls` (`ok` or `error` per call), `callError` (text every failed call's
-error contains), `events` (exactly these, in order:
+in order; a call with `typed: true` goes through the client's typed wrapper for its method instead (`account/read`:
+the plan type). Its `expect` adds `startFails`, `calls` (`ok` or `error` per call), `callError` (text every failed call's
+error contains), `typedResults` (each typed call's result, in order; `null` for one that failed), `events` (exactly these, in order:
 `method`; `params`, compared as JSON, with `$work` and `$callerCwd`, the harness's own working directory, after links
 are followed, replaced; `paramsRaw`, the exact bytes; `noParams: true` for none; `serverRequest: true`), `eventCount`,
 and `eventSequence` (the params
@@ -127,11 +130,16 @@ method, path, headers, JSON body), `secondAuthorization`, `scrubs` (strings the 
 `kind`: `close` (`code`, `reason`) → `expect.class`; `error-event` (`event`) → `expect.class`, `fatal`, `code`,
 `type`, `param`; `size` (`readLimit`, `messageBytes`) → `expect.class` (`null`: accepted); `event` (`raw`, the exact
 text) → `expect` with `type` and fields, or `protocolError` (the type the error must name; `null`: it need not name one),
-`ignored`, or `unknown` (the type). `pcmHex` is the decoded audio.
+`ignored`, or `unknown` (the type). `pcmHex` is the decoded audio. `handshake` dials a fake server that reads the
+upgrade request and answers it with `reply` (`status`, `headers`, `body`; `hold` keeps the connection open after it),
+or, with `silent: true`, never answers; `handshakeTimeoutMs` defaults to 5000. Both harnesses write the reply as
+`HTTP/1.1 <status> Fixture`, the headers in name order, `Content-Length` when there is a body, and
+`Connection: close` unless it is held. → `expect.class`, `status`, `requestId`, `code`, `withinMs` (the most the
+dial may take), `request` (`target`, the request line's target, and `authorization`), `notInDescription`.
 
 ### `pcm16` (`pcm16.json`)
 
-`op`: `encode` (`input`, with `"NaN"`, `"Infinity"`, `"-Infinity"` as strings) → `expectSamples`, `expectHex`;
-`decode` (`hex`, `sliceFrom`) → `expectSamples` (each float is the sample / 32768); `wav` (`rate`, `pcmHex`) →
+`op`: `encode` (`input`, with `"NaN"`, `"Infinity"`, `"-Infinity"` as strings) → `expectSamples` (required),
+`expectHex`; `decode` (`hex`, `sliceFrom`) → `expectSamples` (required; each float is the sample / 32768); `wav` (`rate`, `pcmHex`) →
 `expectHex`, or `expectError: true`; `validWAV` (`hex`, `capBytes`) → `expect`; `plausible` (`pcm`: `samples` copies of `value`, `script`)
 → `expect`.

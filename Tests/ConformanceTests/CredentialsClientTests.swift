@@ -9,8 +9,16 @@ import RealtimeConnection
 extension CredentialWorld {
     /// The expectations checked here; the rest go to ``check(_:state:token:mode:info:elapsed:description:)``.
     private static let clientKeys: Set<String> = [
-        "startFails", "calls", "callError", "events", "eventCount", "eventSequence",
+        "startFails", "calls", "callError", "events", "eventCount", "eventSequence", "typedResults",
     ]
+
+    /// A call through the client's typed wrapper for `method`.
+    private static func typedCall(_ client: AppServerClient, _ method: String) throws -> String {
+        switch method {
+        case "account/read": return try client.planType()
+        default: throw FixtureError("no typed wrapper for \(method)")
+        }
+    }
 
     func client(_ s: [String: Any], want: [String: Any]) throws -> [String] {
         let events = Box<[AppServerEvent]>([])
@@ -24,7 +32,7 @@ extension CredentialWorld {
         switch s["handler"] as? String ?? "" {
         case "": break
         case "record": config.onEvent = { _, e in events.value.append(e) }
-        case "block": config.onEvent = { _, _ in block.wait() }
+        case "block": config.onEvent = { _, _ in _ = block.waited(caseWait) }  // bounded, should the case never end
         case let other: return ["unknown handler \(other)"]
         }
         let work = root + "/work"
@@ -51,13 +59,20 @@ extension CredentialWorld {
         }
         var outcomes: [String] = []
         var callErrors: [String] = []
+        var typed: [Any] = []  // each typed call's result, NSNull for a failed one
         if let client {
             for call in s["calls"] as? [[String: Any]] ?? [] {
                 let method = call["method"] as? String ?? ""
+                let isTyped = call["typed"] as? Bool == true
                 do {
-                    _ = try client.call(method, params: call["params"] as? [String: Any] ?? [:])
+                    if isTyped {
+                        typed.append(try Self.typedCall(client, method))
+                    } else {
+                        _ = try client.call(method, params: call["params"] as? [String: Any] ?? [:])
+                    }
                     outcomes.append("ok")
                 } catch {
+                    if isTyped { typed.append(NSNull()) }
                     outcomes.append("error")
                     callErrors.append("\(error)")
                 }
@@ -92,6 +107,8 @@ extension CredentialWorld {
             case "startFails": break
             case "calls":
                 if !Self.same(outcomes, v) { p.append("calls \(outcomes), want \(v)") }
+            case "typedResults":
+                if !Self.same(typed, v) { p.append("typed results \(typed), want \(v)") }
             case "callError":  // every failed call names this failure
                 for (i, e) in callErrors.enumerated() where !e.contains(v as? String ?? "") {
                     p.append("failed call \(i): \(e.debugDescription) does not name \(v)")
@@ -103,6 +120,8 @@ extension CredentialWorld {
                     break
                 }
                 for (i, (e, w)) in zip(got, list).enumerated() {
+                    p += FakeOpenAI.unknownKeys(
+                        "events[\(i)]", w, ["method", "serverRequest", "noParams", "params", "paramsRaw"])
                     if e.method != w["method"] as? String { p.append("event \(i) is \(e.method), want \(w["method"] ?? "")") }
                     if e.isServerRequest != (w["serverRequest"] as? Bool ?? false) {
                         p.append("event \(i): server request \(e.isServerRequest)")

@@ -1,5 +1,5 @@
 {
- "count": 1020,
+ "count": 1045,
  "fixtures": [
   {
    "id": "app-ready",
@@ -555,6 +555,24 @@
   },
   {
    "id": "app-client-events-past-the-byte-bound",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-plan-type",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-plan-type-absent",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-plan-type-wrong-type",
    "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []
@@ -1761,6 +1779,78 @@
   },
   {
    "id": "pcm-valid-wav-not-riff",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-format-float",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-bits-8",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-block-align",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-byte-rate",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-fmt-size",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-list-chunk",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-wave-id",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-fmt-id",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-data-id",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-short",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-nothing",
+   "file": "pcm16.json",
+   "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "pcm-valid-wav-one-byte",
    "file": "pcm16.json",
    "component": "pcm16",
    "requires": []
@@ -6181,6 +6271,66 @@
   },
   {
    "id": "ws-unknown-types-past-byte-budget",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-401",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-403",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-404",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-429",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-500",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-200",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-302",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-302-malformed",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-101-malformed",
+   "file": "ws/ws.json",
+   "component": "session",
+   "requires": []
+  },
+  {
+   "id": "ws-handshake-silent",
    "file": "ws/ws.json",
    "component": "session",
    "requires": []

@@ -197,7 +197,7 @@ final class AppServerQueueTests: XCTestCase {
         defer { c.close() }
         c.setTestSeams(refusalAdmitted: {
             admitted.signal()
-            release.wait()
+            _ = release.waited()
         })
         _ = try c.call("arm")  // after its reply the child sends srv-1
         XCTAssertEqual(admitted.wait(timeout: .now() + 5), .success, "srv-1 was not answered")
@@ -303,7 +303,7 @@ final class AppServerQueueTests: XCTestCase {
                 seen.methods.append(e.method)
                 return seen.methods.count
             }
-            if n == 1 { seen.release.wait() }
+            if n == 1 { _ = seen.release.waited() }
             if n == maxEvents { seen.all.signal() }
         }
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("faster than the handler"), "\($0)") }

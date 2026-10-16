@@ -35,7 +35,7 @@ final class AppServerLifecycleTests: XCTestCase {
             }
             if first {
                 entered.signal()
-                release.wait()
+                _ = release.waited()
             }
         }
 
@@ -176,7 +176,7 @@ final class AppServerLifecycleTests: XCTestCase {
         let c = try start(script, timeout: 5) { r.handle($0) }
         defer { c.close() }
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("malformed"), "\($0)") }
-        r.entered.wait()
+        XCTAssertTrue(r.entered.waited(), "no event reached the handler")
         r.release.signal()
         waitFor("the queued events") { r.seen.count == 3 }
         XCTAssertEqual(r.seen, ["a", "b", "c"])
@@ -192,7 +192,7 @@ final class AppServerLifecycleTests: XCTestCase {
         let r = Recorder()
         let c = try start(script, timeout: 5) { r.handle($0) }
         _ = try c.call("echo")  // its reply follows the three events, so all three are queued
-        r.entered.wait()
+        XCTAssertTrue(r.entered.waited(), "no event reached the handler")
         let closed = DispatchSemaphore(value: 0)
         Thread {
             c.close()
@@ -241,7 +241,7 @@ final class AppServerLifecycleTests: XCTestCase {
             }
             if isFirst {
                 admitted.signal()
-                release.wait()
+                _ = release.waited()
             }
         })
         _ = try c.call("echo")  // its reply follows the three events
@@ -273,7 +273,7 @@ final class AppServerLifecycleTests: XCTestCase {
         let done = DispatchSemaphore(value: 0)
         let ok = Box()
         let c = try start(script, timeout: 5) { _ in
-            ready.wait()
+            _ = ready.waited()
             if let client = box.client, let r = try? client.call("echo"), (r as? [String: Any])?["ok"] as? Bool == true {
                 ok.client = client
             }

@@ -530,5 +530,203 @@
    "class": "protocol"
   },
   "note": "One more type past the 64 KiB byte budget ends the session as protocol. Type i is \"drift.<i>.\" padded with \"a\" to typeBytes bytes; the server sends every type once per round, in order, as {\"type\": <type>}."
+ },
+ {
+  "id": "ws-handshake-401",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 401,
+   "headers": {
+    "x-request-id": "req_ws"
+   },
+   "body": "{\"error\":{\"message\":\"no\",\"type\":\"invalid_request_error\",\"code\":\"missing_scope\",\"param\":null}}"
+  },
+  "expect": {
+   "class": "auth-expired",
+   "status": 401,
+   "requestId": "req_ws",
+   "code": "",
+   "request": {
+    "target": "/v1/realtime?model=m",
+    "authorization": "Bearer ek_conformance"
+   }
+  },
+  "note": "Classified by its status alone: the body names missing_scope, which is never read."
+ },
+ {
+  "id": "ws-handshake-403",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 403,
+   "headers": {
+    "x-request-id": "req_ws"
+   },
+   "body": "{\"error\":{\"message\":\"no\",\"type\":\"invalid_request_error\",\"code\":\"missing_scope\",\"param\":null}}"
+  },
+  "expect": {
+   "class": "route-denied",
+   "status": 403,
+   "requestId": "req_ws",
+   "code": ""
+  },
+  "note": "A refusal of the route, by status."
+ },
+ {
+  "id": "ws-handshake-404",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 404,
+   "headers": {
+    "x-request-id": "req_ws"
+   },
+   "body": "{\"error\":{\"message\":\"no\",\"type\":\"invalid_request_error\",\"code\":\"missing_scope\",\"param\":null}}"
+  },
+  "expect": {
+   "class": "route-denied",
+   "status": 404,
+   "requestId": "req_ws",
+   "code": ""
+  },
+  "note": "No such route, by status."
+ },
+ {
+  "id": "ws-handshake-429",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 429,
+   "headers": {
+    "x-request-id": "req_ws"
+   },
+   "body": "{\"error\":{\"message\":\"no\",\"type\":\"invalid_request_error\",\"code\":\"missing_scope\",\"param\":null}}"
+  },
+  "expect": {
+   "class": "rate-limited",
+   "status": 429,
+   "requestId": "req_ws",
+   "code": ""
+  },
+  "note": "Rate limited, by status."
+ },
+ {
+  "id": "ws-handshake-500",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 500,
+   "headers": {
+    "x-request-id": "req_ws"
+   },
+   "body": "{\"error\":{\"message\":\"no\",\"type\":\"invalid_request_error\",\"code\":\"missing_scope\",\"param\":null}}"
+  },
+  "expect": {
+   "class": "server",
+   "status": 500,
+   "requestId": "req_ws",
+   "code": ""
+  },
+  "note": "A server failure, by status."
+ },
+ {
+  "id": "ws-handshake-200",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 200,
+   "headers": {
+    "x-request-id": "req_ws"
+   },
+   "body": "{\"error\":{\"message\":\"no\",\"type\":\"invalid_request_error\",\"code\":\"missing_scope\",\"param\":null}}"
+  },
+  "expect": {
+   "class": "protocol",
+   "status": 200,
+   "requestId": "req_ws",
+   "code": ""
+  },
+  "note": "A reply that should have upgraded and did not."
+ },
+ {
+  "id": "ws-handshake-302",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 302,
+   "headers": {
+    "x-request-id": "req_ws",
+    "Location": "https://elsewhere.test/v1/realtime?k=canary_location"
+   }
+  },
+  "expect": {
+   "class": "protocol",
+   "status": 302,
+   "requestId": "req_ws",
+   "code": "",
+   "notInDescription": [
+    "canary_location"
+   ]
+  },
+  "note": "A redirect is never followed; its Location, which may carry a secret, is never quoted."
+ },
+ {
+  "id": "ws-handshake-302-malformed",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 302,
+   "headers": {
+    "x-request-id": "req_ws",
+    "Location": "/canary_malformed%zz"
+   }
+  },
+  "expect": {
+   "class": "protocol",
+   "status": 302,
+   "requestId": "req_ws",
+   "code": "",
+   "notInDescription": [
+    "canary_malformed"
+   ]
+  },
+  "note": "A malformed Location is the same refusal, never a network failure, and is not quoted."
+ },
+ {
+  "id": "ws-handshake-101-malformed",
+  "component": "session",
+  "kind": "handshake",
+  "reply": {
+   "status": 101,
+   "headers": {
+    "Connection": "Upgrade",
+    "Upgrade": "websocket"
+   },
+   "hold": true
+  },
+  "handshakeTimeoutMs": 300,
+  "expect": {
+   "class": "protocol",
+   "status": 101,
+   "withinMs": 2500
+  },
+  "note": "A 101 without Sec-WebSocket-Accept, held open: protocol, within the handshake timeout's bound."
+ },
+ {
+  "id": "ws-handshake-silent",
+  "component": "session",
+  "kind": "handshake",
+  "silent": true,
+  "handshakeTimeoutMs": 300,
+  "expect": {
+   "class": "network",
+   "withinMs": 2500,
+   "request": {
+    "target": "/v1/realtime?model=m",
+    "authorization": "Bearer ek_conformance"
+   }
+  },
+  "note": "The server reads the upgrade request and never answers: the handshake timeout ends it."
  }
 ]

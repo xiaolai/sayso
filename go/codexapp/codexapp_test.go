@@ -4,12 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xiaolai/sayso/go/internal/prereq"
 )
 
 func writeExec(t *testing.T, path string) {
@@ -167,10 +168,7 @@ func TestConfigRedactsEnvironment(t *testing.T) {
 
 // A child that stops reading cannot hold a call past its timeout, nor Close past the grace.
 func TestCallTimesOutWhenTheChildStopsReading(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("needs python3")
-	}
+	python := prereq.Python(t)
 	dir := t.TempDir()
 	script := filepath.Join(dir, "codex")
 	// Answers initialize, then never reads again.

@@ -13,6 +13,8 @@ Realtime audio is 16-bit signed little-endian mono PCM at 24 kHz.
   must fit 32 bits) or PCM longer than 4,294,967,259 bytes (36 + size must fit 32 bits) is an error, never a header
   with wrapped sizes.
 - **WAV validation** (`PCM-04`): true only for exactly that header at 24 kHz, sizes consistent with the data, an even
-  data length, more than 44 bytes, and data no longer than the caller's cap or than a header can describe.
+  data length, more than 44 bytes, and data no longer than the caller's cap or than a header can describe. A
+  well-formed WAV that differs anywhere in those 44 bytes is invalid: another format, bit depth, block align, byte
+  rate or fmt chunk size, another chunk before `data`, or another chunk id.
 - **Plausibility** (`PCM-05`): a take is plausible when its duration (bytes / 48,000 s) is at least one second per 25
   letters of the script (Unicode letters) and some sample's magnitude is at least 328 (about -40 dBFS).

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/xiaolai/sayso/go/internal/fixtures"
@@ -64,20 +65,59 @@ func exact(v any) any {
 // decodeExact.
 func sameExact(got, want any) bool { return reflect.DeepEqual(exact(got), exact(want)) }
 
+// caseHead holds the members every case may carry besides its component's own (spec/fixtures.md), so a case type
+// that embeds it can be decoded refusing every other unknown member.
+type caseHead struct {
+	ID        string   `json:"id"`
+	Component string   `json:"component"`
+	Note      string   `json:"note"`
+	Requires  []string `json:"requires"`
+}
+
 // decodeExact is decode with numbers kept as written (json.Number), for comparison with sameExact.
 func decodeExact(c fixtures.Case, v any) error {
 	d := json.NewDecoder(bytes.NewReader(c.Raw))
 	d.UseNumber()
+	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
 		return fmt.Errorf("fixture does not decode: %w", err)
 	}
 	return nil
 }
 
-// decode unmarshals a case's raw JSON into v.
+// decode unmarshals a case's raw JSON into v. A member v has no field for is refused: no harness would read it, so
+// the case would pass whatever it says.
 func decode(c fixtures.Case, v any) error {
-	if err := json.Unmarshal(c.Raw, v); err != nil {
+	d := json.NewDecoder(bytes.NewReader(c.Raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(v); err != nil {
 		return fmt.Errorf("fixture does not decode: %w", err)
 	}
 	return nil
+}
+
+// headKeys are caseHead's members.
+var headKeys = []string{"id", "component", "note", "requires"}
+
+// unknownMembers names each top-level member of c outside headKeys and known: its decoded struct holds every member
+// any case of the component may use, while known are the ones this case's kind or op reads.
+func unknownMembers(c fixtures.Case, known ...string) []string {
+	var m map[string]any
+	if err := json.Unmarshal(c.Raw, &m); err != nil {
+		return []string{"fixture does not decode: " + err.Error()}
+	}
+	return unknownKeys("case", m, append(known, headKeys...)...)
+}
+
+// unknownKeys names, sorted, each key of m outside known, as a problem in where: an expectation the harness does not
+// read would pass whatever the implementation did.
+func unknownKeys(where string, m map[string]any, known ...string) []string {
+	var p []string
+	for key := range m {
+		if !slices.Contains(known, key) {
+			p = append(p, fmt.Sprintf("unknown %s key %q", where, key))
+		}
+	}
+	slices.Sort(p)
+	return p
 }

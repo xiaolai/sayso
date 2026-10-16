@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xiaolai/sayso/go/codexapp"
+	"github.com/xiaolai/sayso/go/internal/parked"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -384,7 +385,7 @@ func TestPausedRefusalDoesNotTakeARefusedToken(t *testing.T) {
 		_, err := c.RefreshAfter(t.Context(), a) // reads the refresh count, then waits for the lock
 		done <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	parked.Wait(t, "codexauth.(*Credentials).acquire") // it has read the refresh count
 	// Meanwhile: a refresh returned B, then B was refused and its refresh failed.
 	c.cur = &b
 	c.refreshes.Add(1)

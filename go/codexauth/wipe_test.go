@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/xiaolai/sayso/go/internal/memscan"
+	"github.com/xiaolai/sayso/go/internal/prereq"
 )
 
 // No byte of auth.json outlives a read except the access token kept: every buffer the reader reads it into,
@@ -106,7 +107,7 @@ func readCase(t *testing.T, parts []part) (State, []int) {
 	loc.close()
 	found, err := s.Occurrences()
 	if errors.Is(err, memscan.ErrUnsupported) {
-		t.Skip(err)
+		prereq.Missing(t, err.Error())
 	}
 	if e == nil {
 		return StateReady, found
@@ -138,7 +139,7 @@ func TestTheScanFindsADroppedCopy(t *testing.T) {
 	sink = nil
 	found, err := s.Occurrences()
 	if errors.Is(err, memscan.ErrUnsupported) {
-		t.Skip(err)
+		prereq.Missing(t, err.Error())
 	}
 	if found[0] == 0 {
 		t.Error("the scan missed a dropped copy")

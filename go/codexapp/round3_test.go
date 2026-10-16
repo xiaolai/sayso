@@ -4,23 +4,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/prereq"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
 // A child that has exited stays unreaped until Close, so its process and group IDs cannot be reused while Close may
 // still signal the group; Close reaps it.
 func TestChildStaysUnreapedUntilClose(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("needs python3")
-	}
+	python := prereq.Python(t)
 	script := filepath.Join(t.TempDir(), "codex")
 	body := "#!" + python + "\nimport sys, json\nm = json.loads(sys.stdin.readline())\n" +
 		"print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n" +

@@ -57,6 +57,7 @@ type credFile struct {
 }
 
 type credStep struct {
+	Note   string         `json:"note"`
 	At     int64          `json:"at"`
 	Op     string         `json:"op"`
 	Stale  string         `json:"stale"`
@@ -64,6 +65,7 @@ type credStep struct {
 }
 
 type credCase struct {
+	caseHead
 	Setup  credSetup      `json:"setup"`
 	Expect map[string]any `json:"expect"`
 	Steps  []credStep     `json:"steps"`

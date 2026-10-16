@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiaolai/sayso/go/internal/prereq"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -96,10 +96,7 @@ func TestDecodeRateLimits(t *testing.T) {
 // stalled starts a child that answers initialize and never reads again.
 func stalled(t *testing.T, timeout time.Duration) *Client {
 	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("needs python3")
-	}
+	python := prereq.Python(t)
 	script := filepath.Join(t.TempDir(), "codex")
 	body := "#!" + python + "\nimport sys, json, time\nm = json.loads(sys.stdin.readline())\n" +
 		"print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\ntime.sleep(30)\n"
@@ -115,6 +112,20 @@ func stalled(t *testing.T, timeout time.Duration) *Client {
 
 var big = map[string]any{"pad": strings.Repeat("x", 4<<20)} // far beyond a pipe buffer
 
+// waitWriting waits until c's writer has started a write, which the stalled child's full pipe then holds.
+func waitWriting(t *testing.T, c *Client) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		c.k.mu.Lock()
+		writing := c.k.writing
+		c.k.mu.Unlock()
+		if writing {
+			return
+		}
+	}
+	t.Fatal("the write never started")
+}
+
 // A write cut off inside a request leaves the stream unusable, so the next call fails at once; an already-cancelled
 // call sends nothing; a waiting writer gives up at its own deadline; cancellation interrupts a blocked write.
 func TestWritePathUnderFailure(t *testing.T) {
@@ -128,7 +139,7 @@ func TestWritePathUnderFailure(t *testing.T) {
 
 	blocked := make(chan error, 1)
 	go func() { blocked <- c.Call(t.Context(), "big", big, nil) }()
-	time.Sleep(300 * time.Millisecond)
+	waitWriting(t, c)
 	short, cancelShort := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancelShort()
 	start := time.Now()
@@ -147,7 +158,7 @@ func TestWritePathUnderFailure(t *testing.T) {
 	defer d.Close()
 	ctx, cancel = context.WithCancel(t.Context())
 	go func() { blocked <- d.Call(ctx, "big", big, nil) }()
-	time.Sleep(300 * time.Millisecond)
+	waitWriting(t, d) // a cancellation now interrupts the write, not a call still queued
 	start = time.Now()
 	cancel()
 	select {

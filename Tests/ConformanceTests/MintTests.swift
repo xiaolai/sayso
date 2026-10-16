@@ -37,6 +37,22 @@ enum MintCheck {
         guard let setup = c["setup"] as? [String: Any], let want = c["expect"] as? [String: Any] else {
             throw FixtureError("mint case without setup or expect")
         }
+        var unknown = FakeOpenAI.unknownKeys("case", c, FakeOpenAI.caseHead.union(["setup", "expect"]))
+        unknown += FakeOpenAI.unknownKeys(
+            "setup", setup, ["now", "origin", "session", "lifetimeSeconds", "token", "refreshTo", "replies"])
+        for (i, r) in (setup["replies"] as? [[String: Any]] ?? []).enumerated() {
+            unknown += FakeOpenAI.unknownKeys("replies[\(i)]", r, ["status", "headers", "json", "body", "bodyPadTo"])
+        }
+        unknown += FakeOpenAI.unknownKeys(
+            "expect", want,
+            [
+                "class", "secret", "expiresAt", "status", "type", "code", "param", "requestId", "requests",
+                "refreshCalls", "tokenCalls", "request", "secondAuthorization", "scrubs", "notInDescription",
+            ])
+        unknown += FakeOpenAI.unknownKeys(
+            "expect.request", want["request"] as? [String: Any],
+            ["method", "path", "authorization", "contentType", "body"])
+        guard unknown.isEmpty else { return unknown }
         let token = "\(Fixtures.substitute(setup["token"] ?? ""))"
         let refreshTo = "\(Fixtures.substitute(setup["refreshTo"] ?? ""))"
         var replies: [FakeHTTPReply] = []

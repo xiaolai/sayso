@@ -202,6 +202,114 @@
   "expect": false
  },
  {
+  "id": "pcm-valid-wav-format-float",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000003000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "Format 3 (IEEE float) instead of 1 (PCM), every other field canonical."
+ },
+ {
+  "id": "pcm-valid-wav-bits-8",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d0000c05d00000100080064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "A consistent 8-bit mono header at 24 kHz: only 16-bit PCM is valid."
+ },
+ {
+  "id": "pcm-valid-wav-block-align",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000400100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "Block align 4 where 16-bit mono has 2."
+ },
+ {
+  "id": "pcm-valid-wav-byte-rate",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d0000c05d00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "A byte rate equal to the sample rate, where 16-bit mono has twice it."
+ },
+ {
+  "id": "pcm-valid-wav-fmt-size",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462a00000057415645666d74201200000001000100c05d000080bb000002001000000064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "A well-formed 18-byte fmt chunk (cbSize 0): only the 16-byte canonical chunk is valid."
+ },
+ {
+  "id": "pcm-valid-wav-list-chunk",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946463400000057415645666d74201000000001000100c05d000080bb0000020010004c49535404000000494e464f64617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "A well-formed LIST chunk between fmt and data: no other chunk is valid."
+ },
+ {
+  "id": "pcm-valid-wav-wave-id",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415658666d74201000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "WAVX instead of WAVE."
+ },
+ {
+  "id": "pcm-valid-wav-fmt-id",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d745f1000000001000100c05d000080bb00000200100064617461040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "fmt_ instead of fmt."
+ },
+ {
+  "id": "pcm-valid-wav-data-id",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100044415441040000000100ff7f",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "DATA instead of data."
+ },
+ {
+  "id": "pcm-valid-wav-short",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462800000057415645666d74201000000001000100c05d000080bb00000200100064617461040000",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "43 bytes, one short of the header."
+ },
+ {
+  "id": "pcm-valid-wav-nothing",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "No bytes at all."
+ },
+ {
+  "id": "pcm-valid-wav-one-byte",
+  "component": "pcm16",
+  "op": "validWAV",
+  "hex": "524946462500000057415645666d74201000000001000100c05d000080bb000002001000646174610100000001",
+  "capBytes": 1000,
+  "expect": false,
+  "note": "One data byte: odd, and less than one sample."
+ },
+ {
   "id": "pcm-plausible",
   "component": "pcm16",
   "op": "plausible",

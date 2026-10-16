@@ -137,6 +137,75 @@ final class FakeHTTPServer: @unchecked Sendable {
     }
 }
 
+/// A TCP server that reads one HTTP request head, records it, and answers it with `reply` as raw bytes, closing the
+/// connection unless `hold`; with no reply it never answers. Every connection it holds ends with ``stop()``.
+final class FakeHandshakeServer: @unchecked Sendable {
+    /// What the connection handler records, made before the listener so its handler can hold it.
+    private final class Record: @unchecked Sendable {
+        let lock = NSLock()
+        var head: String?
+        var held: [NWConnection] = []
+    }
+
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "fake-openai-handshake")
+    private let record = Record()
+    let port: UInt16
+
+    init(reply: Data?, hold: Bool) throws {
+        listener = try NWListener(using: FakeOpenAI.loopbackParameters(.tcp))
+        let (queue, record) = (self.queue, self.record)
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: queue)
+            Self.receive(connection, Data(), record, reply: reply, hold: hold)
+        }
+        port = try FakeOpenAI.waitReady(listener, queue: queue)
+    }
+
+    private static func receive(_ connection: NWConnection, _ buffer: Data, _ record: Record, reply: Data?, hold: Bool) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { data, _, complete, error in
+            var buffer = buffer
+            if let data { buffer.append(data) }
+            guard let end = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                if complete || error != nil {
+                    connection.cancel()
+                } else {
+                    receive(connection, buffer, record, reply: reply, hold: hold)
+                }
+                return
+            }
+            record.lock.withLock {
+                record.head = String(decoding: buffer[buffer.startIndex..<end.lowerBound], as: UTF8.self)
+                record.held.append(connection)
+            }
+            guard let reply else { return }  // silent: held until stop
+            connection.send(content: reply, completion: .contentProcessed { _ in if !hold { connection.cancel() } })
+        }
+    }
+
+    private var lines: [String] { record.lock.withLock { record.head }?.components(separatedBy: "\r\n") ?? [] }
+
+    /// The request line's target, once a request has arrived.
+    var target: String? {
+        let parts = lines.first?.split(separator: " ") ?? []
+        return parts.count >= 2 ? String(parts[1]) : nil
+    }
+
+    /// The request's Authorization header.
+    var authorization: String? {
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":"), line[..<colon].lowercased() == "authorization" else { continue }
+            return line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    func stop() {
+        listener.cancel()
+        for connection in record.lock.withLock({ record.held }) { connection.cancel() }
+    }
+}
+
 /// A WebSocket server that, on each connection, sends `message` as one text frame and then waits for the client.
 final class FakeWebSocketServer: @unchecked Sendable {
     private let listener: NWListener
@@ -188,15 +257,19 @@ extension FakeOpenAI {
         var value: Bool { lock.withLock { on } }
     }
 
-    /// Runs async work from a synchronous fixture check, on the cooperative pool, and waits for it.
+    /// Runs async work from a synchronous fixture check, on the cooperative pool, and waits for it; work still running
+    /// after ``caseWait`` is cancelled and fails the case.
     static func blocking<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) -> Result<T, Error> {
         let box = ResultBox<T>()
         let done = DispatchSemaphore(value: 0)
-        Task.detached {
+        let task = Task.detached {
             do { box.result = .success(try await operation()) } catch { box.result = .failure(error) }
             done.signal()
         }
-        done.wait()
+        guard done.waited(caseWait) else {
+            task.cancel()  // the box is left to the task: it is read only after the signal
+            return .failure(FixtureError("the case's async work did not finish within \(Int(caseWait)) s"))
+        }
         return box.result ?? .failure(FixtureError("no result"))
     }
 
@@ -233,6 +306,18 @@ extension FakeOpenAI {
         }
         return p + leaks(strings(want["notInDescription"]), String(describing: e))
     }
+
+    /// The members every case may carry besides its component's own (spec/fixtures.md).
+    static let caseHead: Set<String> = ["id", "component", "note", "requires"]
+
+    /// Each key of `m` outside `known`, sorted, as a problem in `place`: a member no harness reads would let a case
+    /// pass whatever it says.
+    static func unknownKeys(_ place: String, _ m: [String: Any]?, _ known: Set<String>) -> [String] {
+        (m ?? [:]).keys.filter { !known.contains($0) }.sorted().map { "unknown \(place) key \"\($0)\"" }
+    }
+
+    /// The expectation keys ``checkError(_:_:)`` reads.
+    static let errorKeys: Set<String> = ["class", "fatal", "code", "type", "param", "notInDescription"]
 
     static func outcome(_ problems: [String]) -> String? {
         problems.isEmpty ? nil : problems.joined(separator: "; ")
