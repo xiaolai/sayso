@@ -82,7 +82,7 @@ final class CredentialWorld {
         let client = setup?["client"] as? [String: Any]
         p += FakeOpenAI.unknownKeys("setup.client", client, ["handler", "dir", "experimentalAPI", "calls"])
         for (i, call) in (client?["calls"] as? [[String: Any]] ?? []).enumerated() {
-            p += FakeOpenAI.unknownKeys("setup.client.calls[\(i)]", call, ["method", "params"])
+            p += FakeOpenAI.unknownKeys("setup.client.calls[\(i)]", call, ["method", "params", "typed"])
         }
         for (i, step) in (c["steps"] as? [[String: Any]] ?? []).enumerated() {
             p += FakeOpenAI.unknownKeys("steps[\(i)]", step, ["at", "op", "stale", "expect", "note"])

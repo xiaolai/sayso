@@ -22,7 +22,7 @@ CREDENTIAL_EXPECT = {
     "envEquals", "pathStartsWith", "binDir", "childrenExited", "closeWithinMs", "serverRequestAnswered", "outbound",
     "refreshCalls", "notInDescription",
     # client cases (setup.client)
-    "startFails", "calls", "callError", "events", "eventCount", "eventSequence",
+    "startFails", "calls", "callError", "events", "eventCount", "eventSequence", "typedResults",
 }
 AUTH_FILE = {"kind", "json", "raw", "hex", "rawRepeat", "padTo"}
 ERROR_EXPECT = {"class", "fatal", "code", "type", "param", "notInDescription"}
@@ -40,7 +40,7 @@ SCHEMA = {
         "setup.retry": AUTH_FILE,
         "setup.retry.rawRepeat": {"text", "count"},
         "setup.client": {"handler", "dir", "experimentalAPI", "calls"},
-        "setup.client.calls[]": {"method", "params"},
+        "setup.client.calls[]": {"method", "params", "typed"},
         "expect": CREDENTIAL_EXPECT,
         "expect.requests[]": {"method", "params", "notification"},
         "expect.events[]": {"method", "serverRequest", "noParams", "params", "paramsRaw"},

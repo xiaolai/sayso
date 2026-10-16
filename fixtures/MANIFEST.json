@@ -1,5 +1,5 @@
 {
- "count": 1026,
+ "count": 1029,
  "fixtures": [
   {
    "id": "app-ready",
@@ -555,6 +555,24 @@
   },
   {
    "id": "app-client-events-past-the-byte-bound",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-plan-type",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-plan-type-absent",
+   "file": "app-server/client.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-client-plan-type-wrong-type",
    "file": "app-server/client.jsonl",
    "component": "credentials",
    "requires": []

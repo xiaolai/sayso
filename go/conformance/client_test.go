@@ -25,11 +25,21 @@ type clientSetup struct {
 	Calls           []struct {
 		Method string         `json:"method"`
 		Params map[string]any `json:"params"`
+		Typed  bool           `json:"typed"` // through the client's typed wrapper for the method
 	} `json:"calls"`
 }
 
 // clientKeys are the expectations client checks itself; the rest go to check.
-var clientKeys = map[string]bool{"startFails": true, "calls": true, "callError": true, "events": true, "eventCount": true, "eventSequence": true}
+var clientKeys = map[string]bool{"startFails": true, "calls": true, "callError": true, "events": true, "eventCount": true, "eventSequence": true, "typedResults": true}
+
+// typedCall makes a call through the client's typed wrapper for method.
+func typedCall(ctx context.Context, c *codexapp.Client, method string) (string, error) {
+	switch method {
+	case "account/read":
+		return c.PlanType(ctx)
+	}
+	return "", fmt.Errorf("no typed wrapper for %s", method)
+}
 
 func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []string {
 	var (
@@ -83,13 +93,25 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 		p = append(p, "start: "+err.Error())
 	}
 	var outcomes, callErrors []string
+	var typed []any // each typed call's result, nil for a failed one
 	if c != nil {
 		for _, call := range s.Calls {
 			var params any // a fixture without params sends Call's default
 			if call.Params != nil {
 				params = call.Params
 			}
-			if err := c.Call(ctx, call.Method, params, nil); err != nil {
+			var err error
+			if call.Typed {
+				var v string
+				if v, err = typedCall(ctx, c, call.Method); err == nil {
+					typed = append(typed, v)
+				} else {
+					typed = append(typed, nil)
+				}
+			} else {
+				err = c.Call(ctx, call.Method, params, nil)
+			}
+			if err != nil {
 				outcomes = append(outcomes, "error")
 				callErrors = append(callErrors, err.Error())
 			} else {
@@ -147,6 +169,10 @@ func (w *world) client(t *testing.T, s *clientSetup, want map[string]any) []stri
 			}
 			for i, e := range list {
 				p = append(p, checkClientEvent(i, got[i], e.(map[string]any), expand)...)
+			}
+		case "typedResults":
+			if !same(typed, v) {
+				p = append(p, fmt.Sprintf("typed results %q, want %v", typed, v))
 			}
 		case "eventCount":
 			if !same(len(got), v) {
