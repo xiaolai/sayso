@@ -202,6 +202,26 @@ whole when formatted. A reported mode is filtered to printable characters before
 a character can join a secret's pieces. Token values and the inherited environment are never part of a type's
 printed, reflected or encoded form.
 
+On the credential ingestion paths the package wipes every buffer it owns before releasing it. These paths are the
+app-server's output (each line, the reader's buffer and every buffer it outgrows, what is drained after a failure),
+a reply's result (copied only for a call still waiting, at its exact size, and wiped once released, even if the call
+gave up), the getAuthStatus result, auth.json and the JWT payload decoded from its token, the mint reply, and an
+HTTP refusal body. Each is read where it lies. A value is checked before any string of it is made. The token or
+secret kept is decoded once, into the string that holds it. An error message or provider field is scrubbed before
+it becomes a string, and the scrubber reads its text in place. The memory-scan tests count what is left: the copy
+kept, and nothing else. Outside this boundary are:
+
+- the transport's own buffers: Go net/http's readers, TLS records, and URLSession's buffers and the bytes it hands
+  over (so no Swift mint test scans memory: URLSession owns the body before the package reads it);
+- the `Authorization` header string a request is built with;
+- event params, stderr and a `Call` result handed to the caller (Go `Call`, Swift `call`), which are the caller's
+  values;
+- the member names Swift decodes into keys, which are not secrets;
+- the held token or secret itself, until it is released.
+
+This bounds what the package leaves in memory it freed. It is no protection against a process that can read live
+memory.
+
 The debug log (Go `Config.Logger`, Swift `log`) names each decision: a fetch (`codexauth: fetched a token`, or
 `codexauth: fetch failed` with the state and class), a refresh (`codexauth: refreshed the token`, `codexauth: refresh
 failed` with the state, the backoff and the retry time, `codexauth: refresh cancelled; no backoff spent`) and a call
