@@ -1,5 +1,5 @@
 {
- "count": 864,
+ "count": 885,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5027,6 +5027,132 @@
   },
   {
    "id": "r9-marks-spellout-misplaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-prime-foot",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-prime-name",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-feet-minutes",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-feet-wrong-unit",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-feet-inches-words",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-feet-inches-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-feet-inches-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-double-prime-seconds",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-double-prime-identity",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-double-prime-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-double-mark-seconds",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-double-mark-one",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-double-mark-feet",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-quote-number-unspoken",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-feet-fr-as-written",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-han-sign-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-han-sign-unicode-minus",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-han-sign-multi",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-han-sign-dropped",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-han-sign-wrong",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r10-han-sign-fu",
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []

@@ -106,6 +106,31 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
                 k += 1
                 continue
             }
+            // A sign before a Han numeral is the number's sign: "-五" = "-5" = "- 5".
+            if r.freeDash == .sign && k + 1 < raws.count && raws[k + 1].kind == .hanRun && raws[k + 1].gap.isEmpty {
+                units.append(svSignedHanUnit(raws[k + 1].text))
+                k += 1
+                continue
+            }
+            // A measurement mark after a number ("5'", "5′10″", whose ″ NFKC folds to ′′): feet or minutes, and a
+            // pair, or the '"' after feet, inches or seconds. Never silent, so "5'" still refuses "5".
+            if english && k > 0 && r.gap.isEmpty && (raws[k - 1].kind == .number || raws[k - 1].kind == .symbol) {
+                if svMeasureMark(r.text) && raws[k - 1].kind == .number {
+                    if k + 1 < raws.count && raws[k + 1].kind == .symbol && raws[k + 1].text == r.text
+                        && raws[k + 1].gap.isEmpty
+                    {
+                        units.append([lit(r.text, r.text)] + svInchNames.map { lit($0) })
+                        k += 1
+                    } else {
+                        units.append(svSymbolUnit(r.text, english) + svFootNames.map { lit($0) })
+                    }
+                    continue
+                }
+                if r.text == "\"" {
+                    units.append([lit(r.text)] + svInchNames.map { lit($0) })
+                    continue
+                }
+            }
             var unit = svSymbolUnit(r.text, english)
             if r.text == "-" && r.freeDash == nil && r.gap.isEmpty && k + 1 < raws.count && raws[k + 1].gap.isEmpty
                 && !inExpression[k]
@@ -376,7 +401,7 @@ let svMaxProduct = 64
 private let svMathOperators: Set<String> = ["=", "+", "−", "×", "÷", "<", ">", "≠", "*", "^"]
 
 /// Marks each raw that sits in an expression: a run of numbers and symbols joined by nothing but space that holds an
-/// operator other than "-" or a number's "'" ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so
+/// operator other than "-" or a number's "'" or '"' ("5-2=3"). A dash there is a spoken minus. Punctuation ends a run, so
 /// in "1-0. #1" the score's dash is not in one. `withWords` lets words into the run but counts only the arithmetic
 /// operators (`svMathOperators`): in "x - y = z" the free dash is a minus, in "Tom & Jerry - live" it may be
 /// silent. One pass over the raws, so a long chain costs its length.
@@ -391,7 +416,7 @@ func svExpressions(_ raws: [SvRaw], withWords: Bool) -> [Bool] {
     }
     func op(_ j: Int) -> Bool {
         guard raws[j].kind == .symbol else { return false }
-        return withWords ? svMathOperators.contains(raws[j].text) : raws[j].text != "-" && raws[j].text != "'"
+        return withWords ? svMathOperators.contains(raws[j].text) : !["-", "'", "\""].contains(raws[j].text)
     }
     var i = 0
     while i < raws.count {
@@ -413,6 +438,24 @@ func svExpressions(_ raws: [SvRaw], withWords: Bool) -> [Bool] {
 
 /// The characters that end a sentence. NFKC folds the full-width ！ and ？ but not the ideographic full stop.
 let svSentenceEnds = ".!?。"
+
+/// The English readings of a measurement mark after a number (``svMeasureMark(_:)``), and of two of them or the '"'
+/// after feet.
+private let svFootNames = ["feet", "foot", "minutes", "minute"]
+private let svInchNames = ["inches", "inch", "seconds", "second"]
+
+/// A Han numeral after its sign: each reading of the numeral after the sign as a token of its own ("-" or "−"), and
+/// a reading in digits also with the sign joined to it, as the transcript lexes "-5".
+func svSignedHanUnit(_ run: String) -> SvUnit {
+    var unit: SvUnit = []
+    for seq in svHanUnit(run) {
+        unit.append([["-", "−"]] + seq)
+        guard let first = seq.first else { continue }
+        let signed = first.filter { $0.unicodeScalars.first.map(svDigit) ?? false }.map { "-" + $0 }
+        if !signed.isEmpty { unit.append([signed] + seq.dropFirst()) }
+    }
+    return unit
+}
 
 /// The English names of spoken symbols. A symbol without a name matches only itself.
 private let svSymbolNames: [String: [String]] = [

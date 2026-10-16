@@ -30,7 +30,7 @@ type svUnit []svSeq // the alternative readings of one script unit
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
 // reading it accepted, as Swift's saidGuardVersion is. A cache of audio accepted by the guard keys on it.
-const Version = 9
+const Version = 10
 
 // MaxBytes bounds each side; a longer script or transcript never matches.
 const MaxBytes = 64 << 10
@@ -312,9 +312,14 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			}
 			emit(svSymbol, i, i+1, dash)
 			i++
-		case isApostrophe(r) && len(out) > 0 && out[len(out)-1].kind == svNumber && prevEnd == i && !(i+1 < len(rs) && svLetter(rs[i+1])):
-			// A mark right after a number that svUnquote kept is no quotation mark but feet or minutes ("5'", "5’10",
-			// "21st’"): a spoken symbol on both sides, so a transcript cannot drop it.
+		case isApostrophe(r) && prevEnd == i && svAfterNumber(out, 1) && !(i+1 < len(rs) && svLetter(rs[i+1])):
+			// A mark right after a number that svUnquote kept, or after one such mark, is no quotation mark but feet
+			// or minutes ("5'", "5’10", "21st’"), or with the second inches or seconds ("5''"): a spoken symbol on
+			// both sides, so a transcript cannot drop it.
+			emit(svSymbol, i, i+1, svDashNone)
+			i++
+		case r == '"' && !dropped[i] && prevEnd == i && svFeetAndNumber(out):
+			// The inches after feet ("5'10\""): a symbol on both sides. Any other '"' is a quotation mark, unspoken.
 			emit(svSymbol, i, i+1, svDashNone)
 			i++
 		case hanNumbers && isHanNumeral(r) && !(i+1 < len(rs) && unicode.IsMark(rs[i+1])):
@@ -465,6 +470,28 @@ func svUnquote(rs []rune) ([]rune, []bool) {
 func svInnerPunct(r rune) bool {
 	return strings.ContainsRune(svUnspokenPunct, r) && !isApostrophe(r)
 }
+
+// svAfterNumber reports whether the raws so far end in a number, or in a number and up to marks measurement marks
+// (svMeasureMark), all touching.
+func svAfterNumber(out []svRaw, marks int) bool {
+	k, seen := len(out)-1, 0
+	for k >= 0 && seen < marks && out[k].kind == svSymbol && out[k].text == "'" && out[k].gap == "" {
+		k--
+		seen++
+	}
+	return k >= 0 && out[k].kind == svNumber
+}
+
+// svFeetAndNumber reports whether the raws so far are a number, a feet mark and a number, all touching ("5'10",
+// "5′10").
+func svFeetAndNumber(out []svRaw) bool {
+	n := len(out)
+	return n >= 3 && out[n-1].kind == svNumber && out[n-1].gap == "" && out[n-2].kind == svSymbol &&
+		svMeasureMark(out[n-2].text) && out[n-2].gap == "" && out[n-3].kind == svNumber
+}
+
+// svMeasureMark: a mark that measures after a number, the apostrophe the lexer keeps there or the prime.
+func svMeasureMark(s string) bool { return s == "'" || s == "′" }
 
 // svFreeDash: a '-' the lexer read as no sign, no minus between numbers and no joiner inside a word, unless it is
 // glued between a letter or digit and a letter or digit ("JIRA-10442"), which stays silent: a dash between words
@@ -1451,6 +1478,29 @@ func svScriptUnits(s, language string) []svUnit {
 				k++
 				continue
 			}
+			// A sign before a Han numeral is the number's sign: "-五" = "-5" = "- 5".
+			if r.dash == svDashSign && k+1 < len(raws) && raws[k+1].kind == svHanRun && raws[k+1].gap == "" {
+				units = append(units, svSignedHanUnit(raws[k+1].text))
+				k++
+				continue
+			}
+			// A measurement mark after a number ("5'", "5′10″", whose ″ NFKC folds to ′′): feet or minutes, and a
+			// pair, or the '"' after feet, inches or seconds. Never silent, so "5'" still refuses "5".
+			if english && k > 0 && r.gap == "" && (raws[k-1].kind == svNumber || raws[k-1].kind == svSymbol) {
+				if svMeasureMark(r.text) && raws[k-1].kind == svNumber {
+					if k+1 < len(raws) && raws[k+1].kind == svSymbol && raws[k+1].text == r.text && raws[k+1].gap == "" {
+						units = append(units, append(svUnit{lit(r.text, r.text)}, svNameReadings(svInchNames)...))
+						k++
+					} else {
+						units = append(units, append(svSymbolUnit(r.text, english), svNameReadings(svFootNames)...))
+					}
+					continue
+				}
+				if r.text == `"` {
+					units = append(units, append(svUnit{lit(r.text)}, svNameReadings(svInchNames)...))
+					continue
+				}
+			}
 			unit := svSymbolUnit(r.text, english)
 			if r.text == "-" && r.dash == svDashNone && r.gap == "" && k+1 < len(raws) && raws[k+1].gap == "" && !inExpression[k] {
 				unit = append(unit, svSeq{}) // a range or score ("3-4", "1-0") is often read with no word for the dash
@@ -1762,7 +1812,7 @@ func svUnitHas(unit svUnit, seq svSeq) bool {
 var svMathOperators = map[string]bool{"=": true, "+": true, "−": true, "×": true, "÷": true, "<": true, ">": true, "≠": true, "*": true, "^": true}
 
 // svExpressions marks each raw that sits in an expression: a run of numbers and symbols joined by nothing but space
-// that holds an operator other than "-" or a number's "'" ("5-2=3"). A dash there is a spoken minus. Punctuation ends
+// that holds an operator other than "-" or a number's "'" or '"' ("5-2=3"). A dash there is a spoken minus. Punctuation ends
 // a run, so in "1-0. #1" the score's dash is not in one. withWords lets words into the run but counts only the
 // arithmetic operators (svMathOperators): in "x - y = z" the free dash is a minus, in "Tom & Jerry - live" it may be
 // silent. One pass over the raws, so a long chain costs its length.
@@ -1778,7 +1828,7 @@ func svExpressions(raws []svRaw, withWords bool) []bool {
 		if withWords {
 			return svMathOperators[raws[k].text]
 		}
-		return raws[k].text != "-" && raws[k].text != "'"
+		return raws[k].text != "-" && raws[k].text != "'" && raws[k].text != `"`
 	}
 	for i := 0; i < len(raws); {
 		if !part(i) {
@@ -1796,6 +1846,44 @@ func svExpressions(raws []svRaw, withWords bool) []bool {
 		i = j
 	}
 	return in
+}
+
+// svFootNames and svInchNames are the English readings of a measurement mark after a number (svMeasureMark), and of
+// two of them or the '"' after feet.
+var (
+	svFootNames = []string{"feet", "foot", "minutes", "minute"}
+	svInchNames = []string{"inches", "inch", "seconds", "second"}
+)
+
+// svNameReadings is one single-word reading per name.
+func svNameReadings(names []string) svUnit {
+	unit := make(svUnit, len(names))
+	for i, n := range names {
+		unit[i] = lit(n)
+	}
+	return unit
+}
+
+// svSignedHanUnit reads a Han numeral after its sign: each reading of the numeral after the sign as a token of its
+// own ("-" or "−"), and a reading in digits also with the sign joined to it, as the transcript lexes "-5".
+func svSignedHanUnit(run string) svUnit {
+	var unit svUnit
+	for _, seq := range svHanUnit(run) {
+		unit = append(unit, append(svSeq{svAlt{"-", "−"}}, seq...))
+		if len(seq) == 0 {
+			continue
+		}
+		var signed svAlt
+		for _, t := range seq[0] {
+			if t != "" && svDigit(rune(t[0])) {
+				signed = append(signed, "-"+t)
+			}
+		}
+		if len(signed) > 0 {
+			unit = append(unit, append(svSeq{signed}, seq[1:]...))
+		}
+	}
+	return unit
 }
 
 // svSymbolNames: the English names of spoken symbols. A symbol without a name matches only itself.

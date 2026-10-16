@@ -29,6 +29,7 @@ func TestBounds(t *testing.T) {
 		{"sentence-punctuation-mark", strings.Repeat(".", 65533) + "’", "wrong"},
 		{"free-dashes", strings.Repeat("a - ", 16384), strings.Repeat("a ", 16383) + "x"},
 		{"number-word-codes", strings.Repeat("TEN ", 16384), "wrong"},
+		{"measurement-marks", strings.Repeat("5'10\" 3'' -五 ", 3000), "wrong"},
 	}
 	for _, c := range cases {
 		if len(c.script) > MaxBytes || len(c.transcript) > MaxBytes {

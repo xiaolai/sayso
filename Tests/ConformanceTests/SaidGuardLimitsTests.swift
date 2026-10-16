@@ -40,6 +40,7 @@ final class SaidGuardLimitsTests: XCTestCase {
             ("sentence-punctuation-mark", String(repeating: ".", count: 65533) + "’", "wrong"),
             ("free-dashes", String(repeating: "a - ", count: 16384), String(repeating: "a ", count: 16383) + "x"),
             ("number-word-codes", String(repeating: "TEN ", count: 16384), "wrong"),
+            ("measurement-marks", String(repeating: "5'10\" 3'' -五 ", count: 3000), "wrong"),
             ("spellout-words", String(repeating: "vingt et un ", count: 5000), "wrong"),
             ("spellout-groups", String(repeating: "1 000 ", count: 10000), "wrong"),
             ("spellout-long-group", "1" + String(repeating: " 000", count: 16000), "wrong"),

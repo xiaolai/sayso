@@ -21,9 +21,9 @@ public let saidGuardMaxBytes = 64 << 10
 
 /// The said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a reading it
 /// accepted. A cache of audio accepted by the guard keys on it, so audio accepted by an older, looser guard is not
-/// reused. 9: free dashes and a number's apostrophe are spoken symbols, and a sentence ends after the closing marks
-/// that follow its final punctuation.
-public let saidGuardVersion = 9
+/// reused. 10: a measurement mark after a number, two of them and the '"' after feet are spoken symbols with their
+/// unit names (9: free dashes, and a sentence ends after the closing marks that follow its final punctuation).
+public let saidGuardVersion = 10
 
 /// The base languages whose numbers also have the locale's spell-out as a reading (the `spellout:<lang>`
 /// capabilities of spec/parity.md). `en` and `zh` use the guard's own tables.

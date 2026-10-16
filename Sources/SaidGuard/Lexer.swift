@@ -142,11 +142,16 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
         } else if svFreeDash(rs, i) {
             emit(.symbol, i, i + 1, freeDash: svFreeSign(rs, i) ? .sign : .silentable)
             i += 1
-        } else if isApostrophe(r) && i > 0 && out.last?.kind == .number && prevEnd == i
+        } else if isApostrophe(r) && prevEnd == i && svAfterNumber(out, marks: 1)
             && !(i + 1 < rs.count && svLetter(rs[i + 1]))
         {
-            // A mark right after a number that svUnquote(_:) kept is no quotation mark but feet or minutes ("5'",
-            // "5’10", "21st’"): a spoken symbol on both sides, so a transcript cannot drop it.
+            // A mark right after a number that svUnquote(_:) kept, or after one such mark, is no quotation mark but
+            // feet or minutes ("5'", "5’10", "21st’"), or with the second inches or seconds ("5''"): a spoken symbol on
+            // both sides, so a transcript cannot drop it.
+            emit(.symbol, i, i + 1)
+            i += 1
+        } else if r == "\"" && !dropped[i] && prevEnd == i && svFeetAndNumber(out) {
+            // The inches after feet ("5'10\""): a symbol on both sides. Any other '"' is a quotation mark, unspoken.
             emit(.symbol, i, i + 1)
             i += 1
         } else if hanNumbers && isHanNumeral(r) && !(i + 1 < rs.count && isMark(rs[i + 1])) {
@@ -201,6 +206,28 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     }
     return out
 }
+
+/// Whether the raws so far end in a number, or in a number and up to `marks` measurement marks (``svMeasureMark(_:)``),
+/// all touching.
+func svAfterNumber(_ out: [SvRaw], marks: Int) -> Bool {
+    var k = out.count - 1
+    var seen = 0
+    while k >= 0 && seen < marks && out[k].kind == .symbol && out[k].text == "'" && out[k].gap.isEmpty {
+        k -= 1
+        seen += 1
+    }
+    return k >= 0 && out[k].kind == .number
+}
+
+/// Whether the raws so far are a number, a feet mark and a number, all touching ("5'10", "5′10").
+func svFeetAndNumber(_ out: [SvRaw]) -> Bool {
+    let n = out.count
+    return n >= 3 && out[n - 1].kind == .number && out[n - 1].gap.isEmpty && out[n - 2].kind == .symbol
+        && svMeasureMark(out[n - 2].text) && out[n - 2].gap.isEmpty && out[n - 3].kind == .number
+}
+
+/// A mark that measures after a number: the apostrophe the lexer keeps there, or the prime.
+func svMeasureMark(_ s: String) -> Bool { s == "'" || s == "′" }
 
 /// A '-' the lexer read as no sign, no minus between numbers and no joiner inside a word, unless it is glued between
 /// a letter or digit and a letter or digit ("JIRA-10442"), which stays silent: a dash between words ("Monday -

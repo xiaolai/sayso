@@ -3,7 +3,7 @@
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
 tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
-revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 9), raised whenever a change makes the guard refuse a
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 10), raised whenever a change makes the guard refuse a
 reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
@@ -42,7 +42,8 @@ the results was tried and abandoned: every rewrite rule could map two different 
    …), so `’Tis the students’ books` keeps both. An elision is a whole word: `n` in `‘n-gram’` is none. A `.` ends no
    sentence when a letter or digit follows it (`e.g`, `3.5`, `x.com`) or when it closes `Mr Mrs Ms Dr St Jr Sr vs e.g.
    i.e.` (`Say ‘Dr. Smith’.` is one quotation); `etc.` ends one. An apostrophe after a number that is no quotation mark
-   (`5'`, `5’10`) is a spoken symbol `'` on both sides. **Only unspoken punctuation is deleted**, and that
+   (`5'`, `5’10`, `21st’`), a second one after it (`5''`), and a `"` after a number that follows such a mark
+   (`5'10"`) are spoken symbols on both sides; any other `"` is an unspoken quotation mark (`"42"`). **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`
@@ -53,7 +54,8 @@ the results was tried and abandoned: every rewrite rule could map two different 
    and `3 - 4` may not). An expression is a run of numbers and symbols joined only by spaces that holds another
    operator; punctuation ends it (`1-0. #1` holds none). Any other `-` that is not glued between letters or digits
    (`JIRA-10442` stays silent) is a free dash and a symbol on both sides: a sign before a word, number or Han numeral
-   after a space, punctuation or the start (`-x`, `-五`) is never silent, and any other free dash (`Monday - Friday`,
+   after a space, punctuation or the start (`-x`, `-五`) is never silent (before a Han numeral it is the number's
+   sign: `-五` = `-5` = `- 5`, and `五` is refused), and any other free dash (`Monday - Friday`,
    `pre- and post-war`) may be read with no word, except in a run of words, numbers and symbols joined only by spaces
    that holds an arithmetic operator `= + − × ÷ < > ≠ * ^` (`x - y = z`). A comma list (`1,2,3`, also `1,2,3%`) is cut into numbers on
    both sides. A number keeps its
@@ -95,7 +97,7 @@ the results was tried and abandoned: every rewrite rule could map two different 
    | `St`, `Dr` after a capitalised word in the same sentence, `en` | "street", "drive" (`Main St.`, `Take Oak Dr.`; not `Alice. Dr Smith`); `St` before a capitalised word and not after one is "saint" |
    | `Doctor Mister Missus Saint` before a capitalised word | also the abbreviation (`Doctor Smith` = `Dr. Smith`) |
    | `vs`, `etc`, `e.g.`, `i.e.`, `en` | expanded only in lower case after the first letter (`VS Code`, `E.G. White` are not); `for example`, `et cetera`, `that is` also abbreviated |
-   | spoken symbol, `en` | as written, or its names (`svSymbolNames`: `percent`, `plus`, `equals`, `minus`/`to`, `times`, `divided by`, `less than`, `not equal to`, `number`, `star`, `prime`, `to the power of`, `squared`/`cubed` for `^2`/`^3`, which may also be read `to the power of` with the exponent in words or digits, …); unnamed symbols (currency) and other languages as written |
+   | spoken symbol, `en` | as written, or its names (`svSymbolNames`: `percent`, `plus`, `equals`, `minus`/`to`, `times`, `divided by`, `less than`, `not equal to`, `number`, `star`, `prime`, `to the power of`, `squared`/`cubed` for `^2`/`^3`, which may also be read `to the power of` with the exponent in words or digits, …); a measurement mark `'` or `′` right after a number is also `feet`, `foot`, `minutes`, `minute`, and two of them (`5''`, `30″`, which NFKC folds to `′′`) or the `"` after feet (`5'10"`) `inches`, `inch`, `seconds`, `second`, never silent; unnamed symbols (currency) and other languages as written |
    | hyphenated word | split, or joined (`e-mail` = `email`) |
    | lowercase `a.b.c` | as written, or with "dot" at any of its dots (`www dot example dot com`; a transcript that writes a dot, `www dot example.com`, already reads as no "dot" there, so a per-dot choice accepts nothing the written form did not); a capital (`Dr.Smith`, `end.Next`) is not a domain. Recognised before number words (`one.com`); a label may be one letter (`x.com`), and each hyphenated label is split or joined on its own (`e-mail.long-term.com` = `email dot long term dot com`). One unit a label and one a dot, so the readings are linear in the labels. A run of single letters (`a.b.c`) is a spelled code instead |
    | any other word or character | as written |
@@ -119,8 +121,8 @@ seventh`, currency in words (`$5` ≠ `five dollars`: the reading reorders, defe
 token, so an omitted currency is detected), `pages 3 - 4` ≠ `pages 3 4` (a spaced dash is spoken), a two-digit Han
 string (`一二` ≠ `12`), a Japanese numeral in kanji read back as digits (`四十二` ≠ `42`: Japanese numerals also
 spell words, `一緒`, `七夕`, so a run is not read as a value), a free dash the transcript adds (`Monday, Friday` ≠
-`Monday - Friday`), a number's apostrophe in words (`5'` ≠ `5 feet`), a sign before a Han numeral read back as a
-signed number (`-五` ≠ `-5`: the sign is its own token), a number's mark kept by the transcript where the script's
+`Monday - Friday`), a measurement mark in another language's words (`5'` ≠ `5 pieds` in `fr`: symbol names are English only), a sign
+before a Han numeral read as `负` (`-五` ≠ `负五`: `zh` has no spell-out), a number's mark kept by the transcript where the script's
 was a quotation mark (`‘42’` ≠ `42’`), and a character newer than the platform's Unicode tables (a Unicode 16 digit on macOS 14 reads as a symbol in Swift; the same table difference can only refuse, since
 an unknown character is a token that matches only itself). An emphasised short word missing from `svCapsWords` is the opposite case: it is accepted letter
 by letter, a residual false acceptance (see the threat model).

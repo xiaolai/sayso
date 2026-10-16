@@ -4449,8 +4449,8 @@
   "script": "Height 5'",
   "transcript": "Height 5 feet",
   "language": "en",
-  "expect": false,
-  "note": "Accepted false mismatch: the mark is not read as feet."
+  "expect": true,
+  "note": "A measurement mark after a number reads as feet or minutes in English."
  },
  {
   "id": "r9-number-apostrophe-quoted",
@@ -4629,8 +4629,8 @@
   "script": "-五",
   "transcript": "-5",
   "language": "zh",
-  "expect": false,
-  "note": "Accepted false mismatch: the sign before a Han numeral is its own token, so a signed number in digits does not match."
+  "expect": true,
+  "note": "A sign before a Han numeral is the number's sign: a signed number in digits matches."
  },
  {
   "id": "r9-number-apostrophe-transcript-mark",
@@ -4718,5 +4718,194 @@
   "language": "fr",
   "expect": false,
   "note": "Control: the mark inside the number word."
+ },
+ {
+  "id": "r10-prime-foot",
+  "component": "said-guard",
+  "script": "Height 5′",
+  "transcript": "Height 5 foot",
+  "language": "en",
+  "expect": true,
+  "note": "A prime after a number reads as feet."
+ },
+ {
+  "id": "r10-prime-name",
+  "component": "said-guard",
+  "script": "f′ is zero",
+  "transcript": "f prime is zero",
+  "language": "en",
+  "expect": true,
+  "note": "A prime after a letter keeps its name."
+ },
+ {
+  "id": "r10-feet-minutes",
+  "component": "said-guard",
+  "script": "Wait 5'",
+  "transcript": "Wait 5 minutes",
+  "language": "en",
+  "expect": true,
+  "note": "The mark after a number also reads as minutes."
+ },
+ {
+  "id": "r10-feet-wrong-unit",
+  "component": "said-guard",
+  "script": "Height 5'",
+  "transcript": "Height 5 inches",
+  "language": "en",
+  "expect": false,
+  "note": "Control: one mark is feet or minutes, never inches."
+ },
+ {
+  "id": "r10-feet-inches-words",
+  "component": "said-guard",
+  "script": "He is 5'10\".",
+  "transcript": "He is 5 feet 10 inches.",
+  "language": "en",
+  "expect": true,
+  "note": "The '\"' after feet and a number reads as inches."
+ },
+ {
+  "id": "r10-feet-inches-identity",
+  "component": "said-guard",
+  "script": "He is 5'10\".",
+  "transcript": "He is 5'10\".",
+  "language": "en",
+  "expect": true,
+  "note": "Identity: the inches mark is a symbol on both sides."
+ },
+ {
+  "id": "r10-feet-inches-dropped",
+  "component": "said-guard",
+  "script": "He is 5'10\".",
+  "transcript": "He is 5 feet 10.",
+  "language": "en",
+  "expect": false,
+  "note": "The inches mark may not be dropped."
+ },
+ {
+  "id": "r10-double-prime-seconds",
+  "component": "said-guard",
+  "script": "Hold 30″",
+  "transcript": "Hold 30 seconds",
+  "language": "en",
+  "expect": true,
+  "note": "A double prime (NFKC: two primes) after a number reads as inches or seconds."
+ },
+ {
+  "id": "r10-double-prime-identity",
+  "component": "said-guard",
+  "script": "Hold 30″",
+  "transcript": "Hold 30″",
+  "language": "en",
+  "expect": true,
+  "note": "Identity for the double prime."
+ },
+ {
+  "id": "r10-double-prime-dropped",
+  "component": "said-guard",
+  "script": "Hold 30″",
+  "transcript": "Hold 30",
+  "language": "en",
+  "expect": false,
+  "note": "The double prime may not be dropped."
+ },
+ {
+  "id": "r10-double-mark-seconds",
+  "component": "said-guard",
+  "script": "Hold 30''",
+  "transcript": "Hold 30 seconds",
+  "language": "en",
+  "expect": true,
+  "note": "Two apostrophes after a number read as inches or seconds."
+ },
+ {
+  "id": "r10-double-mark-one",
+  "component": "said-guard",
+  "script": "Hold 30''",
+  "transcript": "Hold 30'",
+  "language": "en",
+  "expect": false,
+  "note": "A transcript with one of the two marks is refused."
+ },
+ {
+  "id": "r10-double-mark-feet",
+  "component": "said-guard",
+  "script": "Hold 30''",
+  "transcript": "Hold 30 feet",
+  "language": "en",
+  "expect": false,
+  "note": "Control: two marks are never feet."
+ },
+ {
+  "id": "r10-quote-number-unspoken",
+  "component": "said-guard",
+  "script": "He said \"42\" today.",
+  "transcript": "He said 42 today.",
+  "language": "en",
+  "expect": true,
+  "note": "A '\"' after a number that does not follow feet stays an unspoken quotation mark."
+ },
+ {
+  "id": "r10-feet-fr-as-written",
+  "component": "said-guard",
+  "script": "Il mesure 5'",
+  "transcript": "Il mesure 5 pieds",
+  "language": "fr",
+  "expect": false,
+  "note": "Accepted false mismatch: symbol names are English only, so outside en the mark reads only as written."
+ },
+ {
+  "id": "r10-han-sign-spaced",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "- 5",
+  "language": "zh",
+  "expect": true,
+  "note": "A sign before a Han numeral as its own token before the digits."
+ },
+ {
+  "id": "r10-han-sign-unicode-minus",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "−5",
+  "language": "zh",
+  "expect": true,
+  "note": "The minus sign written either way."
+ },
+ {
+  "id": "r10-han-sign-multi",
+  "component": "said-guard",
+  "script": "-十二",
+  "transcript": "-12",
+  "language": "zh",
+  "expect": true,
+  "note": "A sign before a multi-character Han numeral."
+ },
+ {
+  "id": "r10-han-sign-dropped",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "五",
+  "language": "zh",
+  "expect": false,
+  "note": "A dropped sign is refused."
+ },
+ {
+  "id": "r10-han-sign-wrong",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "-6",
+  "language": "zh",
+  "expect": false,
+  "note": "Control: a different number."
+ },
+ {
+  "id": "r10-han-sign-fu",
+  "component": "said-guard",
+  "script": "-五",
+  "transcript": "负五",
+  "language": "zh",
+  "expect": false,
+  "note": "Accepted false mismatch: zh has no spell-out, so the sign is not read as 负."
  }
 ]
