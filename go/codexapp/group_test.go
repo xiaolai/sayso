@@ -23,6 +23,11 @@ func python(t *testing.T) string {
 }
 
 // fakeCodex writes an executable Python child: it answers initialize, reads initialized, then runs body.
+// bulkTimeout bounds the tests whose child writes megabytes or tens of thousands of lines: under the race detector on
+// a loaded host that takes seconds, so a shorter bound fails a correct client. What those tests tell apart is the
+// error (the overflow, the answer) and not the time, and a client that stalls still fails at this bound.
+const bulkTimeout = 60 * time.Second
+
 func fakeCodex(t *testing.T, body string) string {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "codex")
