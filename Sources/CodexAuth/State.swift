@@ -19,7 +19,7 @@ public enum CodexAuthState: String, Sendable, Equatable, CaseIterable {
 }
 
 /// The oldest Codex supported.
-public let minimumCodexVersion = "0.162.0"
+public let minimumCodexVersion = "0.161.0"
 
 /// A failure to obtain a usable token. `errorClass` is auth-expired for ``CodexAuthState/expired``, codex-error for
 /// Codex and file failures, and auth-mode for the sign-in states. Every string is scrubbed; `message` and `cause`

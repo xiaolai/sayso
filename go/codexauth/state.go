@@ -35,7 +35,7 @@ const (
 )
 
 // MinCodexVersion is the oldest Codex supported.
-const MinCodexVersion = "0.162.0"
+const MinCodexVersion = "0.161.0"
 
 // Error is a failure to obtain a usable token. It unwraps to an *openaihttp.Error, so openaihttp.Classify gives
 // auth-expired for StateExpired, codex-error for Codex and file failures, and auth-mode for the sign-in states.

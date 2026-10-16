@@ -14,7 +14,7 @@ Exactly one applies after a probe.
 |---|---|
 | `ready` | a usable ChatGPT token, fresh beyond the caller's margin or of unknown expiry |
 | `no-codex` | no Codex executable resolved and no usable `auth.json` either, or an explicitly named executable that does not resolve |
-| `codex-too-old` | Codex reports a version below the minimum, `0.162.0` |
+| `codex-too-old` | Codex reports a version below the minimum, `0.161.0` |
 | `not-signed-in` | Codex reports no sign-in (`authMethod: null`) |
 | `no-sign-in-file` | the file source was chosen and `auth.json` does not exist; the sign-in may be in the keychain |
 | `api-key` | Codex is signed in with an API key |
@@ -74,7 +74,8 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   child that stops reading cannot hold a call); expiry is `codex-error`.
 - **Sequence.**
   1. `initialize` with `clientInfo`; the version is the number after the first `/` in `userAgent`. A version below
-     `0.162.0` is `codex-too-old`. No parsable version proceeds.
+     `0.161.0` is `codex-too-old`. No parsable version proceeds. The minimum is the oldest release measured: on
+     2026-10-16, 0.161.0 answered every method this contract calls, with the same reply shapes as 0.162.1.
   2. `initialized` (a notification).
   3. `getAuthStatus {includeToken: false, refreshToken: false}`. `requiresOpenaiAuth: false` is
      `provider-without-openai-auth`. `authMethod: null` (or absent) is `not-signed-in`; `apikey` is `api-key`; any
