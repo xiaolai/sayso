@@ -6,7 +6,7 @@ public enum Secret {
     /// What every removed secret becomes.
     public static let redacted = "<redacted>"
 
-    private static let registry = Registry()
+    static let registry = Registry()
 
     /// `date` when it is finite; otherwise a definite date: NaN and minus infinity are `Date.distantPast` (an expiry
     /// that has long passed, never a moment that is both expired and not), plus infinity is `Date.distantFuture`.
@@ -16,7 +16,8 @@ public enum Secret {
         return t == .infinity ? .distantFuture : .distantPast
     }
 
-    /// Adds `secret` to the scrub list. Empty strings are ignored. The list only grows: a secret seen once stays secret.
+    /// Adds `secret` to the scrub list. Empty strings are ignored. A secret seen once stays secret, and nothing of it
+    /// is kept: its UTF-8 bytes are read in place for their length and two hashes (see `Registry`).
     public static func register(_ secret: String) {
         guard !secret.isEmpty else { return }
         registry.add(secret)
@@ -28,8 +29,7 @@ public enum Secret {
     /// registered secret inside a longer secret-shaped value never leaves the rest of that value behind.
     public static func scrub(_ text: String) -> String {
         let bytes = Array(text.utf8)
-        var spans: [Range<Int>] = []
-        for secret in registry.all() { spans += occurrences(of: secret, in: bytes) }
+        var spans = registry.spans(in: bytes)
         spans += patternSpans(bytes)
         guard !spans.isEmpty else { return text }
         spans.sort { $0.lowerBound < $1.lowerBound }
@@ -50,31 +50,6 @@ public enum Secret {
         }
         out += bytes[at...]
         return String(decoding: out, as: UTF8.self)
-    }
-
-    /// Every occurrence of `needle` in `haystack`, overlapping ones included, in O(n + m) (Knuth-Morris-Pratt), as in
-    /// Go: a naive scan is quadratic for a long, repetitive secret against a long, repetitive text.
-    static func occurrences(of needle: [UInt8], in haystack: [UInt8]) -> [Range<Int>] {
-        let m = needle.count
-        guard m > 0, m <= haystack.count else { return [] }
-        var fail = [Int](repeating: 0, count: m)  // fail[q]: the longest proper border of needle[0...q]
-        var k = 0
-        for q in 1..<m {
-            while k > 0, needle[q] != needle[k] { k = fail[k - 1] }
-            if needle[q] == needle[k] { k += 1 }
-            fail[q] = k
-        }
-        var found: [Range<Int>] = []
-        k = 0
-        for (i, b) in haystack.enumerated() {
-            while k > 0, b != needle[k] { k = fail[k - 1] }
-            if b == needle[k] { k += 1 }
-            if k == m {
-                found.append(i + 1 - m..<i + 1)
-                k = fail[k - 1]
-            }
-        }
-        return found
     }
 
     /// The matches of `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+` (`\w` is ASCII `[A-Za-z0-9_]`, as in Go's RE2) starting at
@@ -114,24 +89,111 @@ public enum Secret {
         return spans
     }
 
-    /// The registered secrets as UTF-8 bytes. Bytes, not `String`s: `String` equality is canonical equivalence, so a
-    /// secret spelled with a combining mark would count as already registered when its precomposed twin was.
-    private final class Registry: @unchecked Sendable {
-        private let lock = NSLock()
-        private var known: Set<[UInt8]> = []
-        private var list: [[UInt8]] = []
-
-        func add(_ s: String) {
-            let bytes = Array(s.utf8)
-            lock.lock()
-            defer { lock.unlock() }
-            if known.insert(bytes).inserted { list.append(bytes) }
+    /// The secrets the process has seen, held as none of them, as in Go: a secret is kept as its UTF-8 length and two
+    /// polynomial hashes of its bytes, modulo the Mersenne prime 2^61-1, with bases drawn at random for the process.
+    /// For two different byte strings of length L, a base drawn at random makes their hashes equal with probability
+    /// at most L/2^61, so text matches a secret it differs from with probability below (L/2^61)^2 per window: about
+    /// 2^-90 at 64 KiB. Bytes, not `String`s: `String` equality is canonical equivalence, and a secret spelled with a
+    /// combining mark is not its precomposed twin. The bases sit beside the hashes, so a short or guessable value can
+    /// be found again by trying candidates; a credential cannot.
+    final class Registry: @unchecked Sendable {
+        struct LengthSet {
+            var hashes: Set<Pair> = []
+            /// b1^(L-1) and b2^(L-1), which take a byte out of a rolling window.
+            let pow1: UInt64, pow2: UInt64
         }
 
-        func all() -> [[UInt8]] {
+        struct Pair: Hashable {
+            let h1: UInt64, h2: UInt64
+        }
+
+        private let lock = NSLock()
+        private var byLength: [Int: LengthSet] = [:]
+        let b1: UInt64, b2: UInt64
+
+        init(b1: UInt64 = Registry.randomBase(), b2: UInt64 = Registry.randomBase()) {
+            self.b1 = b1
+            self.b2 = b2
+        }
+
+        static let mersenne: UInt64 = 1 << 61 - 1
+
+        /// a*b mod 2^61-1, for a and b below the modulus.
+        static func mulMod(_ a: UInt64, _ b: UInt64) -> UInt64 {
+            let (hi, lo) = a.multipliedFullWidth(by: b)
+            var r = (hi << 3 | lo >> 61) + (lo & mersenne)  // a*b = q*2^61 + r, and 2^61 is 1 modulo 2^61-1
+            if r >= mersenne { r -= mersenne }
+            if r >= mersenne { r -= mersenne }
+            return r
+        }
+
+        static func addMod(_ a: UInt64, _ b: UInt64) -> UInt64 {
+            let r = a + b
+            return r >= mersenne ? r - mersenne : r
+        }
+
+        static func subMod(_ a: UInt64, _ b: UInt64) -> UInt64 { a >= b ? a - b : a + mersenne - b }
+
+        /// A base in [1, 2^61-2] from the system generator, which cannot fail.
+        static func randomBase() -> UInt64 {
+            var g = SystemRandomNumberGenerator()
+            return UInt64.random(in: 1...(mersenne - 2), using: &g)
+        }
+
+        /// The bytes' two hashes: the sum of bytes[i]*b^(n-1-i), modulo 2^61-1, for each base.
+        func pair<C: Sequence>(_ bytes: C) -> Pair where C.Element == UInt8 {
+            var h1: UInt64 = 0, h2: UInt64 = 0
+            for c in bytes {
+                h1 = Self.addMod(Self.mulMod(h1, b1), UInt64(c))
+                h2 = Self.addMod(Self.mulMod(h2, b2), UInt64(c))
+            }
+            return Pair(h1: h1, h2: h2)
+        }
+
+        func emptySet(length n: Int) -> LengthSet {
+            var p1: UInt64 = 1, p2: UInt64 = 1
+            for _ in 0..<max(n - 1, 0) {
+                p1 = Self.mulMod(p1, b1)
+                p2 = Self.mulMod(p2, b2)
+            }
+            return LengthSet(pow1: p1, pow2: p2)
+        }
+
+        func add(_ s: String) {
+            let n = s.utf8.count
+            let h = pair(s.utf8)  // read in place: no copy of the secret is made or kept
             lock.lock()
             defer { lock.unlock() }
-            return list
+            if byLength[n] == nil { byLength[n] = emptySet(length: n) }
+            byLength[n]!.hashes.insert(h)
+        }
+
+        /// Every window of `bytes` equal to a registered secret, overlapping ones included.
+        func spans(in bytes: [UInt8]) -> [Range<Int>] {
+            lock.lock()
+            let sets = byLength
+            lock.unlock()
+            var found: [Range<Int>] = []
+            for (n, set) in sets { found += occurrences(in: bytes, length: n, set: set) }
+            return found
+        }
+
+        /// Every window of `bytes`, `n` long, whose two hashes are those of a secret in `set`. Both hashes roll: each
+        /// step takes the leaving byte out and the next one in, in constant time.
+        func occurrences(in bytes: [UInt8], length n: Int, set: LengthSet) -> [Range<Int>] {
+            guard n > 0, n <= bytes.count else { return [] }
+            var h = pair(bytes[0..<n])
+            var found: [Range<Int>] = []
+            var i = 0
+            while true {
+                if set.hashes.contains(h) { found.append(i..<i + n) }
+                if i + n == bytes.count { return found }
+                let out = UInt64(bytes[i]), next = UInt64(bytes[i + n])
+                h = Pair(
+                    h1: Self.addMod(Self.mulMod(Self.subMod(h.h1, Self.mulMod(out, set.pow1)), b1), next),
+                    h2: Self.addMod(Self.mulMod(Self.subMod(h.h2, Self.mulMod(out, set.pow2)), b2), next))
+                i += 1
+            }
         }
     }
 }

@@ -3,7 +3,10 @@
 package secret
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
+	"math/bits"
 	"runtime"
 	"sort"
 	"strings"
@@ -15,41 +18,119 @@ import (
 // Redacted replaces every secret Scrub removes.
 const Redacted = "<redacted>"
 
-// registry holds every secret the process has seen, so opaque formats that no pattern matches are removed too. It
-// only grows: a secret seen once stays secret.
+// registry holds every secret the process has seen, so opaque formats that no pattern matches are removed too, and
+// holds none of them: a secret is kept as its length and two polynomial hashes of its bytes, modulo the Mersenne
+// prime 2^61-1, with bases drawn at random for the process. A secret seen once stays secret, while what stays in
+// memory is two numbers per secret, not the secret. For two different strings of length L, a base drawn at random
+// makes their hashes equal with probability at most L/2^61, so text matches a secret it differs from with
+// probability below (L/2^61)^2 per window: about 2^-90 at 64 KiB. The bases sit in memory beside the hashes, so a
+// short or guessable value registered here can be found again by trying candidates; a credential cannot.
 var registry struct {
-	mu      sync.RWMutex
-	secrets map[string]struct{}
-	ordered []string
+	mu sync.RWMutex
+	// byLength maps a length to the hash pairs of the secrets that long, and to b1^(L-1) and b2^(L-1), which take
+	// a byte out of a rolling window.
+	byLength map[int]*lengthSet
+	b1, b2   uint64
 }
 
-// Register adds s to the process-wide scrub list. Empty strings are ignored.
+type lengthSet struct {
+	hashes     map[[2]uint64]struct{}
+	pow1, pow2 uint64
+}
+
+// mersenne is the modulus 2^61-1.
+const mersenne = 1<<61 - 1
+
+// mulMod is a*b mod 2^61-1 for a, b below the modulus.
+func mulMod(a, b uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	r := (hi<<3 | lo>>61) + lo&mersenne // a*b = q*2^61 + r, and 2^61 is 1 modulo 2^61-1
+	if r >= mersenne {
+		r -= mersenne
+	}
+	if r >= mersenne {
+		r -= mersenne
+	}
+	return r
+}
+
+// addMod is a+b mod 2^61-1, subMod a-b, for a, b below the modulus.
+func addMod(a, b uint64) uint64 {
+	r := a + b
+	if r >= mersenne {
+		r -= mersenne
+	}
+	return r
+}
+
+func subMod(a, b uint64) uint64 {
+	if a >= b {
+		return a - b
+	}
+	return a + mersenne - b
+}
+
+// randomBase is a base in [1, 2^61-2], drawn from the operating system's generator, which crypto/rand never lets
+// fail silently.
+func randomBase() uint64 {
+	for {
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		if v := binary.LittleEndian.Uint64(b[:]) >> 3; v != 0 && v < mersenne-1 { // 61 random bits
+			return v
+		}
+	}
+}
+
+// Register adds s to the process-wide scrub list. Empty strings are ignored. s is read in place and nothing of it is
+// kept: only its length and two hashes.
 func Register(s string) {
 	if s == "" {
 		return
 	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
-	if registry.secrets == nil {
-		registry.secrets = map[string]struct{}{}
+	if registry.byLength == nil {
+		registry.byLength = map[int]*lengthSet{}
+		registry.b1, registry.b2 = randomBase(), randomBase()
 	}
-	if _, ok := registry.secrets[s]; ok {
-		return
+	set := registry.byLength[len(s)]
+	if set == nil {
+		set = newLengthSet(len(s), registry.b1, registry.b2)
+		registry.byLength[len(s)] = set
 	}
-	registry.secrets[s] = struct{}{}
-	registry.ordered = append(registry.ordered, s)
+	set.hashes[hashPair(s, registry.b1, registry.b2)] = struct{}{}
+}
+
+// newLengthSet is an empty set for secrets n bytes long.
+func newLengthSet(n int, b1, b2 uint64) *lengthSet {
+	set := &lengthSet{hashes: map[[2]uint64]struct{}{}, pow1: 1, pow2: 1}
+	for range n - 1 {
+		set.pow1, set.pow2 = mulMod(set.pow1, b1), mulMod(set.pow2, b2)
+	}
+	return set
+}
+
+// hashPair is s's two hashes: the sum of s[i]*b^(len(s)-1-i), modulo 2^61-1, for each base.
+func hashPair(s string, b1, b2 uint64) [2]uint64 {
+	var h1, h2 uint64
+	for i := 0; i < len(s); i++ {
+		h1 = addMod(mulMod(h1, b1), uint64(s[i]))
+		h2 = addMod(mulMod(h2, b2), uint64(s[i]))
+	}
+	return [2]uint64{h1, h2}
 }
 
 // Scrub removes every registered secret and every secret-shaped pattern from s. Use it on any text that may reach a
 // user, a log or an artifact, such as error messages. Every match is found in the original text, at every starting
 // position, and the union of the matched spans is replaced, overlapping or touching spans as one: a registered secret
 // inside a longer secret-shaped value never leaves the rest of that value behind, and a JWT starting inside an ek_
-// match ("ek_eyJa.b.c") is removed whole. The scan is linear in the text and in each secret.
+// match ("ek_eyJa.b.c") is removed whole. The scan is linear in the text for each length registered.
 func Scrub(s string) string {
 	var spans [][2]int
 	registry.mu.RLock()
-	for _, sec := range registry.ordered {
-		spans = append(spans, occurrences(sec, s)...)
+	for n, set := range registry.byLength {
+		spans = append(spans, occurrences(s, n, set, registry.b1, registry.b2)...)
 	}
 	registry.mu.RUnlock()
 	spans = append(spans, patternSpans(s)...)
@@ -72,37 +153,26 @@ func Scrub(s string) string {
 	return b.String()
 }
 
-// occurrences returns every occurrence of needle in s, overlapping ones included, in O(len(s) + len(needle))
-// (Knuth-Morris-Pratt): repeating strings.Index after each match is quadratic for a long, repetitive secret.
-func occurrences(needle, s string) [][2]int {
-	m := len(needle)
-	if m == 0 || m > len(s) {
+// occurrences returns every window of s, n bytes long, whose two hashes are those of a secret in set, overlapping
+// windows included. Both hashes roll: each step takes the leaving byte out and the next one in, in constant time.
+func occurrences(s string, n int, set *lengthSet, b1, b2 uint64) [][2]int {
+	if n > len(s) {
 		return nil
 	}
-	fail := make([]int, m) // fail[q]: the longest proper border of needle[:q+1]
-	for q, k := 1, 0; q < m; q++ {
-		for k > 0 && needle[q] != needle[k] {
-			k = fail[k-1]
-		}
-		if needle[q] == needle[k] {
-			k++
-		}
-		fail[q] = k
-	}
+	h := hashPair(s[:n], b1, b2)
+	h1, h2 := h[0], h[1]
 	var found [][2]int
-	for i, k := 0, 0; i < len(s); i++ {
-		for k > 0 && s[i] != needle[k] {
-			k = fail[k-1]
+	for i := 0; ; i++ {
+		if _, ok := set.hashes[[2]uint64{h1, h2}]; ok {
+			found = append(found, [2]int{i, i + n})
 		}
-		if s[i] == needle[k] {
-			k++
+		if i+n == len(s) {
+			return found
 		}
-		if k == m {
-			found = append(found, [2]int{i + 1 - m, i + 1})
-			k = fail[k-1]
-		}
+		out, in := uint64(s[i]), uint64(s[i+n])
+		h1 = addMod(mulMod(subMod(h1, mulMod(out, set.pow1)), b1), in)
+		h2 = addMod(mulMod(subMod(h2, mulMod(out, set.pow2)), b2), in)
 	}
-	return found
 }
 
 // patternSpans returns the matches of `eyJ[\w-]+\.[\w-]+\.[\w-]+|ek_[\w-]+` starting at every position. [\w-]

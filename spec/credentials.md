@@ -188,7 +188,11 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
 ## Hygiene (`AUTH-05`)
 
 Every token and `ek_` secret is registered with the scrubber before use. The scrubber replaces registered secrets
-(longest first) and anything shaped like a JWT (`eyJ…​.…​.…`) or an `ek_` secret with `<redacted>`. Every string an
+and anything shaped like a JWT (`eyJ…​.…​.…`) or an `ek_` secret with `<redacted>`, the union of every match found in
+the original text, overlapping or touching matches as one. It keeps no registered secret: each is held as its UTF-8
+length and two polynomial hashes modulo 2^61−1 with bases drawn at random per process, and found by rolling both
+over the text, so a dropped token leaves nothing of itself in the registry. Any other text matches with probability
+below (L/2^61)² per window of length L. Every string an
 error or a log line carries from Codex, a file or the network passes through it, and an error's text is scrubbed
 whole when formatted. A reported mode is filtered to printable characters before it is scrubbed, because removing
 a character can join a secret's pieces. Token values and the inherited environment are never part of a type's

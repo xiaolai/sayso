@@ -3,10 +3,15 @@ package secret
 import (
 	"encoding/json"
 	"fmt"
+	"math/bits"
+	mrand "math/rand/v2"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestSecretsNeverFormat(t *testing.T) {
@@ -151,5 +156,90 @@ func TestSecretsNeverReflect(t *testing.T) {
 	}
 	if tok.Bearer() != "opaque-reflect-token-canary" || cs.Bearer() != "opaque-reflect-secret-canary" {
 		t.Fatal("Bearer lost its value")
+	}
+}
+
+// The rolling match finds exactly the windows equal to a registered secret: every occurrence, overlapping ones
+// included, and nothing else, against a direct comparison, on texts and secrets over a two-letter alphabet where
+// near misses are everywhere.
+func TestRollingMatchIsExact(t *testing.T) {
+	r := mrand.New(mrand.NewPCG(1, 2))
+	b1, b2 := randomBase(), randomBase()
+	word := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = "ab"[r.IntN(2)]
+		}
+		return string(b)
+	}
+	for range 2000 {
+		text := word(r.IntN(64))
+		n := 1 + r.IntN(8)
+		set := newLengthSet(n, b1, b2)
+		secrets := map[string]bool{}
+		for range 1 + r.IntN(4) {
+			sec := word(n)
+			if r.IntN(2) == 0 && len(text) >= n { // often one that occurs
+				at := r.IntN(len(text) - n + 1)
+				sec = text[at : at+n]
+			}
+			secrets[sec] = true
+			set.hashes[hashPair(sec, b1, b2)] = struct{}{}
+		}
+		var want [][2]int
+		for i := 0; i+n <= len(text); i++ {
+			if secrets[text[i:i+n]] {
+				want = append(want, [2]int{i, i + n})
+			}
+		}
+		if got := occurrences(text, n, set, b1, b2); !reflect.DeepEqual(got, want) {
+			t.Fatalf("text %q, secrets %v: windows %v, want %v", text, secrets, got, want)
+		}
+	}
+}
+
+// Thue-Morse strings collide under any odd base modulo 2^64, the modulus a rolling hash is most often written with;
+// modulo 2^61-1 the complementary pair stays apart.
+func TestThueMorseStringsDoNotCollide(t *testing.T) {
+	tm := func(n int, flip bool) string {
+		b := make([]byte, n)
+		for i := range b {
+			if bits.OnesCount(uint(i))%2 == 1 != flip {
+				b[i] = 'b'
+			} else {
+				b[i] = 'a'
+			}
+		}
+		return string(b)
+	}
+	x, y := tm(2048, false), tm(2048, true)
+	for range 20 {
+		b1, b2 := randomBase(), randomBase()
+		if hashPair(x, b1, b2) == hashPair(y, b1, b2) {
+			t.Fatal("a Thue-Morse pair collides")
+		}
+	}
+}
+
+// Register keeps nothing of the secret: once the caller drops it, its memory is collected.
+func TestRegisterKeepsNothingOfTheSecret(t *testing.T) {
+	s := strings.Clone("opaque-reachability-canary-" + strconv.FormatUint(mrand.Uint64(), 36))
+	collected := make(chan struct{})
+	runtime.AddCleanup(unsafe.StringData(s), func(ch chan struct{}) { close(ch) }, collected)
+	Register(s)
+	if got := Scrub("x " + s + " y"); got != "x "+Redacted+" y" {
+		t.Fatalf("Scrub = %q", got)
+	}
+	s = ""
+	deadline := time.After(10 * time.Second)
+	for {
+		runtime.GC()
+		select {
+		case <-collected:
+			return
+		case <-deadline:
+			t.Fatal("the registry keeps the registered string alive")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
