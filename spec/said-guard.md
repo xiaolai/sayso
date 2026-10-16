@@ -3,7 +3,7 @@
 `Matches(said, spoken, language)` (Go: `saidguard.Matches`). The question it answers: *did the model claim to read
 exactly this script?* `said` is the model's own transcript of its audio, `spoken` the script, `language` a BCP 47
 tag. Cases: `fixtures/said-guard.json`, listed in `fixtures/MANIFEST.json`. Both implementations export the guard's
-revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 5), raised whenever a change makes the guard refuse a
+revision (Go `saidguard.Version`, Swift `saidGuardVersion`, now 6), raised whenever a change makes the guard refuse a
 reading it accepted, so a cache of accepted audio keyed on it is not reused across such a change.
 
 **Threat model.** The guard's adversary is a TTS model and an
@@ -30,7 +30,9 @@ the results was tried and abandoned: every rewrite rule could map two different 
 1. **Both sides** get only normalisation: NFKC and width folding; `\p{Cf}` deleted except U+200B, which is a space;
    `\p{Me}` and variation selectors deleted; Unicode decimal digits to ASCII at scalar level; lower case by the
    language's rules (`tr`, `az`); apostrophes unified and **kept**, except a pair of single quotation marks around
-   words (`Say ‘hello’.`, `'yes'`), which is unspoken; an unpaired mark is an apostrophe (`’tis`, `students’`). **Only unspoken punctuation is deleted**, and that
+   words (`Say ‘hello’.`, `'yes'`), which is unspoken; an unpaired mark is an apostrophe (`’tis`, `students’`), and so is
+   a mark before a leading elision, which never opens a pair (`svElisions`, a closed list: `’tis`, `’twas`, `’em`, `’n’`,
+   `’cause`, …), so `’Tis the students’ books` keeps both. **Only unspoken punctuation is deleted**, and that
    set is closed (`. , ; : ! ? " ( ) [ ] { } … – — / \ | _ ~ ·`, CJK and typographic quotes and brackets, emoji and
    other pictographs). Every other non-letter, non-digit character (`% + = & @ ° − × ÷ < > ≠ # * ′ ^ $ € …`) is a token
    on both sides, so a transcript that adds or drops one does not match. A `%`

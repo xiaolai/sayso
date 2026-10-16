@@ -3875,5 +3875,59 @@
   "language": "ja",
   "expect": false,
   "note": "Accepted false mismatch: Japanese kanji numerals also spell words (一緒, 七夕), so a run is not read as a value."
+ },
+ {
+  "id": "said-209",
+  "component": "said-guard",
+  "script": "’Tis the students’ books.",
+  "transcript": "Tis the students books.",
+  "language": "en",
+  "expect": false,
+  "note": "An opener never stands before a leading elision: ’Tis and students’ are two apostrophes, not a quotation, and a dropped apostrophe is a different spelling."
+ },
+ {
+  "id": "said-210",
+  "component": "said-guard",
+  "script": "’Tis the students’ books.",
+  "transcript": "’Tis the students’ books.",
+  "language": "en",
+  "expect": true,
+  "note": "Control: the script matches itself with both apostrophes."
+ },
+ {
+  "id": "said-211",
+  "component": "said-guard",
+  "script": "'Tis the students' books.",
+  "transcript": "’Tis the students’ books.",
+  "language": "en",
+  "expect": true,
+  "note": "ASCII and typographic apostrophes are one mark, also before an elision."
+ },
+ {
+  "id": "said-212",
+  "component": "said-guard",
+  "script": "Rock ’n’ roll",
+  "transcript": "Rock n roll",
+  "language": "en",
+  "expect": false,
+  "note": "’n’ is an elision with both of its apostrophes, not a quoted n."
+ },
+ {
+  "id": "said-213",
+  "component": "said-guard",
+  "script": "She said ‘yes’ to ’em.",
+  "transcript": "She said yes to ’em.",
+  "language": "en",
+  "expect": true,
+  "note": "A quotation and an elision in one sentence: the pair is unspoken, the elision keeps its apostrophe."
+ },
+ {
+  "id": "said-214",
+  "component": "said-guard",
+  "script": "She said ‘yes’ to ’em.",
+  "transcript": "She said yes to em.",
+  "language": "en",
+  "expect": false,
+  "note": "The elision's apostrophe is kept."
  }
 ]
