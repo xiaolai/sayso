@@ -284,7 +284,9 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		k.lost = !waitExit(cmd)
 		close(k.exited)
 	}()
-	runtime.AddCleanup(c, func(k *core) { _ = k.close() }, k)
+	// In a goroutine of its own, as Swift's deinit closes on a thread of its own: close may wait out the grace, and
+	// the runtime asks a long cleanup not to block the goroutines that run the others.
+	runtime.AddCleanup(c, func(k *core) { go func() { _ = k.close() }() }, k)
 
 	name := cfg.ClientName
 	if name == "" {

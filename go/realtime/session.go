@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -64,8 +65,12 @@ type DialConfig struct {
 }
 
 // Session is one realtime WebSocket (NET-03): one reader goroutine feeds a channel, writes are serialised, and no
-// client pings are ever sent: liveness comes from the caller's own timers.
-type Session struct {
+// client pings are ever sent: liveness comes from the caller's own timers. A Session dropped without Close is closed
+// when it is collected: the reader holds its core, never the Session, and its methods keep it alive while they run.
+type Session struct{ k *sessionCore }
+
+// sessionCore is a Session's state, shared with its reader goroutine.
+type sessionCore struct {
 	conn   *websocket.Conn
 	raw    io.Closer // the upgraded connection under conn, nil if not captured
 	logger *slog.Logger
@@ -161,7 +166,7 @@ func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
 		return nil, openaihttp.TransportError("realtime: open WebSocket", err)
 	}
 	conn.SetReadLimit(cfg.ReadLimit)
-	s := &Session{
+	k := &sessionCore{
 		conn:       conn,
 		raw:        capture.captured(),
 		logger:     logger,
@@ -172,12 +177,48 @@ func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
 		readerDone: make(chan struct{}),
 		unknown:    map[string]int{},
 	}
-	go s.readLoop()
+	go k.readLoop()
+	s := &Session{k: k}
+	// In a goroutine of its own: close may wait out the grace, and the runtime asks a long cleanup not to block the
+	// goroutines that run the others.
+	runtime.AddCleanup(s, func(k *sessionCore) {
+		k.logger.Debug("realtime: a session was dropped without Close; closing it")
+		go func() { _ = k.close() }()
+	}, k)
 	return s, nil
 }
 
+// Unknown returns how many events of each unknown type this session received: API drift (NET-04).
+func (s *Session) Unknown() map[string]int {
+	defer runtime.KeepAlive(s)
+	return s.k.unknownCounts()
+}
+
+// Next returns the next event, ignored and unknown types included. A protocol error for one malformed event does not
+// end the session; a connection failure does, and is returned classified from then on, until Close, after which Next
+// returns ErrClosed. Cancelling ctx unblocks it with ctx.Err().
+func (s *Session) Next(ctx context.Context) (Event, error) {
+	defer runtime.KeepAlive(s)
+	return s.k.next(ctx)
+}
+
+// Send writes one client event as JSON, which must be valid UTF-8: a json.RawMessage is passed through as it is, and
+// invalid UTF-8 is an internal error that sends nothing. Writes are serialised; waiting for an earlier write observes
+// ctx and Close.
+func (s *Session) Send(ctx context.Context, event any) error {
+	defer runtime.KeepAlive(s)
+	return s.k.send(ctx, event)
+}
+
+// Close runs the library's close handshake in a goroutine and drops the connection if it has not finished within
+// 2 s. It waits for the reader goroutine, so nothing outlives it. Safe to call more than once.
+func (s *Session) Close() error {
+	defer runtime.KeepAlive(s)
+	return s.k.close()
+}
+
 // readLoop is the only reader. It ends when the connection fails or Close runs.
-func (s *Session) readLoop() {
+func (s *sessionCore) readLoop() {
 	defer close(s.readerDone)
 	defer close(s.events)
 	for {
@@ -211,7 +252,7 @@ func (s *Session) readLoop() {
 
 // countUnknown counts one event of typ; false, counting nothing, when a new type would exceed the budget
 // (MaxUnknownTypes, MaxUnknownTypeBytes).
-func (s *Session) countUnknown(typ string) bool {
+func (s *sessionCore) countUnknown(typ string) bool {
 	s.unknownMu.Lock()
 	if _, seen := s.unknown[typ]; !seen {
 		if len(s.unknown) >= MaxUnknownTypes || s.unknownBytes+len(typ) > MaxUnknownTypeBytes {
@@ -229,17 +270,13 @@ func (s *Session) countUnknown(typ string) bool {
 	return true
 }
 
-// Unknown returns how many events of each unknown type this session received: API drift (NET-04).
-func (s *Session) Unknown() map[string]int {
+func (s *sessionCore) unknownCounts() map[string]int {
 	s.unknownMu.Lock()
 	defer s.unknownMu.Unlock()
 	return maps.Clone(s.unknown)
 }
 
-// Next returns the next event, ignored and unknown types included. A protocol error for one malformed event does not
-// end the session; a connection failure does, and is returned classified from then on, until Close, after which Next
-// returns ErrClosed. Cancelling ctx unblocks it with ctx.Err().
-func (s *Session) Next(ctx context.Context) (Event, error) {
+func (s *sessionCore) next(ctx context.Context) (Event, error) {
 	// A cancelled ctx returns before select, which could otherwise take a pending event and lose it.
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -265,10 +302,7 @@ func (s *Session) Next(ctx context.Context) (Event, error) {
 	}
 }
 
-// Send writes one client event as JSON, which must be valid UTF-8: a json.RawMessage is passed through as it is, and
-// invalid UTF-8 is an internal error that sends nothing. Writes are serialised; waiting for an earlier write observes
-// ctx and Close.
-func (s *Session) Send(ctx context.Context, event any) error {
+func (s *sessionCore) send(ctx context.Context, event any) error {
 	if err := ctx.Err(); err != nil {
 		return err // cancelled before the call: nothing is encoded or sent, and the session is untouched
 	}
@@ -321,9 +355,7 @@ func (s *Session) Send(ctx context.Context, event any) error {
 	return nil
 }
 
-// Close runs the library's close handshake in a goroutine and drops the connection if it has not finished within
-// 2 s. It waits for the reader goroutine, so nothing outlives it. Safe to call more than once.
-func (s *Session) Close() error {
+func (s *sessionCore) close() error {
 	s.closeOnce.Do(func() {
 		close(s.closing)
 		done := make(chan error, 1)

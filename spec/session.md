@@ -21,6 +21,8 @@ Component `session`. Product `RealtimeConnection` (Swift), package `realtime` (G
   nothing. Writes are serialised; closing the session releases every write still waiting for its turn, as closed.
   A write cancelled before it starts sends nothing and leaves the session open; one cancelled in flight ends the
   session.
+- The handshake timeout bounds the handshake only: an open session may wait any time for its next event. A session
+  dropped without a close is closed when it is released (Swift) or collected (Go), its reader included.
 
 ## Close and error classification
 
