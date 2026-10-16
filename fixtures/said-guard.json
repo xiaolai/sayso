@@ -5537,5 +5537,50 @@
   "language": "en",
   "expect": false,
   "note": "The same composed letter after the number."
+ },
+ {
+  "id": "r13-join-jamo",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ",
+  "transcript": "가",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated word's joined reading is normalised again, as a transcript chain is: ᄀ and ᅡ compose to 가."
+ },
+ {
+  "id": "r13-join-final-jamo",
+  "component": "said-guard",
+  "script": "가-ᆨ",
+  "transcript": "각",
+  "language": "en",
+  "expect": true,
+  "note": "가 and a final ᆨ joined compose to 각."
+ },
+ {
+  "id": "r13-join-jamo-spaced",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ",
+  "transcript": "ᄀ ᅡ",
+  "language": "en",
+  "expect": true,
+  "note": "The hyphenated jamo read apart, as written."
+ },
+ {
+  "id": "r13-join-domain-label",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ.com",
+  "transcript": "가 dot com",
+  "language": "en",
+  "expect": true,
+  "note": "A hyphenated domain label's joined reading is normalised again too."
+ },
+ {
+  "id": "r13-join-domain-label-written",
+  "component": "said-guard",
+  "script": "ᄀ-ᅡ.com",
+  "transcript": "가.com",
+  "language": "en",
+  "expect": true,
+  "note": "The same label with its dot written."
  }
 ]

@@ -1,5 +1,5 @@
 {
- "count": 980,
+ "count": 985,
  "fixtures": [
   {
    "id": "app-ready",
@@ -5699,6 +5699,36 @@
   },
   {
    "id": "r13-nfkc-hangul-final-before",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-jamo",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-final-jamo",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-jamo-spaced",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-domain-label",
+   "file": "said-guard.json",
+   "component": "said-guard",
+   "requires": []
+  },
+  {
+   "id": "r13-join-domain-label-written",
    "file": "said-guard.json",
    "component": "said-guard",
    "requires": []
