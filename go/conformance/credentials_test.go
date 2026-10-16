@@ -238,7 +238,7 @@ func build(t *testing.T, s credSetup, python, fake string) (*world, error) {
 		source = codexauth.SourceFile
 	}
 	w.cfg = codexauth.Config{
-		Source: source, Bin: explicit, Home: w.home, ConfineCodexHome: w.home, Env: env, Candidates: candidates,
+		Source: source, Bin: explicit, Home: w.home, ConfineCodexHome: w.home, Env: codexapp.EnvOf(env), Candidates: candidates,
 		Margin: time.Duration(cmp(s.MarginSeconds, 600)) * time.Second, Timeout: time.Duration(cmp(s.TimeoutMs, 5000)) * time.Millisecond,
 		Now:    func() time.Time { return w.now },
 		Logger: slog.New(slog.NewTextHandler(w.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),

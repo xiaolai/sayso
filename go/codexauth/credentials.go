@@ -39,7 +39,9 @@ type Config struct {
 	// ConfineCodexHome, when set, is the folder a CODEX_HOME must resolve inside for auth.json to be read (a
 	// sandboxed app confines it to the home folder). "" confines nothing; ownership is checked either way.
 	ConfineCodexHome string
-	Env              []string
+	// Env is the child's environment; the zero Env inherits os.Environ(). codexapp.Env never shows a variable, under
+	// any verb or by reflection, so a Config held in an unexported field cannot leak it.
+	Env codexapp.Env
 	// Candidates are the folders searched after PATH; nil means codexapp.Candidates(Home).
 	Candidates []string
 	// Margin is how much lifetime a token must have left; below it, it is refreshed before use. Required.
@@ -71,7 +73,7 @@ type Info struct {
 // concurrent use and lives as long as the caller wants; Codex runs only during a fetch or a refresh.
 type Credentials struct {
 	// cfg sits behind a pointer, so formatting a struct that holds Credentials in an unexported field (which fmt
-	// prints by reflection, without the redacting methods) shows an address. Its Env is nil: the environment is in env.
+	// prints by reflection, without the redacting methods) shows an address. Its Env is the zero Env: the environment is in env.
 	cfg *Config // never changed after New
 	// env returns a copy of the child's environment. The variables live in a closure, which fmt prints as an address
 	// and reflection cannot read, so neither formatting nor reflection on Credentials reaches them.
@@ -115,9 +117,10 @@ func New(cfg Config) (*Credentials, error) {
 	}
 	// Copies: a caller changing its slices later must not change the child's environment or the executable lookup,
 	// nor race with a fetch. nil stays nil, so its default still applies.
-	cfg.Env, cfg.Candidates = slices.Clone(cfg.Env), slices.Clone(cfg.Candidates)
-	if cfg.Env == nil {
-		cfg.Env = os.Environ()
+	kv := cfg.Env.List()
+	cfg.Candidates = slices.Clone(cfg.Candidates)
+	if cfg.Env.IsZero() {
+		kv = os.Environ()
 	}
 	if cfg.Home == "" {
 		h, err := os.UserHomeDir()
@@ -127,8 +130,8 @@ func New(cfg Config) (*Credentials, error) {
 		cfg.Home = h
 	}
 	path := ""
-	for _, kv := range cfg.Env {
-		if name, value, _ := strings.Cut(kv, "="); name == "CODEX_HOME" && cfg.CodexHome == "" {
+	for _, v := range kv {
+		if name, value, _ := strings.Cut(v, "="); name == "CODEX_HOME" && cfg.CodexHome == "" {
 			cfg.CodexHome = value
 		} else if name == "PATH" {
 			path = value
@@ -143,8 +146,8 @@ func New(cfg Config) (*Credentials, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	held := cfg.Env
-	cfg.Env = nil
+	held := kv
+	cfg.Env = codexapp.Env{}
 	env := func() []string { return slices.Clone(held) }
 	c := &Credentials{cfg: &cfg, env: env, path: path, lock: make(chan struct{}, 1), state: &state{}, refreshes: new(atomic.Int64)}
 	c.refresh = c.refreshCodex

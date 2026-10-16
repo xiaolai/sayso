@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -51,7 +52,7 @@ func TestErrorFormattingRedacts(t *testing.T) {
 // environment, is behind a pointer there.
 func TestCredentialsNestedFormatting(t *testing.T) {
 	c, err := New(Config{Source: SourceFile, Margin: time.Minute, Timeout: time.Second, Home: t.TempDir(),
-		Env: []string{"OPENAI_API_KEY=opaque-canary-env-4", "PATH=/usr/bin"}})
+		Env: codexapp.EnvOf([]string{"OPENAI_API_KEY=opaque-canary-env-4", "PATH=/usr/bin"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestCredentialsNestedFormatting(t *testing.T) {
 func TestCancelledCallerNeverRuns(t *testing.T) {
 	ran := 0
 	c, err := New(Config{Source: SourceFile, Margin: time.Minute, Timeout: time.Second, Home: t.TempDir(),
-		Env: []string{"PATH=/usr/bin"}, Guard: func(string) error { ran++; return nil }})
+		Env: codexapp.EnvOf([]string{"PATH=/usr/bin"}), Guard: func(string) error { ran++; return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestCancelledCallerNeverRuns(t *testing.T) {
 // New copies the caller's slices: changing them later changes nothing.
 func TestNewCopiesTheCallersSlices(t *testing.T) {
 	env, cands := []string{"PATH=/usr/bin", "X=1"}, []string{"/a"}
-	c, err := New(Config{Source: SourceFile, Margin: time.Minute, Timeout: time.Second, Home: t.TempDir(), Env: env, Candidates: cands})
+	c, err := New(Config{Source: SourceFile, Margin: time.Minute, Timeout: time.Second, Home: t.TempDir(), Env: codexapp.EnvOf(env), Candidates: cands})
 	if err != nil {
 		t.Fatal(err)
 	}

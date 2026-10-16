@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xiaolai/sayso/go/codexapp"
 )
 
 // reach reports whether walking v by reflection, unexported fields and pointers included, finds a string containing
@@ -51,7 +53,7 @@ func reach(v reflect.Value, needle string, seen map[uintptr]bool) bool {
 // environment, which lives in a closure.
 func TestCredentialsEnvironmentIsBeyondReflection(t *testing.T) {
 	c, err := New(Config{Source: SourceFile, Margin: time.Minute, Timeout: time.Second, Home: t.TempDir(),
-		Env: []string{"OPENAI_API_KEY=opaque-canary-env-6", "PATH=/usr/bin"}})
+		Env: codexapp.EnvOf([]string{"OPENAI_API_KEY=opaque-canary-env-6", "PATH=/usr/bin"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,5 +76,26 @@ func TestCredentialsEnvironmentIsBeyondReflection(t *testing.T) {
 	c.env()[0] = "X=1"
 	if c.env()[0] == "X=1" {
 		t.Error("env returned the held slice")
+	}
+}
+
+// A caller's own Config, held in an unexported field or reached by reflection, does not show its environment: Env is a
+// codexapp.Env, which keeps the variables in a closure.
+func TestConfigEnvironmentIsBeyondReflection(t *testing.T) {
+	cfg := Config{Source: SourceFile, Env: codexapp.EnvOf([]string{"OPENAI_API_KEY=opaque-canary-env-7"})}
+	type holder struct{ cfg Config }
+	type ptrHolder struct{ cfg *Config }
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%d"} {
+		for _, v := range []any{holder{cfg}, ptrHolder{&cfg}, cfg, &cfg} {
+			if s := fmt.Sprintf(verb, v); strings.Contains(s, "canary") {
+				t.Errorf("%s shows the environment: %s", verb, s)
+			}
+		}
+	}
+	if reach(reflect.ValueOf(holder{cfg}), "canary", map[uintptr]bool{}) {
+		t.Error("reflection on Config reaches the environment")
+	}
+	if got := cfg.Env.List(); len(got) != 1 {
+		t.Errorf("the environment was not kept: %d variables", len(got))
 	}
 }

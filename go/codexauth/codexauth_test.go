@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiaolai/sayso/go/codexapp"
 	"github.com/xiaolai/sayso/go/openaihttp"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -91,7 +92,7 @@ func fileCreds(t *testing.T, content string) *Credentials {
 	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(Config{Source: SourceFile, Home: home, Env: []string{}, Margin: time.Minute, Timeout: time.Second})
+	c, err := New(Config{Source: SourceFile, Home: home, Env: codexapp.EnvOf([]string{}), Margin: time.Minute, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func fileCreds(t *testing.T, content string) *Credentials {
 // Concurrent refusals of one token cause one refresh: the others get its replacement.
 func TestRefreshAfterIsSingleFlight(t *testing.T) {
 	now := time.Unix(1800000000, 0)
-	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: time.Minute, Timeout: time.Second,
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: codexapp.EnvOf([]string{}), Margin: time.Minute, Timeout: time.Second,
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func TestRefreshAfterIsSingleFlight(t *testing.T) {
 // A refresh failure backs off from 60 s, doubling to 15 min, and a success resets it.
 func TestRefreshBackoff(t *testing.T) {
 	now := time.Unix(1800000000, 0)
-	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: 10 * time.Minute, Timeout: time.Second,
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: codexapp.EnvOf([]string{}), Margin: 10 * time.Minute, Timeout: time.Second,
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +189,7 @@ func TestTokenHonoursContextWhileWaiting(t *testing.T) {
 // bearer: one refresh, not one per caller.
 func TestRefreshAfterSharesARefreshThatReturnedTheSameBearer(t *testing.T) {
 	now := time.Unix(1800000000, 0)
-	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: time.Minute, Timeout: time.Second,
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: codexapp.EnvOf([]string{}), Margin: time.Minute, Timeout: time.Second,
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +219,7 @@ func TestRefreshAfterSharesARefreshThatReturnedTheSameBearer(t *testing.T) {
 // The backoff runs from the failure, so a refresh that took longer than the backoff does not allow an immediate retry.
 func TestBackoffRunsFromTheFailure(t *testing.T) {
 	now := time.Unix(1800000000, 0)
-	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: 10 * time.Minute, Timeout: time.Second,
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: codexapp.EnvOf([]string{}), Margin: 10 * time.Minute, Timeout: time.Second,
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +242,7 @@ func TestBackoffRunsFromTheFailure(t *testing.T) {
 // A refresh the caller cancelled is not a refresh failure: it spends no backoff.
 func TestCancelledRefreshSpendsNoBackoff(t *testing.T) {
 	now := time.Unix(1800000000, 0)
-	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: []string{}, Margin: 10 * time.Minute, Timeout: time.Second,
+	c, err := New(Config{Source: SourceCodex, Home: t.TempDir(), Env: codexapp.EnvOf([]string{}), Margin: 10 * time.Minute, Timeout: time.Second,
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +264,7 @@ func TestCancelledRefreshSpendsNoBackoff(t *testing.T) {
 
 // Formatting the credentials, the value as well as the pointer, or their Config never prints the environment.
 func TestFormattingNeverPrintsTheEnvironment(t *testing.T) {
-	c, err := New(Config{Source: SourceFile, Home: t.TempDir(), Env: []string{"OPENAI_API_KEY=canary-env-2"},
+	c, err := New(Config{Source: SourceFile, Home: t.TempDir(), Env: codexapp.EnvOf([]string{"OPENAI_API_KEY=canary-env-2"}),
 		Margin: time.Minute, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +325,7 @@ func TestFileReadsThroughThePinnedFolder(t *testing.T) {
 // A late refusal of an older token does not unmark the current one (spec/credentials.md, after a refusal).
 func TestLateRefusalKeepsTheCurrentRefusal(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: []string{}, Home: t.TempDir(), Now: func() time.Time { return now }})
+	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: codexapp.EnvOf([]string{}), Home: t.TempDir(), Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +360,7 @@ func TestLateRefusalKeepsTheCurrentRefusal(t *testing.T) {
 // A caller paused before taking the lock does not take a token refused after a refresh it waited for.
 func TestPausedRefusalDoesNotTakeARefusedToken(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: []string{}, Home: t.TempDir(), Now: func() time.Time { return now }})
+	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: codexapp.EnvOf([]string{}), Home: t.TempDir(), Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +390,7 @@ func TestPausedRefusalDoesNotTakeARefusedToken(t *testing.T) {
 
 // Formatting the value while a fetch runs reads no mutable state (run under -race).
 func TestFormattingDoesNotRaceAFetch(t *testing.T) {
-	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: []string{}, Home: t.TempDir()})
+	c, err := New(Config{Source: SourceCodex, Margin: time.Minute, Timeout: time.Second, Env: codexapp.EnvOf([]string{}), Home: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
