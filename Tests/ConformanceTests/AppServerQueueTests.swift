@@ -120,15 +120,16 @@ final class AppServerQueueTests: XCTestCase {
     /// every call returns, and the child reads every answer exactly once.
     func testConcurrentCallsWithInterleavedRefusals() throws {
         let (script, cleanup) = try fakeCodex(
-            "seen = set()\nrefused = set()\nn = 0\n"
+            "seen = set()\nrefused = set()\nn = 0\norder = []\n"
                 + "for line in sys.stdin:\n"
                 + "    m = json.loads(line)\n"
+                + "    order.append(str(m['id']))\n"
                 + "    if 'error' in m:\n"
                 + "        assert m['id'] not in refused\n"
                 + "        refused.add(m['id'])\n"
                 + "        continue\n"
                 + "    if m.get('method') == 'count':\n"
-                + "        print(json.dumps({'id': m['id'], 'result': {'refused': len(refused), 'calls': n}}), flush=True)\n"
+                + "        print(json.dumps({'id': m['id'], 'result': {'refused': len(refused), 'calls': n, 'order': order}}), flush=True)\n"
                 + "        continue\n"
                 + "    n += 1\n"
                 + "    print(json.dumps({'id': 'srv-%d' % n, 'method': 'approve'}), flush=True)\n"
@@ -136,6 +137,7 @@ final class AppServerQueueTests: XCTestCase {
         defer { cleanup() }
         let c = try start(script, timeout: 10, nil)
         defer { c.close() }
+        c.setTestSeams(recordAdmissions: true)
         let group = DispatchGroup()
         let failures = NSLock()
         nonisolated(unsafe) var errors: [String] = []
@@ -150,13 +152,66 @@ final class AppServerQueueTests: XCTestCase {
         XCTAssertEqual(failures.withLock { errors }, [])
         // The answers to the last server requests may still be on their way: count until all 24 have arrived.
         var refused = 0
+        var order: [String] = []
         let deadline = Date().addingTimeInterval(5)
         repeat {
             let r = try XCTUnwrap(try c.call("count") as? [String: Any])
             XCTAssertEqual(r["calls"] as? Int, 24)
             refused = r["refused"] as? Int ?? -1
+            order = r["order"] as? [String] ?? []
         } while refused < 24 && Date() < deadline
         XCTAssertEqual(refused, 24)
+        // The child read every message in the order it was admitted to the one queue, not merely all of them.
+        let admitted = c.admittedMessages.map { data -> String in
+            guard let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let id = m["id"] else {
+                return "?"
+            }
+            return "\(id)"
+        }
+        XCTAssertEqual(Array(admitted.prefix(order.count)), order, "read out of admission order")
+    }
+
+    /// An answer is admitted when its server request is read, before it is encoded: a request queued while the answer
+    /// is still being encoded is written after it, and the writer waits at the answer's slot meanwhile. The child sends
+    /// srv-1, then reports the order it reads the next two messages in.
+    func testAnswerIsAdmittedBeforeItIsEncoded() throws {
+        let (script, cleanup) = try fakeCodex(
+            "arm = json.loads(sys.stdin.readline())\n"
+                + "print(json.dumps({'id': arm['id'], 'result': {}}), flush=True)\n"
+                + "print(json.dumps({'id': 'srv-1', 'method': 'approve'}), flush=True)\n"
+                + "order = []\ncall = None\n"
+                + "for line in sys.stdin:\n"
+                + "    m = json.loads(line)\n"
+                + "    order.append(str(m['id']) if 'error' in m else 'call')\n"
+                + "    if 'method' in m:\n"
+                + "        call = m\n"
+                + "    if len(order) == 2:\n"
+                + "        print(json.dumps({'id': call['id'], 'result': {'order': order}}), flush=True)\n"
+                + "time.sleep(30)\n")
+        defer { cleanup() }
+        let admitted = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let c = try start(script, timeout: 5, nil)
+        defer { c.close() }
+        c.setTestSeams(refusalAdmitted: {
+            admitted.signal()
+            release.wait()
+        })
+        _ = try c.call("arm")  // after its reply the child sends srv-1
+        XCTAssertEqual(admitted.wait(timeout: .now() + 5), .success, "srv-1 was not answered")
+        let finished = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var reply: Any?
+        Thread {
+            reply = try? c.call("B")
+            finished.signal()
+        }.start()
+        // The call is queued behind the answer's slot, not written past it.
+        let deadline = Date().addingTimeInterval(5)
+        while c.held.outbound != 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.002) }
+        XCTAssertEqual(c.held.outbound, 2, "the call was not held behind the answer being encoded")
+        release.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 5), .success, "the call did not return")
+        XCTAssertEqual((reply as? [String: Any])?["order"] as? [String], ["srv-1", "call"])
     }
 
     /// After an overflow, the events held before it are delivered once the handler is released, before close; the

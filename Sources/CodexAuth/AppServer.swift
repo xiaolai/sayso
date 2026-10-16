@@ -355,6 +355,20 @@ public final class AppServerClient: @unchecked Sendable {
     /// What the client still holds, for tests: the messages waiting to be written, the refusal bytes charged, and the
     /// events waiting for the handler with their charge.
     var held: (outbound: Int, refusalBytes: Int, events: Int, eventBytes: Int) { core.held }
+
+    /// Test seams; see ``AppServerCore/setTestSeams(refusalAdmitted:eventAdmitted:recordAdmissions:)``.
+    func setTestSeams(
+        refusalAdmitted: (@Sendable () -> Void)? = nil, eventAdmitted: (@Sendable () -> Void)? = nil,
+        recordAdmissions: Bool = false
+    ) {
+        core.setTestSeams(refusalAdmitted: refusalAdmitted, eventAdmitted: eventAdmitted, recordAdmissions: recordAdmissions)
+    }
+
+    /// The messages admitted since recording began, in admission order, for tests.
+    var admittedMessages: [Data] { core.admittedMessages }
+
+    /// Waits for the event thread to end, for tests.
+    func waitForEventLoop(timeout: TimeInterval) -> Bool { core.waitForEventLoop(timeout: timeout) }
 }
 
 /// The child's process, pipes, readers and pending calls.
@@ -423,8 +437,9 @@ final class AppServerCore: @unchecked Sendable {
     /// no bytes, the marker close waits for. `state` and `error` are guarded by `lock`; `done` is signalled once the
     /// outcome is known.
     private final class Outbound {
-        enum State { case queued, started, abandoned }
-        let data: Data
+        /// `reserved` is an answer admitted before its bytes are encoded: the writer waits at it.
+        enum State { case queued, started, abandoned, reserved }
+        var data: Data  // guarded by `lock` while reserved
         let isRefusal: Bool
         /// The caller's; a refusal's starts when its write does.
         let deadline: DispatchTime
@@ -432,11 +447,41 @@ final class AppServerCore: @unchecked Sendable {
         var state = State.queued
         var error: AppServerError?
 
-        init(_ data: Data, isRefusal: Bool = false, deadline: DispatchTime = .distantFuture) {
+        init(_ data: Data, isRefusal: Bool = false, deadline: DispatchTime = .distantFuture, reserved: Bool = false) {
             self.data = data
             self.isRefusal = isRefusal
             self.deadline = deadline
+            if reserved { state = .reserved }
         }
+    }
+
+    /// Test seams, nil outside this package's tests, guarded by `lock`: `testRefusalAdmitted` runs after an answer's
+    /// slot is admitted and before its bytes are encoded, `testEventAdmitted` after an event is admitted and before
+    /// the handler is called, and `admissions`, when set, records every message in the order it was admitted.
+    private var testRefusalAdmitted: (@Sendable () -> Void)?
+    private var testEventAdmitted: (@Sendable () -> Void)?
+    private var admissions: [Outbound]?
+    /// Signalled when the event thread ends.
+    private let eventLoopEnded = DispatchSemaphore(value: 0)
+
+    func setTestSeams(
+        refusalAdmitted: (@Sendable () -> Void)? = nil, eventAdmitted: (@Sendable () -> Void)? = nil,
+        recordAdmissions: Bool = false
+    ) {
+        lock.withLock {
+            testRefusalAdmitted = refusalAdmitted
+            testEventAdmitted = eventAdmitted
+            admissions = recordAdmissions ? [] : nil
+        }
+    }
+
+    /// The bytes of every message admitted since `setTestSeams(recordAdmissions: true)`, in admission order; an answer
+    /// still being encoded is empty.
+    var admittedMessages: [Data] { lock.withLock { admissions?.map(\.data) ?? [] } }
+
+    /// Waits for the event thread to end.
+    func waitForEventLoop(timeout: TimeInterval) -> Bool {
+        eventLoopEnded.wait(timeout: .now() + timeout) == .success
     }
 
     init(
@@ -672,6 +717,7 @@ final class AppServerCore: @unchecked Sendable {
         try lock.withLock {
             if let failure { throw failure }
             out.append(o)
+            admissions?.append(o)
         }
         outWake.signal()
         if o.done.wait(timeout: deadline) == .timedOut {
@@ -701,7 +747,9 @@ final class AppServerCore: @unchecked Sendable {
                 }
                 let next = lock.withLock { () -> Next in
                     if failure != nil { return .stop }
-                    while let o = out.popFirst() {
+                    while let o = out.first {
+                        if o.state == .reserved { return .wait }  // an answer still being encoded: refuse wakes us
+                        _ = out.popFirst()
                         if o.state == .abandoned { continue }
                         o.state = .started
                         return .write(o)
@@ -995,6 +1043,7 @@ final class AppServerCore: @unchecked Sendable {
     /// close); none is admitted after. After the child fails or exits the events already queued are still delivered.
     /// The event being delivered stays charged against the bounds until the handler returns.
     private func eventLoop() {
+        defer { eventLoopEnded.signal() }
         guard let onEvent else { return }
         enum Next {
             case deliver(AppServerEvent)
@@ -1026,9 +1075,20 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Queues the answer to a server request (an approval, for instance): an error, written by ``writeLoop()`` in its
     /// turn. The reader never writes, so a child that blocks on its full output while we wait to write its input
-    /// cannot stall it. Refusals beyond `refusalCap`, from a child that sends requests without reading the answers,
-    /// fail the client.
+    /// cannot stall it. The answer is admitted to the queue as soon as the server request is read, before it is
+    /// encoded, so a request queued while it is encoded is written after it; the writer waits at its slot until the
+    /// bytes are in. Refusals beyond `refusalCap`, from a child that sends requests without reading the answers, fail
+    /// the client.
     private func refuse(_ id: Any) {
+        let slot = Outbound(Data(), isRefusal: true, reserved: true)
+        let admitted = lock.withLock { () -> (@Sendable () -> Void)?? in
+            guard failure == nil else { return nil }  // failed: the queue is gone
+            out.append(slot)
+            admissions?.append(slot)
+            return .some(testRefusalAdmitted)
+        }
+        guard let hook = admitted else { return }
+        hook?()
         let message: [String: Any] = [
             "id": id, "error": ["code": AppServerError.methodNotFound, "message": "server requests are not supported"],
         ]
@@ -1037,9 +1097,10 @@ final class AppServerCore: @unchecked Sendable {
             return
         }
         let over = lock.withLock { () -> Bool? in
-            guard failure == nil else { return nil }
+            guard failure == nil else { return nil }  // a failure dropped the queue, the slot with it
             guard refusalBytes + data.count <= Self.refusalCap else { return true }
-            out.append(Outbound(data, isRefusal: true))
+            slot.data = data
+            slot.state = .queued
             refusalBytes += data.count
             return false
         }
@@ -1155,6 +1216,8 @@ struct FIFO<Element> {
     private var head = 0
 
     var count: Int { slots.count - head }
+
+    var first: Element? { head < slots.count ? slots[head] : nil }
 
     mutating func append(_ e: Element) { slots.append(e) }
 

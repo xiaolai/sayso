@@ -161,6 +161,10 @@ type core struct {
 	dead       chan struct{} // closed when the reader stops
 	exited     chan struct{} // closed when the child has exited (on macOS and Linux it stays unreaped until Close)
 	closeMu    sync.Once
+
+	// Test seam, nil outside this package's tests: testRefusalAdmitted runs after an answer's slot is admitted and
+	// before its bytes are encoded.
+	testRefusalAdmitted func()
 }
 
 type response struct {
@@ -412,6 +416,7 @@ const (
 	outQueued = iota
 	outStarted
 	outAbandoned // its caller gave up before writeLoop reached it: skipped
+	outReserved  // an answer admitted before its bytes are encoded: writeLoop waits at it
 )
 
 // enqueue appends o to the outbound queue; false once the client has failed.
@@ -435,9 +440,17 @@ func (k *core) enqueue(o *outbound) bool {
 
 // refuse queues the answer to a server request (an approval, for instance): an error, written by writeLoop in its
 // turn. The reader never writes, so a child that blocks on its full output while we wait to write its input cannot
-// stall it. Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the
-// client.
+// stall it. The answer is admitted to the queue as soon as the server request is read, before it is encoded, so a
+// request queued while it is encoded is written after it; writeLoop waits at its slot until the bytes are in.
+// Refusals beyond refusalCap, from a child that sends requests without reading the answers, fail the client.
 func (k *core) refuse(id wire.Node) {
+	slot := &outbound{refusal: true, state: outReserved}
+	if !k.enqueue(slot) {
+		return // failed: the queue is gone
+	}
+	if k.testRefusalAdmitted != nil {
+		k.testRefusalAdmitted()
+	}
 	msg := map[string]any{"id": json.RawMessage(id.Raw()), "error": map[string]any{"code": CodeMethodNotFound, "message": "server requests are not supported"}}
 	b, err := json.Marshal(msg)
 	if err != nil { // id is a parsed JSON value, so this cannot happen
@@ -446,13 +459,22 @@ func (k *core) refuse(id wire.Node) {
 	}
 	b = append(b, '\n')
 	k.mu.Lock()
-	over := k.refusalBytes+len(b) > refusalCap
-	k.mu.Unlock()
-	if over {
+	if k.failure != nil { // a failure dropped the queue, the slot with it
+		k.mu.Unlock()
+		return
+	}
+	if k.refusalBytes+len(b) > refusalCap {
+		k.mu.Unlock()
 		k.fail(codexError("Codex app-server sent server requests without reading the answers", nil))
 		return
 	}
-	k.enqueue(&outbound{b: b, refusal: true})
+	slot.b, slot.state = b, outQueued
+	k.refusalBytes += len(b)
+	k.mu.Unlock()
+	select {
+	case k.outWake <- struct{}{}:
+	default: // a wake-up is already pending
+	}
 }
 
 // writeLoop writes the queued messages in order until the client fails. A request's write keeps its caller's
@@ -477,6 +499,10 @@ func (k *core) writeLoop() {
 				break
 			}
 			o := k.out[0]
+			if o.state == outReserved { // an answer still being encoded: refuse wakes us when it is in
+				k.mu.Unlock()
+				break
+			}
 			k.out[0] = nil
 			k.out = k.out[1:]
 			if o.state == outAbandoned {
