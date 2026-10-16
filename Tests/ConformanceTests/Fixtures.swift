@@ -127,6 +127,16 @@ extension DispatchSemaphore {
     func waited(_ seconds: TimeInterval = signalWait) -> Bool { wait(timeout: .now() + seconds) == .success }
 }
 
+/// Polls `condition` until it holds or `seconds` pass, for state with no signal of its own; whether it held.
+func eventually(_ seconds: TimeInterval = signalWait, _ condition: () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !condition() {
+        if Date() >= deadline { return false }
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    return true
+}
+
 /// Outcomes for tools/parity.py, written to results-swift.json when SAYSO_RESULTS names a path.
 final class Results: @unchecked Sendable {
     static let shared = Results()
