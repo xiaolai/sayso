@@ -28,10 +28,22 @@ public enum Secret {
     /// cannot hide it, and every match is found in the original text: the union of the matched spans is replaced, so a
     /// registered secret inside a longer secret-shaped value never leaves the rest of that value behind.
     public static func scrub(_ text: String) -> String {
-        let bytes = Array(text.utf8)
+        var text = text
+        return text.withUTF8 { scrubbed(UnsafeRawBufferPointer($0)) } ?? text
+    }
+
+    /// The UTF-8 text `utf8` scrubbed as ``scrub(_:)`` scrubs a `String`, read where it lies: only the scrubbed text is
+    /// made a `String`, so a secret it removes leaves no copy behind.
+    package static func scrub(utf8: UnsafeRawBufferPointer) -> String {
+        scrubbed(utf8) ?? String(decoding: utf8, as: UTF8.self)
+    }
+
+    /// `bytes` with every match replaced by ``redacted``; nil when nothing matches. The bytes are read in place: the
+    /// scrubber makes no copy of the text it is given, which may hold a secret.
+    private static func scrubbed(_ bytes: UnsafeRawBufferPointer) -> String? {
         var spans = registry.spans(in: bytes)
         spans += patternSpans(bytes)
-        guard !spans.isEmpty else { return text }
+        guard !spans.isEmpty else { return nil }
         spans.sort { $0.lowerBound < $1.lowerBound }
         var out: [UInt8] = []
         out.reserveCapacity(bytes.count)
@@ -56,7 +68,7 @@ public enum Secret {
     /// every position, overlapping ones included: a JWT can start inside an `ek_` match (`ek_eyJa.b.c`) and reach past
     /// it. `[\w-]` excludes `.`, so each run is maximal and a match is decided in constant time from the precomputed
     /// run ends: the scan is linear.
-    static func patternSpans(_ bytes: [UInt8]) -> [Range<Int>] {
+    static func patternSpans(_ bytes: UnsafeRawBufferPointer) -> [Range<Int>] {
         func isWord(_ b: UInt8) -> Bool {
             (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || b == 0x5F || b == 0x2D
         }
@@ -169,7 +181,7 @@ public enum Secret {
         }
 
         /// Every window of `bytes` equal to a registered secret, overlapping ones included.
-        func spans(in bytes: [UInt8]) -> [Range<Int>] {
+        func spans(in bytes: UnsafeRawBufferPointer) -> [Range<Int>] {
             lock.lock()
             let sets = byLength
             lock.unlock()
@@ -180,7 +192,7 @@ public enum Secret {
 
         /// Every window of `bytes`, `n` long, whose two hashes are those of a secret in `set`. Both hashes roll: each
         /// step takes the leaving byte out and the next one in, in constant time.
-        func occurrences(in bytes: [UInt8], length n: Int, set: LengthSet) -> [Range<Int>] {
+        func occurrences(in bytes: UnsafeRawBufferPointer, length n: Int, set: LengthSet) -> [Range<Int>] {
             guard n > 0, n <= bytes.count else { return [] }
             var h = pair(bytes[0..<n])
             var found: [Range<Int>] = []

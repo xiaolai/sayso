@@ -61,9 +61,9 @@ final class SecretHygieneTests: XCTestCase {
                 registry.add(String(decoding: secret, as: UTF8.self))
             }
             let want = text.count >= n ? (0...(text.count - n)).filter { secrets.contains(Array(text[$0..<$0 + n])) } : []
-            let got = registry.spans(in: text).map(\.lowerBound).sorted()
-            XCTAssertEqual(got, want, "text \(text), secrets \(secrets)")
-            XCTAssert(registry.spans(in: text).allSatisfy { $0.count == n })
+            let spans = text.withUnsafeBytes { registry.spans(in: $0) }
+            XCTAssertEqual(spans.map(\.lowerBound).sorted(), want, "text \(text), secrets \(secrets)")
+            XCTAssert(spans.allSatisfy { $0.count == n })
         }
     }
 
@@ -90,6 +90,28 @@ final class SecretHygieneTests: XCTestCase {
         Secret.register(secret)
         XCTAssertEqual(scan.occurrences()[0], before, "the registry kept a copy of the secret")
         XCTAssertEqual(Secret.scrub("x " + secret + " y"), "x \(Secret.redacted) y")
+    }
+
+    /// The scrubber reads its text where it lies, a `String` or bytes: text naming a registered secret leaves no copy
+    /// of it in memory freed while it is scrubbed.
+    func testScrubMakesNoCopy() throws {
+        if MemoryScan.allocatorReplaced { throw XCTSkip("a sanitizer replaced the allocator the scan watches") }
+        let scan = MemoryScan()
+        let n = scan.needle()
+        let start = scan.mark
+        scan.append("refused ")
+        scan.append(copyOf: n)
+        scan.append(" there")
+        let text = scan.bytes(start..<scan.mark)
+        let secret = String(decoding: scan.bytes(n), as: UTF8.self), string = String(decoding: text, as: UTF8.self)
+        Secret.register(secret)
+        var out = ""
+        withExtendedLifetime((secret, string)) {
+            XCTAssertEqual(scan.frees { out = Secret.scrub(string) }, [0], "the scrubber copied the String it was given")
+            XCTAssertEqual(out, "refused \(Secret.redacted) there")
+            XCTAssertEqual(scan.frees { out = Secret.scrub(utf8: text) }, [0], "the scrubber copied the bytes it was given")
+            XCTAssertEqual(out, "refused \(Secret.redacted) there")
+        }
     }
 }
 
