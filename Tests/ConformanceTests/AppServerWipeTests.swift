@@ -22,9 +22,11 @@ final class AppServerWipeTests: XCTestCase {
     }
 
     /// Starts a child that answers initialize, then sends each answer in turn; after the last it reads until its
-    /// input ends with its output still open, or exits when `exitAfter` is set.
+    /// input ends with its output still open, or exits when `exitAfter` is set. The timeout only catches a child that
+    /// hangs: these tests measure memory, and a debug build's work on a 4 MiB line scales with the CPU a loaded machine
+    /// leaves it (10 times slower at 10 times oversubscribed), so it is far above the seconds that work takes idle.
     private func start(
-        _ w: WipeScan, _ answers: [Answer], timeout: TimeInterval = 30, exitAfter: Bool = false,
+        _ w: WipeScan, _ answers: [Answer], timeout: TimeInterval = 300, exitAfter: Bool = false,
         onEvent: (@Sendable (AppServerClient, AppServerEvent) -> Void)? = nil
     ) throws -> AppServerClient {
         let dir = try XCTUnwrap(realpath(NSTemporaryDirectory(), nil).map { p in defer { free(p) }; return String(cString: p) })

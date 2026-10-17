@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -29,20 +30,20 @@ import (
 var fakeServer = filepath.Join("..", "..", "tools", "fake-app-server.py")
 
 type credSetup struct {
-	Now           int64             `json:"now"`
-	MarginSeconds int64             `json:"marginSeconds"`
-	Source        string            `json:"source"`
-	Codex         string            `json:"codex"`
-	InheritedPath *string           `json:"inheritedPath"`
-	InheritedEnv  map[string]string `json:"inheritedEnv"`
-	CodexHome     string            `json:"codexHome"`
-	File          *credFile         `json:"file"`
-	Retry         *credFile         `json:"retry"`
-	TimeoutMs     int64             `json:"timeoutMs"`
-	CancelAfterMs int64             `json:"cancelAfterMs"`
-	Server        json.RawMessage   `json:"server"`
-	Client        *clientSetup      `json:"client"`
-	PrivateSignIn *privateSetup     `json:"privateSignIn"`
+	Now             int64             `json:"now"`
+	MarginSeconds   int64             `json:"marginSeconds"`
+	Source          string            `json:"source"`
+	Codex           string            `json:"codex"`
+	InheritedPath   *string           `json:"inheritedPath"`
+	InheritedEnv    map[string]string `json:"inheritedEnv"`
+	CodexHome       string            `json:"codexHome"`
+	File            *credFile         `json:"file"`
+	Retry           *credFile         `json:"retry"`
+	TimeoutMs       int64             `json:"timeoutMs"`
+	CancelOnRequest string            `json:"cancelOnRequest"`
+	Server          json.RawMessage   `json:"server"`
+	Client          *clientSetup      `json:"client"`
+	PrivateSignIn   *privateSetup     `json:"privateSignIn"`
 }
 
 // privateSetup is a private sign-in case's input (AUTH-08): the token, and the folder it is written into.
@@ -84,7 +85,7 @@ type world struct {
 	cfg                                   codexauth.Config
 	logs                                  *bytes.Buffer
 	now                                   time.Time
-	cancelAfter                           time.Duration // the caller cancels the probe this long after it starts
+	cancelOn                              string // the caller cancels the probe once the fake has this request
 }
 
 func TestCredentials(t *testing.T) {
@@ -129,7 +130,7 @@ func build(t *testing.T, s credSetup, python, fake string) (*world, error) {
 	w := &world{root: root, home: filepath.Join(root, "home"), binDir: filepath.Join(root, "bin"),
 		record: filepath.Join(root, "record.jsonl"), logs: &bytes.Buffer{}}
 	w.now = time.Unix(cmp(s.Now, 1800000000), 0)
-	w.cancelAfter = time.Duration(s.CancelAfterMs) * time.Millisecond
+	w.cancelOn = s.CancelOnRequest
 	t.Cleanup(func() { // what the fake started outlives a failing case; end it with the case
 		rec, err := w.read()
 		if err != nil {
@@ -409,6 +410,20 @@ func refreshCalls(r recorded) int {
 	return n
 }
 
+// received reports whether the fake has recorded a request with method; a record caught mid-write reads as not yet.
+func (w *world) received(method string) bool {
+	rec, err := w.read()
+	if err != nil {
+		return false
+	}
+	for _, r := range rec.requests {
+		if r["method"] == method {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *world) subst(s string) string {
 	return strings.NewReplacer("$home", w.home, "$codexHome", w.codexHome, "$binDir", w.binDir).Replace(s)
 }
@@ -416,15 +431,33 @@ func (w *world) subst(s string) string {
 // probe runs one probe and checks every expectation key.
 func (w *world) probe(want map[string]any) []string {
 	ctx := context.Background()
-	if w.cancelAfter > 0 {
+	start := time.Now()
+	var cancelledAt atomic.Pointer[time.Time]
+	if w.cancelOn != "" {
+		// Cancelled on an event, not after a delay: a delay races the child's start, which a loaded machine slows.
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
-		time.AfterFunc(w.cancelAfter, cancel)
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			for !w.received(w.cancelOn) {
+				select {
+				case <-stop:
+					return
+				case <-time.After(5 * time.Millisecond):
+				}
+			}
+			now := time.Now()
+			cancelledAt.Store(&now)
+			cancel()
+		}()
 	}
-	start := time.Now()
 	st, err := codexauth.Probe(ctx, w.cfg)
 	elapsed := time.Since(start)
+	if at := cancelledAt.Load(); at != nil {
+		elapsed = time.Since(*at) // a cancelled probe is timed from the cancel
+	}
 	if err != nil {
 		return []string{"probe: " + err.Error()}
 	}
