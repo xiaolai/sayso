@@ -274,7 +274,7 @@ public enum RealtimeEvent: Sendable, Equatable {
 
     static func protocolError(_ type: String, _ why: String) -> RealtimeError {
         if type.isEmpty { return RealtimeError(.protocol, message: "realtime event: " + why) }
-        return RealtimeError(.protocol, message: "realtime event \(Secret.scrub(type)): \(why)")
+        return RealtimeError(.protocol, message: "realtime event \(Secret.scrub(type)): \(why)", eventType: type)
     }
 }
 

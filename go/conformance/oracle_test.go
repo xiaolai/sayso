@@ -115,7 +115,7 @@ func hexInput(in json.RawMessage, v any, h *string) ([]byte, error) {
 
 func errorObservation(e *openaihttp.Error) map[string]any {
 	return map[string]any{"class": string(e.Class), "type": e.Type, "code": e.Code, "param": e.Param, "message": e.Message,
-		"fatal": e.Fatal}
+		"fatal": e.Fatal, "eventType": e.EventType}
 }
 
 func metadataObservation(m map[string]string) any {
@@ -188,14 +188,14 @@ func TestOracle(t *testing.T) {
 		{"event.decode", h(`{"type":"rate_limits.updated","rate_limits":[{"name":"n","limit":1,"remaining":0,"reset_seconds":0.5}]}`),
 			`{"event":{"type":"rate_limits.updated","limits":[{"name":"n","limit":"1","remaining":"0","resetSeconds":"3fe0000000000000"}]}}`},
 		{"event.decode", h(`{"type":"error","error":{"type":"invalid_request_error","code":5,"param":"p","message":"m"}}`),
-			`{"event":{"type":"error","error":{"class":"invalid-request","type":"invalid_request_error","code":"5","param":"p","message":"m","fatal":false}}}`},
+			`{"event":{"type":"error","error":{"class":"invalid-request","type":"invalid_request_error","code":"5","param":"p","message":"m","fatal":false,"eventType":""}}}`},
 		{"event.decode", h(`{"type":"response.output_audio.delta","response_id":"r","delta":"AAE="}`),
 			`{"event":{"type":"response.output_audio.delta","responseID":"r","pcm":"0001"}}`},
 		{"event.decode", h(`{"type":"session.updated","x":1e999}`), `{"event":{"type":"session.updated","ignored":true}}`},
 		{"event.decode", h(`{"type":"response.created","response":{"id":1}}`),
-			`{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event response.created: a field has the wrong type","fatal":false}}`},
+			`{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event response.created: a field has the wrong type","fatal":false,"eventType":"response.created"}}`},
 		{"event.decode", h(`[`),
-			`{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event: not valid JSON","fatal":false}}`},
+			`{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event: not valid JSON","fatal":false,"eventType":""}}`},
 		{"pcm.encode", `{"bits":[1065353216,3212836864,2143289344,1056964608]}`, `"ff7f01800000ff3f"`},
 		{"pcm.decode", `{"hex":"0080ff7f01"}`, `["bf800000","3f7ffe00"]`},
 		{"pcm.wav", `{"hex":"0100","rate":24000}`, `"524946462600000057415645666d74201000000001000100c05d000080bb000002001000646174610200000001` + `00"`},

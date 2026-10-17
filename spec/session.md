@@ -71,7 +71,9 @@ counted is always counted again). An event of a new type past either bound ends 
 undelivered and uncounted, as a message over the read limit does: the provider chooses the types, and each one
 counted is kept for the session's life. Invalid JSON, a
 missing `type`, a field of the wrong type, a missing required field, bad base64 or an unknown `response.status` is
-a `protocol` error that names the event type only, never the payload. Only the fields of a consumed type are read,
+a `protocol` error that names the event type only, never the payload: in its message, and as a field of its own
+(Go `EventType`, Swift `eventType`, scrubbed) whenever the type could be read, so an app can tell an event it does not
+use from one it needs without reading the message; `""` when it could not. Only the fields of a consumed type are read,
 so an ignored or unknown event is never refused for the shape of a field the package does not consume.
 
 `delta` is standard base64 as Go's `StdEncoding` reads it, padded, with padding only at the end; trailing bits are

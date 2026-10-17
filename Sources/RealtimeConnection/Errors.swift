@@ -77,10 +77,14 @@ public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringC
     public var fatal: Bool
     /// The underlying cause, scrubbed text only.
     @Scrubbed public var cause: String
+    /// For a realtime event that could not be decoded, its type when that could be read; "" for any other failure
+    /// (spec/session.md).
+    @Scrubbed public var eventType: String
 
     public init(
         _ errorClass: ErrorClass, status: Int = 0, type: String = "", code: String = "", param: String = "",
-        message: String = "", requestID: String = "", route: String = "", fatal: Bool = false, cause: String = ""
+        message: String = "", requestID: String = "", route: String = "", fatal: Bool = false, cause: String = "",
+        eventType: String = ""
     ) {
         self.errorClass = errorClass
         self.status = status
@@ -92,6 +96,7 @@ public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringC
         self.route = route
         self.fatal = fatal
         self.cause = cause
+        self.eventType = eventType
     }
 
     public var description: String {

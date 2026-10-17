@@ -247,6 +247,7 @@ enum SessionCheck {
             if e?.errorClass != .protocol { p.append("class \(String(describing: e?.errorClass)), want protocol") }
             let text = String(describing: error)
             if let type = pe as? String, !text.contains(type) { p.append("error \"\(text)\" does not name \(type)") }
+            if e?.eventType != (pe as? String ?? "") { p.append("eventType \(String(describing: e?.eventType)), want \(pe)") }
             return p + FakeOpenAI.leaks(FakeOpenAI.strings(want["notInDescription"]), text)
         }
         let event: RealtimeEvent

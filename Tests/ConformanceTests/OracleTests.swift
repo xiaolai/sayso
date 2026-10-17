@@ -171,7 +171,9 @@ final class OracleTests: XCTestCase {
     }
 
     static func errorObservation(_ e: RealtimeError) -> [String: Any] {
-        ["class": e.errorClass.rawValue, "type": e.type, "code": e.code, "param": e.param, "message": e.message, "fatal": e.fatal]
+        ["class": e.errorClass.rawValue, "type": e.type, "code": e.code, "param": e.param, "message": e.message, "fatal": e.fatal,
+            "eventType": e.eventType,
+        ]
     }
 
     static func eventObservation(_ ev: RealtimeEvent) -> [String: Any] {
@@ -341,7 +343,7 @@ final class OracleTests: XCTestCase {
         (
             "event.decode",
             hexOf(#"{"type":"error","error":{"type":"invalid_request_error","code":5,"param":"p","message":"m"}}"#),
-            #"{"event":{"type":"error","error":{"class":"invalid-request","type":"invalid_request_error","code":"5","param":"p","message":"m","fatal":false}}}"#
+            #"{"event":{"type":"error","error":{"class":"invalid-request","type":"invalid_request_error","code":"5","param":"p","message":"m","fatal":false,"eventType":""}}}"#
         ),
         (
             "event.decode", hexOf(#"{"type":"response.output_audio.delta","response_id":"r","delta":"AAE="}"#),
@@ -350,11 +352,11 @@ final class OracleTests: XCTestCase {
         ("event.decode", hexOf(#"{"type":"session.updated","x":1e999}"#), #"{"event":{"type":"session.updated","ignored":true}}"#),
         (
             "event.decode", hexOf(#"{"type":"response.created","response":{"id":1}}"#),
-            #"{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event response.created: a field has the wrong type","fatal":false}}"#
+            #"{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event response.created: a field has the wrong type","fatal":false,"eventType":"response.created"}}"#
         ),
         (
             "event.decode", hexOf("["),
-            #"{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event: not valid JSON","fatal":false}}"#
+            #"{"failure":{"class":"protocol","type":"","code":"","param":"","message":"realtime event: not valid JSON","fatal":false,"eventType":""}}"#
         ),
         ("pcm.encode", #"{"bits":[1065353216,3212836864,2143289344,1056964608]}"#, #""ff7f01800000ff3f""#),
         ("pcm.decode", #"{"hex":"0080ff7f01"}"#, #"["bf800000","3f7ffe00"]"#),

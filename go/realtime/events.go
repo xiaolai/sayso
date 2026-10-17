@@ -171,7 +171,8 @@ func protocolError(typ, why string) error {
 	if typ == "" {
 		return &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: "realtime event: " + why}
 	}
-	return &openaihttp.Error{Class: openaihttp.ClassProtocol, Message: fmt.Sprintf("realtime event %s: %s", secret.Scrub(typ), why)}
+	typ = secret.Scrub(typ)
+	return &openaihttp.Error{Class: openaihttp.ClassProtocol, EventType: typ, Message: fmt.Sprintf("realtime event %s: %s", typ, why)}
 }
 
 func missing(typ, field string) error { return protocolError(typ, "missing "+field) }
