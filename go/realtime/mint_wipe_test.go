@@ -104,7 +104,7 @@ func (m *mintScan) check(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(found, m.want) {
-		t.Errorf("each needle, then each one's first 16 bytes, found %v times; want %v", found, m.want)
+		t.Errorf("each needle, then each one's first 16 bytes, found %v times; want %v\n%s", found, m.want, m.s.Explain())
 	}
 }
 

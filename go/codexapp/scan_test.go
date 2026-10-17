@@ -101,7 +101,7 @@ func (w *wipeScan) check(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(found, w.want) {
-		t.Errorf("each needle, then each one's first 16 bytes, found %v times; want %v", found, w.want)
+		t.Errorf("each needle, then each one's first 16 bytes, found %v times; want %v\n%s", found, w.want, w.s.Explain())
 	}
 }
 

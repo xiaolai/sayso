@@ -6,8 +6,10 @@ package memscan
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
 	"errors"
+	"slices"
 	"syscall"
 )
 
@@ -26,6 +28,7 @@ type Scan struct {
 	nUsed   int
 	used    int
 	room    int
+	hits    [][]uintptr // where Occurrences found each needle, for Explain
 }
 
 // New maps the skipped pages, with room bytes for a document.
@@ -105,6 +108,7 @@ func (s *Scan) Reset(mark int) {
 // Occurrences counts each needle in writable memory outside the skipped pages.
 func (s *Scan) Occurrences() ([]int, error) {
 	counts := make([]int, len(s.needles))
+	s.hits = make([][]uintptr, len(s.needles))
 	longest := 0
 	for _, r := range s.needles {
 		longest = max(longest, r[1]-r[0])
@@ -126,6 +130,7 @@ func (s *Scan) Occurrences() ([]int, error) {
 						// A hit starting in the overlap is counted by the next chunk, which starts there.
 						if at+n >= part[1] || off+i < int(n)-(longest-1) {
 							counts[k]++
+							s.hits[k] = append(s.hits[k], at+uintptr(off+i))
 						}
 						off += i + 1
 					}
@@ -139,6 +144,26 @@ func (s *Scan) Occurrences() ([]int, error) {
 		}
 	})
 	return counts, err
+}
+
+// union sorts spans and joins those that overlap, so no byte is scanned twice, and says whether any did.
+// /proc/self/maps is read a page at a time and is not a snapshot: a mapping that grows or merges with its neighbour
+// while it is read, as the Go heap's does, can be listed twice, as it was and as it became, and a copy inside both
+// would be counted twice. On amd64 CI it was: one copy at one address, counted twice.
+func union(spans [][2]uintptr) ([][2]uintptr, bool) {
+	spans = slices.Clone(spans)
+	slices.SortFunc(spans, func(a, b [2]uintptr) int { return cmp.Compare(a[0], b[0]) })
+	var out [][2]uintptr
+	overlapped := false
+	for _, s := range spans {
+		if n := len(out); n > 0 && s[0] < out[n-1][1] {
+			out[n-1][1] = max(out[n-1][1], s[1])
+			overlapped = true
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, overlapped
 }
 
 // index is bytes.Index without holding the needle in vector registers. An asynchronous preemption saves a goroutine's
