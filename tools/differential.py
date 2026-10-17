@@ -36,7 +36,8 @@ DEFAULT_COUNT = 2000  # 26,000 cases: 10 to 30 s on an M-series Mac once both ar
 # Each operation, and the Go package whose TestOracle answers it. Swift answers every one.
 OPS = {
     "said.matches": "saidguard", "said.tokens": "saidguard", "han.parse": "saidguard", "jwt.exp": "codexauth",
-    "echo": "conformance", "wire.valid": "conformance", "codex.valid": "conformance", "event.decode": "conformance",
+    "jwt.account": "codexauth", "echo": "conformance", "wire.valid": "conformance", "codex.valid": "conformance",
+    "event.decode": "conformance",
     "pcm.encode": "conformance", "pcm.decode": "conformance", "pcm.wav": "conformance", "pcm.validWAV": "conformance",
     "pcm.plausible": "conformance",
 }
@@ -461,6 +462,8 @@ def seeds():
     for c in load_fixtures("app-server/app-server.jsonl"):
         docs.append(json.dumps(substitute(c["setup"].get("server", {}))).encode())
         tokens += [s for s in strings_in(substitute(c["setup"])) if s.count(".") == 2]
+    for c in load_fixtures("private-sign-in/private-sign-in.json"):
+        tokens += [s for s in strings_in(substitute(c["setup"])) if s.count(".") == 2]
     event_texts = []
     for e in events:
         try:
@@ -620,6 +623,42 @@ def gen_jwt(draw, s):
     return {"token": token}
 
 
+# The account claim a private sign-in names (spec/credentials.md, AUTH-08): names spelt exactly, escaped and in
+# another case, and values at and beyond each bound of the account ID.
+AUTH_NAMES = ['"https://api.openai.com/auth"', '"https:\\/\\/api.openai.com\\/auth"', '"https://api.openai.com/AUTH"',
+              '"https://api.openai.com/auth "', '"https://api.openai.com/\\u0061uth"']
+ACCOUNT_NAMES = ['"chatgpt_account_id"', '"chatgpt_account_id"', '"chatgpt_account_ID"', '"chatgpt\\u005faccount_id"',
+                 '"account_id"']
+ACCOUNTS = ['"acct-0123"', '"acct-0123"', '""', '"a"', '"' + "a" * 256 + '"', '"' + "a" * 257 + '"', '"acct 1"',
+            '"acct.1_x-Y"', '"\\u0061cct"', '"acct\\u0000"', '"acct-\\u00e9"', '"acct-\u00e9"', '"acct\\"1"',
+            '"\\ud800"', '"acct/1"', '"acct=1"', '"acct\\n"', "7", "null", "true", "[]", "{}"]
+
+
+def gen_jwt_account(draw, s):
+    k = draw.below(5)
+    if k == 0:
+        return {"token": edit(draw, draw.choice(s["tokens"]), ["ascii", "dashes", "spaces", "symbols", "letters"])}
+    inner = [draw.choice(ACCOUNT_NAMES) + ":" + draw.choice(ACCOUNTS)]
+    for _ in range(draw.below(3)):
+        inner.insert(draw.below(len(inner) + 1),
+                     draw.choice(['"x":1', '"chatgpt_plan_type":"pro"', '"chatgpt_account_id":"dup"']))
+    value = "{" + ",".join(inner) + "}" if draw.chance(0.9) else draw.choice(ACCOUNTS)
+    claim = draw.choice(AUTH_NAMES) + ":" + value
+    members = ['"exp":1800003600', claim]
+    for _ in range(draw.below(3)):
+        members.insert(draw.below(len(members) + 1),
+                       draw.choice(['"iat":1', '"https://api.openai.com/profile":{"email":"a@b"}', claim]))
+    payload = utf8("{" + ",".join(members) + "}")
+    if k == 1:
+        payload = edit_bytes(draw, payload)
+    token = JWT_HEADER + "." + b64url(payload) + "." + b64url(b"sig")
+    if k == 2:
+        token = edit(draw, token, ["ascii", "dashes", "spaces", "symbols"])
+    elif k == 3:
+        token = draw.choice([token + "=", token + ".", token + ".c2ln", token[:-4], token.replace(".", "..", 1)])
+    return {"token": token}
+
+
 FLOAT_BITS = [0x00000000, 0x80000000, 0x3F800000, 0xBF800000, 0x3F800001, 0xBF800001, 0x3F7FFFFF, 0xBF7FFFFF,
               0x7FC00000, 0xFFC00000, 0x7F800001, 0x7FBFFFFF, 0x7F800000, 0xFF800000, 0x00000001, 0x80000001,
               0x007FFFFF, 0x3F000000, 0x38000100, 0x47000000, 0x7F7FFFFF, 0xFF7FFFFF]
@@ -686,7 +725,7 @@ def gen_pcm_plausible(draw, s):
 
 GENERATORS = {
     "said.matches": gen_said_matches, "said.tokens": gen_said_tokens, "han.parse": gen_han, "jwt.exp": gen_jwt,
-    "echo": gen_echo, "wire.valid": gen_wire, "codex.valid": gen_wire, "event.decode": gen_event,
+    "jwt.account": gen_jwt_account, "echo": gen_echo, "wire.valid": gen_wire, "codex.valid": gen_wire, "event.decode": gen_event,
     "pcm.encode": gen_pcm_encode, "pcm.decode": gen_pcm_decode, "pcm.wav": gen_pcm_wav,
     "pcm.validWAV": gen_pcm_valid_wav, "pcm.plausible": gen_pcm_plausible,
 }
@@ -777,6 +816,9 @@ def candidate(c, go, swift):
     if op == "jwt.exp":
         return {"component": "credentials", "setup": {"file": {"kind": "regular", "json": {"tokens": {
             "access_token": i["token"]}}}}, "expect": None, "note": note}
+    if op == "jwt.account":
+        return {"component": "credentials", "setup": {"privateSignIn": {"token": i["token"], "folder": "private"}},
+                "expect": None, "note": note}
     return {"component": "pcm16", "op": op.split(".", 1)[1], **i, "expect": None, "note": note}
 
 

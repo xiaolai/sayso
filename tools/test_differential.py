@@ -21,7 +21,7 @@ TEXT_OPS = ("said.matches", "said.tokens", "han.parse", "echo")
 
 def texts(c):
     """The strings a case hands to an implementation as text."""
-    return [v for v in c["input"].values() if isinstance(v, str) and c["op"] in TEXT_OPS + ("jwt.exp", "pcm.plausible")]
+    return [v for v in c["input"].values() if isinstance(v, str) and c["op"] in TEXT_OPS + ("jwt.exp", "jwt.account", "pcm.plausible")]
 
 
 class Generation(unittest.TestCase):

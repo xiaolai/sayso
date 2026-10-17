@@ -7,7 +7,7 @@ Status: early. The contract and its fixtures cover every component, and Go and S
 
 | Component | Spec | Go | Swift |
 |---|---|---|---|
-| Credentials: the local Codex sign-in | [`spec/credentials.md`](spec/credentials.md) | `go/codexauth`, `go/codexapp` | `CodexAuth` (macOS) |
+| Credentials: the local Codex sign-in, and a private Codex home's | [`spec/credentials.md`](spec/credentials.md) | `go/codexauth`, `go/codexapp` | `CodexAuth` (macOS) |
 | Minting a Realtime client secret | [`spec/http-and-mint.md`](spec/http-and-mint.md) | `go/realtime`, `go/openaihttp` | `RealtimeConnection` |
 | WebSocket session and typed events | [`spec/session.md`](spec/session.md) | `go/realtime` | `RealtimeConnection` |
 | PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | `go/pcm16` | `PCM16` |

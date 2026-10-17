@@ -16,10 +16,16 @@ final class CredentialsTests: XCTestCase {
         try runFixtures("credentials") { c in
             let unknown = CredentialWorld.unknownMembers(c.object)
             guard unknown.isEmpty else { return unknown.joined(separator: "; ") }
-            let world = try CredentialWorld(c.object["setup"] as? [String: Any] ?? [:], python: python, fake: fake)
+            let setup = c.object["setup"] as? [String: Any] ?? [:]
+            if let privateSignIn = setup["privateSignIn"] as? [String: Any] {
+                let problems = try PrivateSignInCase.run(
+                    privateSignIn, now: CredentialWorld.int(setup["now"], 1_800_000_000),
+                    want: c.object["expect"] as? [String: Any] ?? [:])
+                return problems.isEmpty ? nil : problems.joined(separator: "; ")
+            }
+            let world = try CredentialWorld(setup, python: python, fake: fake)
             defer { world.cleanUp() }
             let problems: [String]
-            let setup = c.object["setup"] as? [String: Any] ?? [:]
             if let client = setup["client"] as? [String: Any] {
                 problems = try world.client(client, want: c.object["expect"] as? [String: Any] ?? [:])
             } else if let steps = c.object["steps"] as? [[String: Any]] {
@@ -73,8 +79,9 @@ final class CredentialWorld {
             "setup", setup,
             [
                 "now", "marginSeconds", "source", "codex", "inheritedPath", "inheritedEnv", "codexHome", "file",
-                "retry", "timeoutMs", "cancelAfterMs", "server", "client",
+                "retry", "timeoutMs", "cancelAfterMs", "server", "client", "privateSignIn",
             ])
+        p += FakeOpenAI.unknownKeys("setup.privateSignIn", setup?["privateSignIn"] as? [String: Any], ["token", "folder"])
         for name in ["file", "retry"] {
             p += FakeOpenAI.unknownKeys(
                 "setup.\(name)", setup?[name] as? [String: Any], ["kind", "json", "raw", "hex", "rawRepeat", "padTo"])

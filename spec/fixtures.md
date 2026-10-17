@@ -10,6 +10,7 @@ Fixtures are data: a case says what to set up and what to observe, never how an 
 | `said-guard.json` | `said-guard` | a script, a transcript, a language and the expected verdict |
 | `auth-file/*.json` | `credentials` | an `auth.json` (or its absence, or a hostile file), a `CODEX_HOME`, and the expected state |
 | `app-server/*.jsonl` | `credentials` | a scripted Codex app-server, a setup, and the expected state, requests and child environment |
+| `private-sign-in/*.json` | `credentials` | a token, a folder, and what the folder holds after a private sign-in is written into it |
 | `mint/*.json` | `mint` | an origin, scripted HTTP replies, and the expected secret or error class |
 | `ws/*.json` | `session` | a WebSocket close code, an `error` event, or a message size, and the expected class |
 | `events/*.json` | `session` | a raw server event and the expected typed result or protocol error |
@@ -58,7 +59,7 @@ A case whose id starts `bound-` is an input that once crashed the guard or took 
 verdict, each test suite bounds the CPU time it takes, loosely enough to tell a linear algorithm from a quadratic one,
 with more room for an instrumented or debug build.
 
-### `credentials` (`auth-file/`, `app-server/`)
+### `credentials` (`auth-file/`, `app-server/`, `private-sign-in/`)
 
 `setup`:
 
@@ -75,6 +76,7 @@ with more room for an instrumented or debug build.
 | `timeoutMs` | the per-call app-server timeout |
 | `cancelAfterMs` | the caller cancels the probe this many milliseconds after it starts |
 | `server` | the fake's scenario (top of `tools/fake-app-server.py`) |
+| `privateSignIn` | a private sign-in case (below) |
 
 `expect` (or, for a timeline, each step's `expect`):
 
@@ -112,6 +114,17 @@ are followed, replaced; `paramsRaw`, the exact bytes; `noParams: true` for none;
 and `eventSequence` (the params
 member that holds each event's index); the other keys above apply too. The harness waits up to 5 s for the expected
 number of events, then 100 ms for any that should not come, before it closes the client.
+
+A private sign-in case has `setup.privateSignIn` and writes one ([credentials](credentials.md), `AUTH-08`) at
+`setup.now`: `token` (a string, or a `$jwt`), and `folder`, set up in the case's temporary folder: `private` (a new
+folder, mode `0700`), `link` (a link to a new `0700` folder), `open` (mode `0755`), `searchable` (mode `0711`),
+`missing` (nothing there), `file` (a regular file), `relative` (a relative path), `taken` (a `0700` folder already
+holding an `auth.json` of `{}`), `taken-link` (a `0700` folder whose `auth.json` is a link to `$root/elsewhere`, a
+file of `{}`). Its `expect` has `state`, `class` and `notInDescription` as above, and `signIn` (the exact text the
+folder's `auth.json` holds afterwards, read without following a link, with `$token` standing for the case's
+token), `fileMode` (that file's permission bits, `"0600"`), `entries` (each entry of the folder afterwards, a link's
+target folder for `link`, with its kind: `file`, `link`, `folder` or `other`) and `elsewhere` (the text of
+`$root/elsewhere` afterwards).
 
 A timeline case has `steps` instead of `expect`: each runs `op` (`token`, or `refreshAfter` with `stale`: the
 `initial` or the `current` token) at `now + at` seconds on one credentials object.

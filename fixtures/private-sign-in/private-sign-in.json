@@ -1,0 +1,702 @@
+[
+ {
+  "id": "private-sign-in-written",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"acct-0123\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  },
+  "note": "The access token is also the id_token: Codex reads the account and plan from the id_token's claims, and the access token carries them. No refresh token; refreshed now."
+ },
+ {
+  "id": "private-sign-in-through-link",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "link"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"acct-0123\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  },
+  "note": "A link to the folder is followed once, as a CODEX_HOME link is; the file lands in the folder it names."
+ },
+ {
+  "id": "private-sign-in-unknown-expiry",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"acct-0123\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  },
+  "note": "A token of unknown expiry is written: its freshness is the caller's."
+ },
+ {
+  "id": "private-sign-in-expired",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800000000,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  },
+  "note": "A token already expired at now is refused: the private Codex could do nothing with it."
+ },
+ {
+  "id": "private-sign-in-not-a-jwt",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "canary-not-a-jwt",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {},
+   "notInDescription": [
+    "canary-not-a-jwt"
+   ]
+  }
+ },
+ {
+  "id": "private-sign-in-empty-token",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-no-auth-claim",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-auth-claim-not-object",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": "acct-0123"
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-auth-claim-other-case",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/AUTH": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  },
+  "note": "Names are exact, as for exp."
+ },
+ {
+  "id": "private-sign-in-account-not-string",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": 7
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-account-null",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": null
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-account-empty",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": ""
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-account-space",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct 0123"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-account-quote",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct\"0123"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  },
+  "note": "An account ID is written into JSON as it is, so it never needs escaping."
+ },
+ {
+  "id": "private-sign-in-account-non-ascii",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-é"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-account-256",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  }
+ },
+ {
+  "id": "private-sign-in-account-257",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-account-escaped",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJcdTAwNjFjY3QtMDEyMyJ9fQ.c2ln",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"acct-0123\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  },
+  "note": "The claim is read decoded: an escape in the payload is the character it stands for."
+ },
+ {
+  "id": "private-sign-in-claim-name-escaped",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOlwvXC9hcGkub3BlbmFpLmNvbVwvYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifX0.c2ln",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"acct-0123\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  },
+  "note": "Names match as decoded bytes."
+ },
+ {
+  "id": "private-sign-in-duplicate-claim",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifSwiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS9hdXRoIjp7ImNoYXRncHRfYWNjb3VudF9pZCI6ImIifX0.c2ln",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  },
+  "note": "The payload must be strict JSON, as every document Codex writes is read."
+ },
+ {
+  "id": "private-sign-in-raw",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifX0.c2ln",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "class": "",
+   "signIn": "{\"auth_mode\":\"chatgpt\",\"last_refresh\":\"2027-01-15T08:00:00Z\",\"tokens\":{\"id_token\":\"$token\",\"access_token\":\"$token\",\"refresh_token\":\"\",\"account_id\":\"acct-0123\"}}",
+   "fileMode": "0600",
+   "entries": {
+    "auth.json": "file"
+   }
+  }
+ },
+ {
+  "id": "private-sign-in-padded",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifX0.c2ln=",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-four-segments",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifX0.c2ln.c2ln",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-empty-signature",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifX0.",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-signature-outside-alphabet",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjE4MDAwMDM2MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LTAxMjMifX0.c2l+",
+    "folder": "private"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  }
+ },
+ {
+  "id": "private-sign-in-folder-open",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "open"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  },
+  "note": "Mode 0755: the folder grants others access."
+ },
+ {
+  "id": "private-sign-in-folder-searchable",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "searchable"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {}
+  },
+  "note": "Mode 0711: any bit for group or others refuses."
+ },
+ {
+  "id": "private-sign-in-folder-missing",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "missing"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error"
+  }
+ },
+ {
+  "id": "private-sign-in-folder-file",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "file"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error"
+  }
+ },
+ {
+  "id": "private-sign-in-folder-relative",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "relative"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error"
+  }
+ },
+ {
+  "id": "private-sign-in-taken",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "taken"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {
+    "auth.json": "file"
+   },
+   "signIn": "{}"
+  },
+  "note": "An auth.json already there is never replaced."
+ },
+ {
+  "id": "private-sign-in-taken-link",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "privateSignIn": {
+    "token": {
+     "$jwt": {
+      "exp": 1800003600,
+      "https://api.openai.com/auth": {
+       "chatgpt_account_id": "acct-0123"
+      }
+     }
+    },
+    "folder": "taken-link"
+   }
+  },
+  "expect": {
+   "state": "codex-error",
+   "class": "codex-error",
+   "entries": {
+    "auth.json": "link"
+   },
+   "elsewhere": "{}"
+  },
+  "note": "Nor is a link named auth.json followed: what it names is left as it was."
+ }
+]

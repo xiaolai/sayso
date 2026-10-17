@@ -1,7 +1,7 @@
 # Credentials (`AUTH`)
 
 Component `credentials`. Product `CodexAuth` (Swift, macOS only), package `codexauth` and `codexapp` (Go).
-Fixtures: `fixtures/auth-file/`, `fixtures/app-server/`.
+Fixtures: `fixtures/auth-file/`, `fixtures/app-server/`, `fixtures/private-sign-in/`.
 
 The ChatGPT access token Codex holds for this machine is asked of Codex first, through `codex app-server`, and read
 from `auth.json` only when no Codex runs or Codex says the store is a file. Only a ChatGPT sign-in is accepted.
@@ -20,7 +20,7 @@ Exactly one applies after a probe.
 | `api-key` | Codex is signed in with an API key |
 | `unsupported-auth` | any other sign-in mode; the mode is reported, at most 64 printable characters, scrubbed |
 | `expired` | the token is within the caller's margin of expiry and a refresh did not renew it |
-| `codex-error` | Codex failed: did not start, crashed, timed out, answered malformed or with an error, or the file is unusable |
+| `codex-error` | Codex failed: did not start, crashed, timed out, answered malformed or with an error, or the file is unusable; also every failure to write a private sign-in (`AUTH-08`) |
 | `app-server-auth-unavailable` | Codex lacks `getAuthStatus` and its effective store is not a file |
 | `provider-without-openai-auth` | Codex reports `requiresOpenaiAuth: false`: a provider needing no OpenAI sign-in is in force |
 
@@ -196,6 +196,47 @@ list. Version components compare as integers; a non-numeric one is 0 and one too
   carry the time the next refresh may run (Go `Error.RetryAt`, Swift `CodexAuthError.retryAt`), and a refusal's cause
   is the failure that started the wait. A refresh the caller cancelled is not a failure and spends no backoff.
 
+## A private Codex home (`AUTH-08`)
+
+An app that runs a Codex of its own, apart from the user's configuration (its own `CODEX_HOME`, so that no MCP
+server, hook or instruction of the user's is inherited), signs that Codex in with a file this package writes from a
+token a fetch or refresh returned (Go `WritePrivateSignIn`, Swift `writePrivateSignIn`). The user's `auth.json` is
+never read for it: it may not exist (a keychain store), and it holds a refresh token.
+
+- **Why this shape.** Codex will not start a ChatGPT sign-in from an access token alone: it reads the account and
+  plan from the claims of an `id_token`, and treats a file without one as no sign-in. The access token carries the same claims
+  (`https://api.openai.com/auth`), and Codex 0.163.0 reads them from it: on 2026-10-17 a private Codex given a file
+  holding the access token in both places read the account as ChatGPT, with its plan, and completed a turn, while
+  one given the access token alone, or with `refresh_token` and `account_id` but no `id_token`, had no account and
+  every request was refused (401). Codex does not refuse an expired `id_token`: the one in its own file expires about
+  an hour after it is issued and is used for days. This is undocumented, as the whole route is.
+- **The token** must be a JWT: three non-empty segments of the base64url alphabet joined by dots, so it is written
+  into JSON as it is, with nothing to escape. Its payload, decoded and read as the expiry is (`AUTH-04`), must hold
+  the claim `https://api.openai.com/auth` as an object whose `chatgpt_account_id` is a string of 1 to 256 ASCII
+  letters, digits, `-`, `_` and `.`, names matched exactly as decoded bytes: the account ID. A token whose expiry is
+  known and not after `now` is refused, since the private Codex could do nothing with it; any fresher margin is the
+  caller's, which fetches the token with the margin its Codex needs.
+- **The folder** is an absolute path to an existing folder the user owns that grants nothing to anyone else: no
+  permission bit for group or others. A link to it is followed once (the path is resolved, as a `CODEX_HOME` is);
+  the resolved path is then opened one folder at a time without following a link, and the checks are made on the
+  open folder, through which the file is created.
+- **The file** is `auth.json` in that folder, created new: an entry of that name already there, a link included, is
+  refused, never replaced or followed. Its mode is `0600` whatever the umask. Its content is exactly, with no
+  whitespace and no final newline:
+
+  ```text
+  {"auth_mode":"chatgpt","last_refresh":"<now>","tokens":{"id_token":"<token>","access_token":"<token>","refresh_token":"","account_id":"<account ID>"}}
+  ```
+
+  where `<now>` is the caller's clock in UTC, RFC 3339 to the whole second (`2027-01-15T08:00:00Z`), a fraction
+  dropped. The empty refresh token means the private Codex can never refresh, so it can never rotate, and so
+  invalidate, the user's own sign-in. `last_refresh` is the time of the write, so the sign-in never looks due for a
+  refresh it could not make.
+- **Failure.** Every failure is `codex-error`, and leaves no `auth.json` behind: a write cut short removes the file it
+  made. An error never quotes the token.
+- **Lifetime** is the caller's: it removes the file, or the whole folder, when its Codex is done, and clears what a
+  crash left behind.
+
 ## Hygiene (`AUTH-05`)
 
 Every token and `ek_` secret is registered with the scrubber before use. The scrubber replaces registered secrets
@@ -213,7 +254,9 @@ On the credential ingestion paths the package wipes every buffer it owns before 
 app-server's output (each line, the reader's buffer and every buffer it outgrows, what is drained after a failure),
 a reply's result (copied only for a call still waiting, at its exact size, and wiped once released, even if the call
 gave up), the getAuthStatus result, auth.json and the JWT payload decoded from its token, the mint reply, and an
-HTTP refusal body. Each is read where it lies. A value is checked before any string of it is made. The token or
+HTTP refusal body. Writing a private sign-in (`AUTH-08`) is held to the same rule: the file's bytes are built in a
+buffer of their own, at their exact size, wiped once written or refused, and the payload decoded to read the account
+is wiped once read. Each is read where it lies. A value is checked before any string of it is made. The token or
 secret kept is decoded once, into the string that holds it. An error message or provider field is scrubbed before
 it becomes a string, and the scrubber reads its text in place. The memory-scan tests count what is left: the copy
 kept, and nothing else. Outside this boundary are:
@@ -223,7 +266,7 @@ kept, and nothing else. Outside this boundary are:
 - the `Authorization` header string a request is built with;
 - event params, stderr and a `Call` result handed to the caller (Go `Call`, Swift `call`), which are the caller's
   values;
-- the member names Swift decodes into keys, which are not secrets;
+- the member names Swift decodes into keys, which are not secrets, and the account ID a private sign-in names;
 - the held token or secret itself, until it is released.
 - copies of CPU registers the runtime or the kernel saves when it interrupts a thread, such as Go's asynchronous
   preemption, which on amd64 saves the vector registers that bytes pass through while they are scanned or

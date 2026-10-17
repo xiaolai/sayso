@@ -144,7 +144,7 @@ enum AuthFile {
         }
     }
 
-    private static func realPath(_ p: String) -> String? {
+    static func realPath(_ p: String) -> String? {
         guard let r = realpath(p, nil) else { return nil }
         defer { free(r) }
         return String(cString: r)
@@ -252,6 +252,33 @@ func makeToken(_ bearer: String, source: String) -> Token {
 /// The `exp` claim, read in place from the payload decoded into a buffer wiped before it is freed: the token is
 /// kept, but no other copy of what it holds is.
 func jwtExpiry(_ token: String) -> Date? {
+    withJWTPayload(token) { doc in
+        // A signed 64-bit integer exactly, as Go decodes it: not a fraction, an exponent or a wrapped value.
+        guard let exp = doc.member(doc.root, "exp"), let v = doc.int64(exp) else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(v))
+    }
+}
+
+/// The longest account ID a private sign-in names.
+let maxAccountID = 256
+
+/// The ChatGPT account `token` names: `chatgpt_account_id` in its `https://api.openai.com/auth` claim
+/// (spec/credentials.md, AUTH-08). nil when `token` is not a JWT, or the claim is absent or not a string of 1 to 256
+/// ASCII letters, digits, `-`, `_` and `.`. Names are exact, as for `exp`.
+func accountClaim(_ token: String) -> String? {
+    withJWTPayload(token) { doc in
+        guard let auth = doc.member(doc.root, "https://api.openai.com/auth"),
+            let v = doc.member(auth, "chatgpt_account_id"),
+            let id = doc.string(v, atMost: maxAccountID), !id.isEmpty,
+            id.utf8.allSatisfy({ base64URL($0) != nil || $0 == UInt8(ascii: ".") })
+        else { return nil }
+        return id
+    }
+}
+
+/// Decodes `token`'s payload into a buffer wiped before it is freed and, when the payload is JSON as Codex's is read,
+/// passes it to `body`, which must not keep it; nil when `token` is not a JWT or the payload is not such JSON.
+func withJWTPayload<R>(_ token: String, _ body: (WireJSON.Borrowed) -> R?) -> R? {
     let u = token.utf8
     guard let first = u.firstIndex(of: 0x2E) else { return nil }
     let start = u.index(after: first)
@@ -280,17 +307,14 @@ func jwtExpiry(_ token: String) -> Date? {
         acc &= (1 << bits) - 1
     }
     // The bits left over are ignored, as Foundation's and Go's decoders ignore them.
-    // A signed 64-bit integer exactly, as Go decodes it: not a fraction, an exponent or a wrapped value.
-    return bytes.withUnsafeBytes { raw -> Date? in
-        guard let doc = plainJSON(raw), let exp = doc.member(doc.root, "exp"), let v = doc.int64(exp) else {
-            return nil
-        }
-        return Date(timeIntervalSince1970: TimeInterval(v))
+    return bytes.withUnsafeBytes { raw -> R? in
+        guard let doc = plainJSON(raw) else { return nil }
+        return body(doc)
     }
 }
 
 /// A base64url digit's value.
-private func base64URL(_ c: UInt8) -> UInt32? {
+func base64URL(_ c: UInt8) -> UInt32? {
     switch c {
     case 0x41...0x5A: return UInt32(c - 0x41)
     case 0x61...0x7A: return UInt32(c - 0x61 + 26)
