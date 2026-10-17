@@ -6,8 +6,10 @@ package memscan
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
 	"errors"
+	"slices"
 	"syscall"
 )
 
@@ -139,6 +141,26 @@ func (s *Scan) Occurrences() ([]int, error) {
 		}
 	})
 	return counts, err
+}
+
+// union sorts spans and joins those that overlap, so no byte is scanned twice, and says whether any did.
+// /proc/self/maps is read a page at a time and is not a snapshot: a mapping that grows or merges with its neighbour
+// while it is read, as the Go heap's does, can be listed twice, as it was and as it became, and a copy inside both
+// would be counted twice. On amd64 CI it was: one copy at one address, counted twice.
+func union(spans [][2]uintptr) ([][2]uintptr, bool) {
+	spans = slices.Clone(spans)
+	slices.SortFunc(spans, func(a, b [2]uintptr) int { return cmp.Compare(a[0], b[0]) })
+	var out [][2]uintptr
+	overlapped := false
+	for _, s := range spans {
+		if n := len(out); n > 0 && s[0] < out[n-1][1] {
+			out[n-1][1] = max(out[n-1][1], s[1])
+			overlapped = true
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, overlapped
 }
 
 // index is bytes.Index without holding the needle in vector registers. An asynchronous preemption saves a goroutine's

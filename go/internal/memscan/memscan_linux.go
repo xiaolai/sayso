@@ -42,6 +42,7 @@ func regions(f func(lo, hi uintptr)) error {
 			spans = append(spans, [2]uintptr{uintptr(lo), uintptr(hi)})
 		}
 	}
+	spans, _ = union(spans)
 	for _, s := range spans {
 		f(s[0], s[1])
 	}
