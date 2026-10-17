@@ -1,5 +1,5 @@
 {
- "count": 1083,
+ "count": 1089,
  "fixtures": [
   {
    "id": "app-ready",
@@ -465,6 +465,12 @@
   },
   {
    "id": "app-refresh-method-missing",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-ready-account-id",
    "file": "app-server/app-server.jsonl",
    "component": "credentials",
    "requires": []
@@ -945,6 +951,36 @@
   },
   {
    "id": "auth-file-tokens-string",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-absent",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-opaque",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-malformed",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-not-an-id",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []

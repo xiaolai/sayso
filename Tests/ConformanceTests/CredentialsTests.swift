@@ -335,6 +335,9 @@ final class CredentialWorld {
                 if errorClass != v as? String { p.append("class \(errorClass.debugDescription), want \(v)") }
             case "token":
                 if token?.bearer != Fixtures.substitute(v) as? String { p.append("token differs") }
+            case "accountId":
+                let got: Any = token?.accountID ?? NSNull()
+                if !Self.same(got, v) { p.append("accountId \(got), want \(v)") }
             case "expiresAt":
                 let got: Any = token?.expires.map { NSNumber(value: Int64($0.timeIntervalSince1970)) } ?? NSNull()
                 if !Self.same(got, v) { p.append("expiresAt \(got), want \(v)") }

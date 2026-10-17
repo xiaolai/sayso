@@ -249,6 +249,9 @@ type Token struct {
 	Expires time.Time
 	Plan    string
 	Source  string
+	// AccountID is the ChatGPT account the token names, as a private sign-in names it (spec/credentials.md, AUTH-08):
+	// chatgpt_account_id in its "https://api.openai.com/auth" claim. "" when it names none, or is not a JWT.
+	AccountID string
 }
 
 // NewToken returns a Token and registers its bearer with the scrubber.

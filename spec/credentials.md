@@ -236,6 +236,10 @@ never read for it: it may not exist (a keychain store), and it holds a refresh t
   made. An error never quotes the token.
 - **Lifetime** is the caller's: it removes the file, or the whole folder, when its Codex is done, and clears what a
   crash left behind.
+- **The account on a token.** Every token a fetch or refresh returns carries the account ID it names, read by these
+  same rules (Go `Token.AccountID`, `""` for none; Swift `Token.accountID`, `nil` for none), so an app that sends the
+  account with its own requests (a `ChatGPT-Account-Id` header) does not parse the token itself. A token that is not
+  a JWT, or whose claim is absent or breaks the rules above, names none.
 
 ## Hygiene (`AUTH-05`)
 

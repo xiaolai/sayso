@@ -462,6 +462,14 @@ func (w *world) check(want map[string]any, state string, err error, tok secret.T
 			if exp := fmt.Sprint(fixtures.Substitute(v)); tok.Bearer() != exp {
 				p = append(p, "token differs")
 			}
+		case "accountId":
+			got := any(nil)
+			if tok.AccountID != "" {
+				got = tok.AccountID
+			}
+			if !same(got, v) {
+				p = append(p, fmt.Sprintf("accountId %v, want %v", got, v))
+			}
 		case "expiresAt":
 			got := any(nil)
 			if !tok.Expires.IsZero() {

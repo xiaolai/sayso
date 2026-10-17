@@ -220,15 +220,19 @@ public struct Token: Sendable, Equatable, CustomStringConvertible, CustomDebugSt
     public let expires: Date?
     public let plan: String
     public let source: String
+    /// The ChatGPT account the token names, as a private sign-in names it (spec/credentials.md, AUTH-08):
+    /// `chatgpt_account_id` in its `https://api.openai.com/auth` claim. nil when it names none, or is not a JWT.
+    public let accountID: String?
 
     /// Registers `bearer` with the scrubber. A non-finite expiry is made definite (``Secret/definite(_:)``): NaN and
     /// minus infinity are long past, so the token counts as expired; plus infinity is the distant future.
-    public init(bearer: String, expires: Date?, plan: String = "", source: String = "") {
+    public init(bearer: String, expires: Date?, plan: String = "", source: String = "", accountID: String? = nil) {
         Secret.register(bearer)
         self.bearer = bearer
         self.expires = expires.map(Secret.definite)
         self.plan = plan
         self.source = source
+        self.accountID = accountID
     }
 
     public var description: String { Secret.redacted }
@@ -243,7 +247,8 @@ public struct Token: Sendable, Equatable, CustomStringConvertible, CustomDebugSt
     /// equal when they differ only in how an accented letter is encoded.
     public static func == (a: Token, b: Token) -> Bool {
         a.bearer.utf8.elementsEqual(b.bearer.utf8) && a.expires == b.expires && a.plan.utf8.elementsEqual(b.plan.utf8)
-            && a.source.utf8.elementsEqual(b.source.utf8)
+            && a.source.utf8.elementsEqual(b.source.utf8) 
+            && a.accountID.map { Array($0.utf8) } == b.accountID.map { Array($0.utf8) }
     }
 }
 

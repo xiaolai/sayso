@@ -85,6 +85,7 @@ with more room for an instrumented or debug build.
 | `state` | the state ([credentials](credentials.md)) |
 | `class` | the error's class ([HTTP and mint](http-and-mint.md)); `""` for no error |
 | `token`, `expiresAt` | for `ready`: the token and its expiry (`null`: unknown) |
+| `accountId` | for `ready`: the account ID the token names (`null`: none) |
 | `mode`, `codexVersion` | the reported mode or version |
 | `spawns` | how many times `codex` was started |
 | `argv` | the arguments of every start |

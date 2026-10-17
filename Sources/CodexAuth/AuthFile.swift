@@ -243,10 +243,11 @@ enum AuthFile {
     }
 }
 
-/// Registers `bearer` with the scrubber and wraps it with its expiry: the JWT `exp` claim, read without checking the
-/// signature. A token that is not a JWT, or has no `exp` that is a signed 64-bit integer, has unknown expiry.
+/// Registers `bearer` with the scrubber and wraps it with its expiry and account: the JWT `exp` claim, read without
+/// checking the signature, and the account the token names (``accountClaim(_:)``). A token that is not a JWT, or has no
+/// `exp` that is a signed 64-bit integer, has unknown expiry.
 func makeToken(_ bearer: String, source: String) -> Token {
-    Token(bearer: bearer, expires: jwtExpiry(bearer), source: source)
+    Token(bearer: bearer, expires: jwtExpiry(bearer), source: source, accountID: accountClaim(bearer))
 }
 
 /// The `exp` claim, read in place from the payload decoded into a buffer wiped before it is freed: the token is

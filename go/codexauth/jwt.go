@@ -9,10 +9,13 @@ import (
 	"github.com/xiaolai/sayso/go/secret"
 )
 
-// newToken registers bearer with the scrubber and wraps it with its expiry: the JWT exp claim, read without checking
-// the signature. A token that is not a JWT, or has no exp, has unknown expiry (the zero time).
+// newToken registers bearer with the scrubber and wraps it with its expiry and account: the JWT exp claim, read without
+// checking the signature, and the account the token names (accountClaim). A token that is not a JWT, or has no exp,
+// has unknown expiry (the zero time).
 func newToken(bearer, source string) secret.Token {
-	return secret.NewToken(bearer, jwtExpiry(bearer), "", source)
+	t := secret.NewToken(bearer, jwtExpiry(bearer), "", source)
+	t.AccountID, _ = accountClaim(bearer)
+	return t
 }
 
 // jwtExpiry reads the exp claim in place from the payload, decoded into a buffer cleared before it is dropped: the

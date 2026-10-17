@@ -97,7 +97,8 @@ enum Fixtures {
             data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
                 .replacingOccurrences(of: "=", with: "")
         }
-        let body = (try? JSONSerialization.data(withJSONObject: claims, options: [.sortedKeys])) ?? Data()
+        // As spec/fixtures.md builds it, and as Go and Python write it: compact, keys sorted, "/" not escaped.
+        let body = (try? JSONSerialization.data(withJSONObject: claims, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return encode(Data(#"{"alg":"none","typ":"JWT"}"#.utf8)) + "." + encode(body) + "." + encode(Data("sig".utf8))
     }
 

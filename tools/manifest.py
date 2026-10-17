@@ -18,7 +18,7 @@ SKIP = {"MANIFEST.json", "capabilities.json"}
 HEAD = {"id", "component", "note", "requires"}
 
 CREDENTIAL_EXPECT = {
-    "state", "class", "token", "expiresAt", "mode", "codexVersion", "spawns", "argv", "requests", "envAbsent",
+    "state", "class", "token", "accountId", "expiresAt", "mode", "codexVersion", "spawns", "argv", "requests", "envAbsent",
     "envEquals", "pathStartsWith", "binDir", "childrenExited", "closeWithinMs", "serverRequestAnswered", "outbound",
     "refreshCalls", "notInDescription", "retryAt", "inDescription", "inLog", "stderr",
     # client cases (setup.client)
