@@ -79,8 +79,8 @@ func emit(s *memscan.Scan, parts []part) {
 }
 
 // readCase writes the document parts make to a fresh auth.json, reads it, and returns the state with how often each
-// needle is found in memory afterwards.
-func readCase(t *testing.T, parts []part) (State, []int) {
+// needle is found in memory afterwards, and, when any is, where (memscan.Scan.Explain).
+func readCase(t *testing.T, parts []part) (State, []int, string) {
 	t.Helper()
 	s, err := memscan.New(1 << 16)
 	if err != nil {
@@ -112,20 +112,24 @@ func readCase(t *testing.T, parts []part) (State, []int) {
 	if errors.Is(err, memscan.ErrUnsupported) {
 		prereq.Missing(t, err.Error())
 	}
-	if e == nil {
-		return StateReady, found
+	where := ""
+	if slices.ContainsFunc(found, func(n int) bool { return n != 0 }) {
+		where = s.Explain()
 	}
-	return e.State, found
+	if e == nil {
+		return StateReady, found, where
+	}
+	return e.State, found, where
 }
 
 func assertNoCopy(t *testing.T, parts []part, want State) {
 	t.Helper()
-	got, found := readCase(t, parts)
+	got, found, where := readCase(t, parts)
 	if got != want {
 		t.Errorf("state %s, want %s", got, want)
 	}
 	if slices.ContainsFunc(found, func(n int) bool { return n != 0 }) {
-		t.Errorf("a value outlived the read: needles found %v", found)
+		t.Errorf("a value outlived the read: needles found %v\n%s", found, where)
 	}
 }
 

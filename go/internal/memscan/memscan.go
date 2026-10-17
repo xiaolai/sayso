@@ -28,6 +28,7 @@ type Scan struct {
 	nUsed   int
 	used    int
 	room    int
+	hits    [][]uintptr // where Occurrences found each needle, for Explain
 }
 
 // New maps the skipped pages, with room bytes for a document.
@@ -107,6 +108,7 @@ func (s *Scan) Reset(mark int) {
 // Occurrences counts each needle in writable memory outside the skipped pages.
 func (s *Scan) Occurrences() ([]int, error) {
 	counts := make([]int, len(s.needles))
+	s.hits = make([][]uintptr, len(s.needles))
 	longest := 0
 	for _, r := range s.needles {
 		longest = max(longest, r[1]-r[0])
@@ -128,6 +130,7 @@ func (s *Scan) Occurrences() ([]int, error) {
 						// A hit starting in the overlap is counted by the next chunk, which starts there.
 						if at+n >= part[1] || off+i < int(n)-(longest-1) {
 							counts[k]++
+							s.hits[k] = append(s.hits[k], at+uintptr(off+i))
 						}
 						off += i + 1
 					}
