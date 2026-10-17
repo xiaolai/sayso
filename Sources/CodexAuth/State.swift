@@ -82,6 +82,15 @@ public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomString
             ], displayStyle: .struct)
     }
 
+    /// A fetch or refresh the caller cancelled after it reached `state`: the state is kept and the class is
+    /// ``ErrorClass/cancelled``, so an interrupt is never reported as a credential failure (spec/credentials.md). For an
+    /// app's own tests of how it maps a cancellation.
+    public static func cancelled(state: CodexAuthState, message: String = "") -> CodexAuthError {
+        var e = CodexAuthError(state, message: message)
+        e.errorClass = .cancelled
+        return e
+    }
+
     /// The state an error carries: ready for nil, codex-error for an error from elsewhere. A CodexAuthError wrapped
     /// as an NSError's underlying error counts, as Go's StateOf follows wrapping.
     /// The whole chain is followed; a chain that loops back to an error already seen ends there.

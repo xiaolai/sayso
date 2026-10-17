@@ -271,6 +271,15 @@ func observe(ev realtime.Event) map[string]any {
 	return m
 }
 
+// eventTypeOf is the event type a decode error carries; "" for any other error.
+func eventTypeOf(err error) string {
+	var e *openaihttp.Error
+	if errors.As(err, &e) {
+		return e.EventType
+	}
+	return ""
+}
+
 // checkEvent decodes raw and compares it with want: the typed fields, or a protocol error naming the type
 // (protocolError null: the type need not be named).
 func checkEvent(raw string, want map[string]any) []string {
@@ -285,6 +294,10 @@ func checkEvent(raw string, want map[string]any) []string {
 		}
 		if typ, ok := pe.(string); ok && !strings.Contains(err.Error(), typ) {
 			p = append(p, fmt.Sprintf("error %q does not name %s", err, typ))
+		}
+		wantType, _ := pe.(string)
+		if got := eventTypeOf(err); got != wantType {
+			p = append(p, fmt.Sprintf("eventType %q, want %q", got, wantType))
 		}
 		return append(p, leaks(strings_(want["notInDescription"]), err.Error())...)
 	}

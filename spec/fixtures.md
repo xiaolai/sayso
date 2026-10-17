@@ -145,7 +145,8 @@ method, path, headers, JSON body), `secondAuthorization` (`$token` or `$refreshT
 
 `kind`: `close` (`code`, `reason`) → `expect.class`; `error-event` (`event`) → `expect.class`, `fatal`, `code`,
 `type`, `param`; `size` (`readLimit`, `messageBytes`) → `expect.class` (`null`: accepted); `event` (`raw`, the exact
-text) → `expect` with `type` and fields, or `protocolError` (the type the error must name; `null`: it need not name one),
+text) → `expect` with `type` and fields, or `protocolError` (the type the error must name, in its message and as its event type; `null`: it names none, and its
+event type is `""`),
 `ignored`, or `unknown` (the type). `pcmHex` is the decoded audio. `handshake` dials a fake server that reads the
 upgrade request and answers it with `reply` (`status`, `headers`, `body`; `hold` keeps the connection open after it),
 or, with `silent: true`, never answers; `handshakeTimeoutMs` defaults to 5000. Both harnesses write the reply as

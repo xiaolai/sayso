@@ -44,7 +44,10 @@ type Error struct {
 	Route string
 	// Fatal is set for a realtime error the session cannot continue after (spec/session.md).
 	Fatal bool
-	Err   error // underlying cause, if any
+	// EventType is, for a realtime event that could not be decoded, its type when that could be read, scrubbed; ""
+	// for any other failure (spec/session.md).
+	EventType string
+	Err       error // underlying cause, if any
 }
 
 func (e *Error) Error() string {
