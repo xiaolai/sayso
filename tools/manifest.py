@@ -36,7 +36,7 @@ SCHEMA = {
     "credentials": {
         "": {"setup", "expect", "steps"},
         "setup": {"now", "marginSeconds", "source", "codex", "inheritedPath", "inheritedEnv", "codexHome", "file",
-                  "retry", "timeoutMs", "cancelAfterMs", "server", "client", "privateSignIn"},
+                  "retry", "timeoutMs", "cancelOnRequest", "server", "client", "privateSignIn"},
         "setup.privateSignIn": {"token", "folder"},
         "setup.file": AUTH_FILE,
         "setup.file.rawRepeat": {"text", "count"},

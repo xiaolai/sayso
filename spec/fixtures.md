@@ -74,7 +74,7 @@ with more room for an instrumented or debug build.
 | `file` | `auth.json` in the `CODEX_HOME` in force: `{"kind": "regular", "json": …}`, `{"kind": "regular", "raw": "…"}`, `{"kind": "regular", "rawRepeat": {"text", "count"}}`, `{"kind": "regular", "hex": "…"}` (bytes), `{"kind": "missing"}`, `{"kind": "symlink", "json": …}` (a link to a file elsewhere in `$home`), `{"kind": "fifo"}`, `{"kind": "directory"}`; `padTo` pads `json` with trailing spaces to that many bytes |
 | `retry` | the content the file holds at the one re-read after a parse failure |
 | `timeoutMs` | the per-call app-server timeout |
-| `cancelAfterMs` | the caller cancels the probe this many milliseconds after it starts |
+| `cancelOnRequest` | the caller cancels the probe as soon as the fake has received a request with this method: an event, not a delay, which would race the child's start |
 | `server` | the fake's scenario (top of `tools/fake-app-server.py`) |
 | `privateSignIn` | a private sign-in case (below) |
 
@@ -93,7 +93,7 @@ with more room for an instrumented or debug build.
 | `envAbsent`, `envEquals`, `pathStartsWith` | the child's environment |
 | `binDir` | the folder the resolved executable is in |
 | `childrenExited` | no started child is alive when the probe returns, and no process the fake started in the child's group (`groupDescendant`) is alive a moment later, once its new parent has reaped it |
-| `closeWithinMs` | the probe, including closing the child, returns within this many milliseconds |
+| `closeWithinMs` | the probe, including closing the child, returns within this many milliseconds of its start, or of the cancel when the caller cancels |
 | `serverRequestAnswered` | `error`: the server request got an error reply with code `-32601` |
 | `outbound` | every message the fake read, in order: its `method`, or `refusal:<id>` for an answer to a server request |
 | `refreshCalls` | `getAuthStatus` calls with `refreshToken: true` so far |

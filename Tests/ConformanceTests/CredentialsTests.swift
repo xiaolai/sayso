@@ -49,18 +49,33 @@ final class Box<T>: @unchecked Sendable {
     }
 }
 
-/// Runs async work from a synchronous test body; `cancelAfter` cancels the work that many seconds after it starts.
-/// Work still running after ``caseWait`` is cancelled and fails the case.
+/// Runs async work from a synchronous test body; `cancelWhen`, polled until the work ends, cancels it once it holds,
+/// and `cancelledAt` records when. Work still running after ``caseWait`` is cancelled and fails the case.
 func blocking<T: Sendable>(
-    cancelAfter: TimeInterval? = nil, _ body: @escaping @Sendable () async throws -> T
+    cancelWhen: (@Sendable () -> Bool)? = nil, cancelledAt: Box<Date?>? = nil,
+    _ body: @escaping @Sendable () async throws -> T
 ) throws -> T {
     let done = DispatchSemaphore(value: 0)
     let result = Box<Result<T, Error>?>(nil)
+    let finished = Box(false)
     let task = Task {
         do { result.value = .success(try await body()) } catch { result.value = .failure(error) }
+        finished.value = true
         done.signal()
     }
-    if let cancelAfter { DispatchQueue.global().asyncAfter(deadline: .now() + cancelAfter) { task.cancel() } }
+    if let cancelWhen {
+        // Cancelled on an event, not after a delay: a delay races the child's start, which a loaded machine slows.
+        DispatchQueue.global().async {
+            while !finished.value {
+                if cancelWhen() {
+                    cancelledAt?.value = Date()
+                    task.cancel()
+                    return
+                }
+                usleep(5_000)
+            }
+        }
+    }
     guard done.waited(caseWait) else {
         task.cancel()
         throw FixtureError("the case's async work did not finish within \(Int(caseWait)) s")
@@ -79,7 +94,7 @@ final class CredentialWorld {
             "setup", setup,
             [
                 "now", "marginSeconds", "source", "codex", "inheritedPath", "inheritedEnv", "codexHome", "file",
-                "retry", "timeoutMs", "cancelAfterMs", "server", "client", "privateSignIn",
+                "retry", "timeoutMs", "cancelOnRequest", "server", "client", "privateSignIn",
             ])
         p += FakeOpenAI.unknownKeys("setup.privateSignIn", setup?["privateSignIn"] as? [String: Any], ["token", "folder"])
         for name in ["file", "retry"] {
@@ -213,10 +228,14 @@ final class CredentialWorld {
 
     func probe(_ want: [String: Any]) throws -> [String] {
         let cfg = self.cfg
-        let cancelAfter = (setup["cancelAfterMs"] as? NSNumber).map { $0.doubleValue / 1000 }
+        let cancelOn = setup["cancelOnRequest"] as? String
+        let cancelledAt = Box<Date?>(nil)
         let start = Date()
-        let status = try blocking(cancelAfter: cancelAfter) { try await CodexAuthStatus.probe(cfg) }
-        let elapsed = Date().timeIntervalSince(start)
+        let status = try blocking(
+            cancelWhen: cancelOn.map { method in { [self] in received(method) } }, cancelledAt: cancelledAt
+        ) { try await CodexAuthStatus.probe(cfg) }
+        // A cancelled probe is timed from the cancel.
+        let elapsed = Date().timeIntervalSince(cancelledAt.value ?? start)
         var token: Token?
         if status.state == .ready {
             do { token = try blocking { try await status.credentials.token() } } catch {
@@ -294,6 +313,11 @@ final class CredentialWorld {
             }
             return o
         }
+    }
+
+    /// Whether the fake has recorded a request with `method`; a record caught mid-write reads as not yet.
+    func received(_ method: String) -> Bool {
+        (try? read())?.requests.contains { $0["method"] as? String == method } ?? false
     }
 
     private func read() throws -> Recorded {
