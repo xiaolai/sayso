@@ -1,5 +1,5 @@
 {
- "count": 1051,
+ "count": 1089,
  "fixtures": [
   {
    "id": "app-ready",
@@ -465,6 +465,12 @@
   },
   {
    "id": "app-refresh-method-missing",
+   "file": "app-server/app-server.jsonl",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "app-ready-account-id",
    "file": "app-server/app-server.jsonl",
    "component": "credentials",
    "requires": []
@@ -945,6 +951,36 @@
   },
   {
    "id": "auth-file-tokens-string",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-absent",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-opaque",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-malformed",
+   "file": "auth-file/auth-file.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "auth-file-account-id-not-an-id",
    "file": "auth-file/auth-file.json",
    "component": "credentials",
    "requires": []
@@ -1931,6 +1967,198 @@
    "id": "pcm-plausible-empty-script",
    "file": "pcm16.json",
    "component": "pcm16",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-written",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-through-link",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-unknown-expiry",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-expired",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-not-a-jwt",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-empty-token",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-no-auth-claim",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-auth-claim-not-object",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-auth-claim-other-case",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-not-string",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-null",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-empty",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-space",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-quote",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-non-ascii",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-256",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-257",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-account-escaped",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-claim-name-escaped",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-duplicate-claim",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-raw",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-padded",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-four-segments",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-empty-signature",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-signature-outside-alphabet",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-folder-open",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-folder-searchable",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-folder-missing",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-folder-file",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-folder-relative",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-taken",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
+   "requires": []
+  },
+  {
+   "id": "private-sign-in-taken-link",
+   "file": "private-sign-in/private-sign-in.json",
+   "component": "credentials",
    "requires": []
   },
   {

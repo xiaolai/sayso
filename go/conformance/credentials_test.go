@@ -42,6 +42,13 @@ type credSetup struct {
 	CancelAfterMs int64             `json:"cancelAfterMs"`
 	Server        json.RawMessage   `json:"server"`
 	Client        *clientSetup      `json:"client"`
+	PrivateSignIn *privateSetup     `json:"privateSignIn"`
+}
+
+// privateSetup is a private sign-in case's input (AUTH-08): the token, and the folder it is written into.
+type privateSetup struct {
+	Token  json.RawMessage `json:"token"`
+	Folder string          `json:"folder"`
 }
 
 type credFile struct {
@@ -96,6 +103,9 @@ func TestCredentials(t *testing.T) {
 		var cc credCase
 		if err := decode(c, &cc); err != nil {
 			return fixtures.Fail, err.Error()
+		}
+		if cc.Setup.PrivateSignIn != nil {
+			return outcome(privateSignIn(t, cc))
 		}
 		w, err := build(t, cc.Setup, python, fake)
 		if err != nil {
@@ -451,6 +461,14 @@ func (w *world) check(want map[string]any, state string, err error, tok secret.T
 		case "token":
 			if exp := fmt.Sprint(fixtures.Substitute(v)); tok.Bearer() != exp {
 				p = append(p, "token differs")
+			}
+		case "accountId":
+			got := any(nil)
+			if tok.AccountID != "" {
+				got = tok.AccountID
+			}
+			if !same(got, v) {
+				p = append(p, fmt.Sprintf("accountId %v, want %v", got, v))
 			}
 		case "expiresAt":
 			got := any(nil)

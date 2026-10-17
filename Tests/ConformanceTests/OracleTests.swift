@@ -13,8 +13,8 @@ import XCTest
 final class OracleTests: XCTestCase {
     /// Every operation answered here; each must have a built-in check.
     static let ops = [
-        "said.matches", "said.tokens", "han.parse", "jwt.exp", "echo", "wire.valid", "codex.valid", "event.decode",
-        "pcm.encode", "pcm.decode", "pcm.wav", "pcm.validWAV", "pcm.plausible",
+        "said.matches", "said.tokens", "han.parse", "jwt.exp", "jwt.account", "echo", "wire.valid", "codex.valid",
+        "event.decode", "pcm.encode", "pcm.decode", "pcm.wav", "pcm.validWAV", "pcm.plausible",
     ]
 
     func testOracle() throws {
@@ -117,6 +117,12 @@ final class OracleTests: XCTestCase {
             return parseHanNumeral(try text(c, "text")).map { String($0) } ?? NSNull()  // as text: beyond 2^53
         case "jwt.exp":
             return jwtObservation(try text(c, "token"))
+        case "jwt.account":
+            // As go/codexauth/oracle_test.go: the account a private sign-in would name, or null when the token is
+            // refused for its shape or its claim.
+            let token = try text(c, "token")
+            guard jwtShaped(token), let id = accountClaim(token) else { return NSNull() }
+            return id
         case "echo":
             return hex(Data(try text(c, "text").utf8))
         case "wire.valid":
@@ -301,6 +307,19 @@ final class OracleTests: XCTestCase {
         ("jwt.exp", #"{"token":"\#(jwtHeader)eyJleHAiOjEuNX0.c2ln"}"#, "null"),
         ("jwt.exp", #"{"token":"\#(jwtHeader)eyJFWFAiOjV9.c2ln"}"#, "null"),
         ("jwt.exp", #"{"token":"not a jwt"}"#, "null"),
+        // {"https://api.openai.com/auth":{"chatgpt_account_id":"acct-1"}}
+        (
+            "jwt.account",
+            #"{"token":"\#(jwtHeader)eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xIn19.c2ln"}"#,
+            #""acct-1""#
+        ),
+        (
+            "jwt.account",
+            #"{"token":"\#(jwtHeader)eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xIn19.c2ln="}"#,
+            "null"
+        ),
+        ("jwt.account", #"{"token":"\#(jwtHeader)eyJleHAiOjE4MDAwMDM2MDB9.c2ln"}"#, "null"),
+        ("jwt.account", #"{"token":"not a jwt"}"#, "null"),
         ("echo", #"{"text":"a\u00e9\ud83d\ude00"}"#, #""61c3a9f09f9880""#),
         ("echo", #"{"text":"\ufeffa"}"#, #""efbbbf61""#),  // a leading U+FEFF survives the transport
         ("wire.valid", hexOf(#" {"a":[1,-0.5e3,"\ud83d\ude00"]} "#), "true"),

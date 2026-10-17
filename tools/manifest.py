@@ -18,11 +18,13 @@ SKIP = {"MANIFEST.json", "capabilities.json"}
 HEAD = {"id", "component", "note", "requires"}
 
 CREDENTIAL_EXPECT = {
-    "state", "class", "token", "expiresAt", "mode", "codexVersion", "spawns", "argv", "requests", "envAbsent",
+    "state", "class", "token", "accountId", "expiresAt", "mode", "codexVersion", "spawns", "argv", "requests", "envAbsent",
     "envEquals", "pathStartsWith", "binDir", "childrenExited", "closeWithinMs", "serverRequestAnswered", "outbound",
     "refreshCalls", "notInDescription", "retryAt", "inDescription", "inLog", "stderr",
     # client cases (setup.client)
     "startFails", "calls", "callError", "events", "eventCount", "eventSequence", "typedResults",
+    # private sign-in cases (setup.privateSignIn)
+    "signIn", "fileMode", "entries", "elsewhere",
 }
 AUTH_FILE = {"kind", "json", "raw", "hex", "rawRepeat", "padTo"}
 ERROR_EXPECT = {"class", "fatal", "code", "type", "param", "notInDescription"}
@@ -34,7 +36,8 @@ SCHEMA = {
     "credentials": {
         "": {"setup", "expect", "steps"},
         "setup": {"now", "marginSeconds", "source", "codex", "inheritedPath", "inheritedEnv", "codexHome", "file",
-                  "retry", "timeoutMs", "cancelAfterMs", "server", "client"},
+                  "retry", "timeoutMs", "cancelAfterMs", "server", "client", "privateSignIn"},
+        "setup.privateSignIn": {"token", "folder"},
         "setup.file": AUTH_FILE,
         "setup.file.rawRepeat": {"text", "count"},
         "setup.retry": AUTH_FILE,

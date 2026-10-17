@@ -1392,5 +1392,166 @@
    ]
   },
   "note": "A tokens value that is a string, escaped, holds no access token and is refused from its bytes."
+ },
+ {
+  "id": "auth-file-account-id",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600,
+        "https://api.openai.com/auth": {
+         "chatgpt_account_id": "acct-0123"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600,
+     "https://api.openai.com/auth": {
+      "chatgpt_account_id": "acct-0123"
+     }
+    }
+   },
+   "expiresAt": 1800003600,
+   "accountId": "acct-0123"
+  },
+  "note": "A token carries the ChatGPT account it names, read as a private sign-in reads it (AUTH-08)."
+ },
+ {
+  "id": "auth-file-account-id-absent",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600
+    }
+   },
+   "expiresAt": 1800003600,
+   "accountId": null
+  },
+  "note": "A JWT without the claim names no account."
+ },
+ {
+  "id": "auth-file-account-id-opaque",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "opaque-token"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "opaque-token",
+   "expiresAt": null,
+   "accountId": null
+  },
+  "note": "A token that is not a JWT names no account."
+ },
+ {
+  "id": "auth-file-account-id-malformed",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": "a.!!!.c"
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": "a.!!!.c",
+   "expiresAt": null,
+   "accountId": null
+  },
+  "note": "A payload outside the base64url alphabet names no account."
+ },
+ {
+  "id": "auth-file-account-id-not-an-id",
+  "component": "credentials",
+  "setup": {
+   "now": 1800000000,
+   "marginSeconds": 600,
+   "source": "file",
+   "codexHome": "default",
+   "file": {
+    "kind": "regular",
+    "json": {
+     "tokens": {
+      "access_token": {
+       "$jwt": {
+        "exp": 1800003600,
+        "https://api.openai.com/auth": {
+         "chatgpt_account_id": "acct 0123"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "expect": {
+   "state": "ready",
+   "token": {
+    "$jwt": {
+     "exp": 1800003600,
+     "https://api.openai.com/auth": {
+      "chatgpt_account_id": "acct 0123"
+     }
+    }
+   },
+   "expiresAt": 1800003600,
+   "accountId": null
+  },
+  "note": "A claim outside the account ID's characters names no account, as a private sign-in refuses it."
  }
 ]

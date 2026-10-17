@@ -33,6 +33,18 @@ func TestOracle(t *testing.T) {
 				return strconv.FormatInt(s, 10), nil
 			}
 		},
+		// The account a private sign-in would name (AUTH-08), or null when the token is refused for its shape or
+		// its claim.
+		"jwt.account": func(in json.RawMessage) (any, error) {
+			var c struct{ Token string }
+			if err := json.Unmarshal(in, &c); err != nil {
+				return nil, err
+			}
+			if id, ok := accountClaim(c.Token); ok && jwtShaped(c.Token) {
+				return id, nil
+			}
+			return nil, nil
+		},
 	}
 	const header = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0."
 	oracle.Run(t, ops, []oracle.Check{
@@ -43,5 +55,10 @@ func TestOracle(t *testing.T) {
 		{"jwt.exp", `{"token":"` + header + `eyJleHAiOjEuNX0.c2ln"}`, `null`},
 		{"jwt.exp", `{"token":"` + header + `eyJFWFAiOjV9.c2ln"}`, `null`},
 		{"jwt.exp", `{"token":"not a jwt"}`, `null`},
+		// {"https://api.openai.com/auth":{"chatgpt_account_id":"acct-1"}}
+		{"jwt.account", `{"token":"` + header + `eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xIn19.c2ln"}`, `"acct-1"`},
+		{"jwt.account", `{"token":"` + header + `eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xIn19.c2ln="}`, `null`},
+		{"jwt.account", `{"token":"` + header + `eyJleHAiOjE4MDAwMDM2MDB9.c2ln"}`, `null`},
+		{"jwt.account", `{"token":"not a jwt"}`, `null`},
 	})
 }
