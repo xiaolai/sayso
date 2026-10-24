@@ -15,8 +15,8 @@ are Swift-only until their fixtures and Go client land (see [Parity](spec/chat-c
 | PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | `go/pcm16` | `PCM16` |
 | Said guard: did the model read exactly this script? | [`spec/said-guard.md`](spec/said-guard.md) | `go/saidguard` | `SaidGuard`, with ICU spell-out for `ar de es fr hi it ja ko pt` |
 | AI providers: one OpenAI-compatible client, provider profiles, model lists | [`spec/chat-completions.md`](spec/chat-completions.md) | pending (`go/aiproviders`) | `SaySoAI` |
-| The reader's Claude and Codex CLIs as providers | [`spec/chat-completions.md`](spec/chat-completions.md) | — (process-bound, Swift-only) | `SaySoAICLI` (macOS) |
-| Apple's on-device model, guided into the caller's answer type | [`spec/chat-completions.md`](spec/chat-completions.md) | — (framework-bound, Swift-only) | `SaySoAIApple` (macOS 26.4 / iOS 26.4) |
+| The reader's Claude and Codex CLIs as providers | [`spec/cli-providers.md`](spec/cli-providers.md) | — (process-bound, Swift-only) | `SaySoAICLI` (macOS) |
+| Apple's on-device model, guided into the caller's answer type | [`spec/apple-on-device.md`](spec/apple-on-device.md) | — (framework-bound, Swift-only) | `SaySoAIApple` (macOS 26.4 / iOS 26.4) |
 
 Both implement the scrubber and the redacting secret types: Go in `go/secret`, Swift in `RealtimeConnection`. Go
 alone has `go/numwords` (Swift's number words are internal to `SaidGuard`), `codexapp.Login`, which runs

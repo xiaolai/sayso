@@ -5,6 +5,10 @@ reader-chosen endpoint. It is transport, not policy: the caller composes the que
 contract covers only the wire — where the request goes, what it carries, how a refusal is told apart from a malformed
 reply, and how the model list is read.
 
+Sibling providers answering the same `AIProvider` protocol, each with its own contract: the reader's Claude and
+Codex CLIs ([`spec/cli-providers.md`](cli-providers.md)) and Apple's on-device model
+([`spec/apple-on-device.md`](apple-on-device.md)).
+
 **Threat model.** The endpoint may be a cloud service, a server the reader runs, or something hostile. The key must
 travel only to the origin the reader configured; a redirect elsewhere is refused before the header is replayed. The
 response body is untrusted: bounded while reading, parsed strictly, and a refusal's text bounded and scrubbed of the key
