@@ -1,9 +1,11 @@
 # sayso
 
-Shared building blocks for apps that use a local Codex sign-in to drive OpenAI's Realtime API. Specified once, and
-implemented in Go and Swift against one shared set of fixtures.
+Shared building blocks for apps that use a local Codex sign-in to drive OpenAI's Realtime API, and for apps that ask an
+OpenAI-compatible service, a local model or a reader's own CLI a question. Specified once, and implemented in Go and
+Swift against one shared set of fixtures where the contract is the wire.
 
-Status: early. The contract and its fixtures cover every component, and Go and Swift implement all five.
+Status: early. The contract and its fixtures cover the five components both implementations share; the AI providers
+are Swift-only until their fixtures and Go client land (see [Parity](spec/chat-completions.md#parity)).
 
 | Component | Spec | Go | Swift |
 |---|---|---|---|
@@ -12,14 +14,19 @@ Status: early. The contract and its fixtures cover every component, and Go and S
 | WebSocket session and typed events | [`spec/session.md`](spec/session.md) | `go/realtime` | `RealtimeConnection` |
 | PCM16 audio | [`spec/pcm16.md`](spec/pcm16.md) | `go/pcm16` | `PCM16` |
 | Said guard: did the model read exactly this script? | [`spec/said-guard.md`](spec/said-guard.md) | `go/saidguard` | `SaidGuard`, with ICU spell-out for `ar de es fr hi it ja ko pt` |
+| AI providers: one OpenAI-compatible client, provider profiles, model lists | [`spec/chat-completions.md`](spec/chat-completions.md) | pending (`go/aiproviders`) | `SaySoAI` |
+| The reader's Claude and Codex CLIs as providers | [`spec/chat-completions.md`](spec/chat-completions.md) | — (process-bound, Swift-only) | `SaySoAICLI` (macOS) |
+| Apple's on-device model, guided into the caller's answer type | [`spec/chat-completions.md`](spec/chat-completions.md) | — (framework-bound, Swift-only) | `SaySoAIApple` (macOS 26.4 / iOS 26.4) |
 
 Both implement the scrubber and the redacting secret types: Go in `go/secret`, Swift in `RealtimeConnection`. Go
 alone has `go/numwords` (Swift's number words are internal to `SaidGuard`), `codexapp.Login`, which runs
 `codex login`, and `codexapp.PlanStatus`, which reads the plan's rate limits; Swift alone has `RealtimeDeadline`.
 These are helpers outside the contract, which no fixture checks directly. Go keeps the failure classes and the
 classified error in the leaf package `go/failure`, which `go/openaihttp` names again, so `go/codexapp` and
-`go/codexauth` build without the HTTP stack. `CodexAuth` builds on macOS only; the other three products also build
-for iOS 17.
+`go/codexauth` build without the HTTP stack. `CodexAuth` builds on macOS only, and so does `SaySoAICLI`;
+`SaySoAIApple` starts at macOS 26.4 / iOS 26.4; the other products also build for iOS 17. `SaySoAI`, `SaySoAICLI`
+and `SaySoAIApple` are written in Swift 6's language mode — the concurrency checking these protocol types need; the
+older products keep the mode they shipped with.
 
 How the implementations are held to one behaviour: [`spec/parity.md`](spec/parity.md). Fixture format:
 [`spec/fixtures.md`](spec/fixtures.md).
