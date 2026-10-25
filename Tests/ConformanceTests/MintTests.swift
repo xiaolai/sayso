@@ -201,6 +201,39 @@ final class MintPolicyTests: XCTestCase {
         XCTAssertThrowsError(try Minter.body(session: Data("[1]".utf8), lifetimeSeconds: 60))
     }
 
+    /// A base URL with a query or a fragment would swallow the mint path into it, so the request would go elsewhere
+    /// on an allowed origin: it is a programming error, refused before any sign-in is spent.
+    func testABaseURLWithAQueryOrFragmentIsRefused() async throws {
+        let client = HTTPClient(policy: try OriginPolicy(testOrigins: ["127.0.0.1:1"]))
+        for base in ["http://127.0.0.1:1?x=1", "http://127.0.0.1:1/#f"] {
+            let creds = StubCredentials(token: "opaque-base-url-token", refreshTo: "")
+            let minter = Minter(
+                client: client, credentials: creds, timeout: 1, lifetimeSeconds: 60, baseURL: URL(string: base)!)
+            do {
+                _ = try await minter.secret(session: Data("{}".utf8))
+                XCTFail("\(base) minted")
+            } catch {
+                XCTAssertEqual(ErrorClass.of(error), .internal, "\(base): \(error)")
+            }
+            XCTAssertEqual(creds.tokens, 0, "\(base) cost a sign-in")
+        }
+    }
+
+    /// A session that does not encode says why, in the cause.
+    func testASessionThatDoesNotEncodeKeepsTheReason() async throws {
+        struct Session: Encodable { let temperature = Double.nan }
+        let minter = Minter(
+            client: HTTPClient(), credentials: StubCredentials(token: "t", refreshTo: ""), timeout: 1,
+            lifetimeSeconds: 60)
+        do {
+            _ = try await minter.secret(encoding: Session())
+            XCTFail("a NaN encoded")
+        } catch let e as RealtimeError {
+            XCTAssertEqual(e.errorClass, .internal)
+            XCTAssertTrue(e.cause.contains("temperature"), e.cause)
+        }
+    }
+
     func testSecretsFormatRedacted() {
         let token = Token(bearer: "opaque-bearer-value", expires: nil)
         let secret = ClientSecret(bearer: "ek_formatted", expiresAt: Date())

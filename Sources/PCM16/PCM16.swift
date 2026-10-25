@@ -68,9 +68,9 @@ public enum PCM {
     /// The canonical header for `n` bytes of PCM at `rate`, both already in range.
     private static func header(_ n: Int, rate: Int) -> Data {
         var out = Data(capacity: headerSize)
-        out.append(contentsOf: Array("RIFF".utf8))
+        out.append(contentsOf: "RIFF".utf8)
         append32(&out, UInt32(36 + n))
-        out.append(contentsOf: Array("WAVEfmt ".utf8))
+        out.append(contentsOf: "WAVEfmt ".utf8)
         append32(&out, 16)
         append16(&out, 1)  // PCM
         append16(&out, 1)  // mono
@@ -78,7 +78,7 @@ public enum PCM {
         append32(&out, UInt32(rate * 2))
         append16(&out, 2)
         append16(&out, 16)
-        out.append(contentsOf: Array("data".utf8))
+        out.append(contentsOf: "data".utf8)
         append32(&out, UInt32(n))
         return out
     }

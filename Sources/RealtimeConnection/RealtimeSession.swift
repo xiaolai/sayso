@@ -245,6 +245,12 @@ public final class RealtimeSession: Sendable {
     /// Whether URLSession has reported the task complete; for tests.
     var transportCompleted: Bool { events.isComplete }
 
+    /// ``transportCompleted`` read without the session, so a test can watch a session it has released; for tests.
+    var transportCompletion: @Sendable () -> Bool {
+        let events = self.events
+        return { events.isComplete }
+    }
+
     /// Whether the reader holds a message nobody has taken yet; for tests.
     var holdsBufferedMessage: Bool { inbox.holdsBuffered }
 
@@ -336,7 +342,8 @@ final class WriteGate: @unchecked Sendable {
     private var busy = false
     private var closed = false
     private var waiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
-    /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
+    /// Waiters in arrival order. A cancelled waiter leaves `waiters` at once; its id is skipped when it reaches the
+    /// front, or dropped when cancelled ids pile up (`compactOrder`).
     private var order = FIFO<UInt64>()
     private var nextID: UInt64 = 0
 
@@ -365,13 +372,19 @@ final class WriteGate: @unchecked Sendable {
                 }
             }
         } onCancel: {
-            let waiter = lock.withLock { waiters.removeValue(forKey: id) }
+            let waiter = lock.withLock {
+                defer { compactOrder(&order, waiters) }
+                return waiters.removeValue(forKey: id)
+            }
             waiter?.resume(throwing: CancellationError())
         }
     }
 
     /// How many waiters are queued; for tests.
     var waiting: Int { lock.withLock { waiters.count } }
+
+    /// How many ids the arrival order holds, a cancelled waiter's included; for tests.
+    var queuedIDs: Int { lock.withLock { order.count } }
 
     /// Hands the turn to the next waiter, or frees the gate.
     func release() {
@@ -398,6 +411,12 @@ final class WriteGate: @unchecked Sendable {
         lock.unlock()
         for w in pending { w.resume(throwing: RealtimeSession.Closed()) }
     }
+}
+
+/// Drops the ids of cancelled waiters from `order` once they outnumber the live ones, so waits cancelled with no
+/// hand-off between them cannot grow it without bound; the work stays O(1) amortised per cancellation.
+private func compactOrder<V>(_ order: inout FIFO<UInt64>, _ waiters: [UInt64: V]) {
+    if order.count > 2 * waiters.count + 64 { order.keepAll { waiters[$0] != nil } }
 }
 
 /// Settles a write's start against its cancellation: whichever comes first under the lock decides whether the
@@ -437,7 +456,8 @@ final class Inbox: @unchecked Sendable {
     private var terminal: Error?
     private var closing = false
     private var waiters: [UInt64: CheckedContinuation<RealtimeMessage, Error>] = [:]
-    /// Waiters in arrival order. A cancelled waiter leaves only `waiters`; its id is skipped when it reaches the front.
+    /// Waiters in arrival order. A cancelled waiter leaves `waiters` at once; its id is skipped when it reaches the
+    /// front, or dropped when cancelled ids pile up (`compactOrder`).
     private var order = FIFO<UInt64>()
     private var nextID: UInt64 = 0
     private var space: CheckedContinuation<Bool, Never>?
@@ -452,6 +472,11 @@ final class Inbox: @unchecked Sendable {
     }
 
     var holdsBuffered: Bool { lock.withLock { buffered != nil } }
+
+    /// How many waiters are queued, and how many ids the arrival order holds, a cancelled waiter's included; for
+    /// tests.
+    var waiting: Int { lock.withLock { waiters.count } }
+    var queuedIDs: Int { lock.withLock { order.count } }
 
     var unknownCounts: [UnknownTypeCount] {
         lock.lock()
@@ -580,6 +605,7 @@ final class Inbox: @unchecked Sendable {
         } onCancel: {
             lock.lock()
             let waiter = waiters.removeValue(forKey: id)
+            compactOrder(&order, waiters)
             lock.unlock()
             waiter?.resume(throwing: CancellationError())
         }

@@ -53,6 +53,22 @@ final class MintWipeTests: XCTestCase {
         }
     }
 
+    /// The `Data` holds the buffer itself, not a copy, from 15 bytes on: Foundation copies a body short enough to
+    /// store inline (at most 14 bytes) into the `Data` value, where no wipe reaches it. No body that can carry a
+    /// secret is that short, and this pins the bound the claim relies on.
+    func testABodyPastTheInlineBoundSharesItsBuffer() {
+        func addresses(_ count: Int) -> (UnsafeRawPointer?, UnsafeRawPointer?) {
+            var body = BodyBuffer(declared: Int64(count), limit: 1 << 20)
+            for _ in 0..<count { body.append(0x41) }
+            let a = body.data, b = body.data
+            return (a.withUnsafeBytes { $0.baseAddress }, b.withUnsafeBytes { $0.baseAddress })
+        }
+        let (a, b) = addresses(15)
+        XCTAssertEqual(a, b, "a 15-byte body was copied out of its buffer")
+        let shortest = #"{"error":{"message":"x"}}"#.utf8.count
+        XCTAssertGreaterThan(shortest, 14, "a body naming a field fits inline")
+    }
+
     /// A refusal body is read in place and each field scrubbed where it lies: a secret it names, and a value no
     /// field takes, leave no copy.
     func testARefusalBodyLeavesNothing() {

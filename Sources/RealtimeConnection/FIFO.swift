@@ -33,4 +33,10 @@ package struct FIFO<Element> {
         slots = []
         head = 0
     }
+
+    /// Drops the elements `keep` refuses, keeping the order of the rest; O(count).
+    package mutating func keepAll(where keep: (Element) -> Bool) {
+        slots = slots[head...].filter { $0.map(keep) ?? false }
+        head = 0
+    }
 }

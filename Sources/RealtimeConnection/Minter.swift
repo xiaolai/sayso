@@ -80,13 +80,23 @@ public struct Minter: SecretSource {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         let data: Data
-        do { data = try encoder.encode(session) } catch {
-            throw RealtimeError(.internal, message: "the session does not encode")
+        do { data = try encoder.encode(session) } catch EncodingError.invalidValue(_, let context) {
+            // The reason and where, never the value: the session may carry what the user wrote.
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            throw RealtimeError(
+                .internal, message: "the session does not encode", cause: context.debugDescription + " (at \(path))")
+        } catch {
+            throw RealtimeError(.internal, message: "the session does not encode", cause: String(describing: error))
         }
         return try await secret(session: data)
     }
 
     private func endpoint() throws -> URL {
+        // The path is appended to the base, so a query or fragment there would swallow it.
+        let parts = URLComponents(url: baseURL, resolvingAgainstBaseURL: true)
+        guard let parts, parts.query == nil, parts.fragment == nil else {
+            throw RealtimeError(.internal, message: "the base URL holds a query or a fragment")
+        }
         var url = baseURL.absoluteString
         while url.hasSuffix("/") { url.removeLast() }
         guard let endpoint = URL(string: url + Self.path) else {

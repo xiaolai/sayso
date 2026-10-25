@@ -43,14 +43,8 @@ public enum RealtimeDeadline {
             let value = try await withTaskCancellationHandler(
                 operation: { () async throws -> T in
                     try Task.checkCancellation()
-                    do {
-                        let v = try await operation()
-                        finish()
-                        return v
-                    } catch {
-                        finish()
-                        throw error
-                    }
+                    defer { finish() }
+                    return try await operation()
                 },
                 onCancel: { if state.settle(.cancelled) { close() } })
             outcome = .success(value)

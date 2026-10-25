@@ -89,6 +89,27 @@ final class SessionCloseTests: XCTestCase {
         if served { gate.release() } else { next.cancel() }
     }
 
+    /// Waits cancelled over and over, with no write finishing and no message arriving, leave neither queue growing:
+    /// a cancelled waiter's place in the arrival order is dropped too, not kept until the next hand-off.
+    func testCancelledWaitsDoNotAccumulate() async throws {
+        let gate = WriteGate()
+        try await gate.acquire()
+        let inbox = Inbox()
+        for _ in 0..<300 {
+            let writer = Task { try await gate.acquire() }
+            let reader = Task { try await inbox.take() }
+            let queued = await eventually { gate.waiting == 1 && inbox.waiting == 1 }
+            XCTAssertTrue(queued, "a waiter did not queue")
+            writer.cancel()
+            reader.cancel()
+            _ = await writer.result
+            _ = await reader.result
+        }
+        XCTAssertLessThanOrEqual(gate.queuedIDs, 100, "the write queue kept every cancelled waiter")
+        XCTAssertLessThanOrEqual(inbox.queuedIDs, 100, "the inbox kept every cancelled waiter")
+        gate.release()
+    }
+
     /// Writers are served in the order they queued: the second starts only once the first is queued, and the gate is
     /// released only once both are.
     func testWritesAreServedInOrder() async throws {
@@ -238,8 +259,25 @@ final class SessionCloseTests: XCTestCase {
         XCTAssertLessThan(wall, RealtimeSession.closeGrace + 1, "close outlived its grace")
     }
 
-    private func open(port: UInt16) async throws -> RealtimeSession {
-        let client = try FakeOpenAI.client(port: port)
+    /// A session released without close, its peer never answering the close, ends its transport within the grace
+    /// close allows (URLSession completes the task once the close is sent), so the reader suspended in receive ends.
+    /// The client outlives the session, as a shared one does, so its own teardown cannot be what ends the transport.
+    func testAReleasedSessionIsDroppedAfterTheGrace() async throws {
+        let server = try FakeClosingServer(code: nil, reason: "")  // never answers the close
+        defer { server.stop() }
+        let client = try FakeOpenAI.client(port: server.port)
+        var session: RealtimeSession? = try await open(port: server.port, client: client)
+        let completed = session!.transportCompletion
+        XCTAssertFalse(completed())
+        session = nil
+        let deadline = Date().addingTimeInterval(RealtimeSession.closeGrace + 3)
+        while !completed(), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertTrue(completed(), "a released session's transport did not complete within its grace")
+        withExtendedLifetime(client) {}
+    }
+
+    private func open(port: UInt16, client shared: HTTPClient? = nil) async throws -> RealtimeSession {
+        let client = try shared ?? FakeOpenAI.client(port: port)
         return try await RealtimeSession.open(
             client: client, secret: ClientSecret(bearer: "ek_round_three", expiresAt: Date()),
             configuration: RealtimeSession.Configuration(

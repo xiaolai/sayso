@@ -18,6 +18,18 @@ final class SecretHygieneTests: XCTestCase {
         XCTAssertEqual(e.message, Secret.redacted)
     }
 
+    /// A secret registered after the error was built is gone from field reads and reflection too, not only from the
+    /// description.
+    func testErrorFieldsAreScrubbedWhenRead() {
+        let e = RealtimeError(.server, message: "opaque late-registered-25", cause: "cause late-registered-25")
+        Secret.register("late-registered-25")
+        var dumped = ""
+        dump(e, to: &dumped)
+        for text in [e.message, e.cause, dumped, String(describing: Mirror(reflecting: e).children.map { $0.value })] {
+            XCTAssertFalse(text.contains("late-registered-25"), "\(text.debugDescription) kept a secret registered since")
+        }
+    }
+
     func testSecretsCompareByBytes() {
         let composed = "tok-\u{E9}", decomposed = "tok-e\u{301}"
         XCTAssertNotEqual(Token(bearer: composed, expires: nil), Token(bearer: decomposed, expires: nil))
@@ -65,6 +77,17 @@ final class SecretHygieneTests: XCTestCase {
             XCTAssertEqual(spans.map(\.lowerBound).sorted(), want, "text \(text), secrets \(secrets)")
             XCTAssert(spans.allSatisfy { $0.count == n })
         }
+    }
+
+    /// Secrets of many lengths that match everywhere cost the scrubber one span per length, not one per window: the
+    /// windows would number the text's length for every length.
+    func testManyMatchingLengthsMergeAsTheyAreFound() {
+        let registry = Secret.Registry()
+        for n in 1...200 { registry.add(String(repeating: "a", count: n)) }
+        let text = [UInt8](repeating: 0x61, count: 20_000)
+        let merged = text.withUnsafeBytes { registry.spans(in: $0, merging: true) }
+        XCTAssertEqual(merged.count, 200)
+        XCTAssert(merged.allSatisfy { $0 == 0..<20_000 })
     }
 
     /// Thue-Morse strings collide under any odd base modulo 2^64; modulo 2^61-1 the complementary pair stays apart.

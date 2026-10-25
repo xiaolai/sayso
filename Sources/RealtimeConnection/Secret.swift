@@ -41,7 +41,7 @@ public enum Secret {
     /// `bytes` with every match replaced by ``redacted``; nil when nothing matches. The bytes are read in place: the
     /// scrubber makes no copy of the text it is given, which may hold a secret.
     private static func scrubbed(_ bytes: UnsafeRawBufferPointer) -> String? {
-        var spans = registry.spans(in: bytes)
+        var spans = registry.spans(in: bytes, merging: true)
         spans += patternSpans(bytes)
         guard !spans.isEmpty else { return nil }
         spans.sort { $0.lowerBound < $1.lowerBound }
@@ -180,25 +180,35 @@ public enum Secret {
             byLength[n]!.hashes.insert(h)
         }
 
-        /// Every window of `bytes` equal to a registered secret, overlapping ones included.
-        func spans(in bytes: UnsafeRawBufferPointer) -> [Range<Int>] {
+        /// Every window of `bytes` equal to a registered secret, overlapping ones included. With `merging`, the
+        /// windows of each length that overlap or touch come back as one span, covering the same bytes: the scrubber
+        /// needs only the union, and the windows themselves can number the text's length for every length registered.
+        func spans(in bytes: UnsafeRawBufferPointer, merging: Bool = false) -> [Range<Int>] {
             lock.lock()
             let sets = byLength
             lock.unlock()
             var found: [Range<Int>] = []
-            for (n, set) in sets { found += occurrences(in: bytes, length: n, set: set) }
+            for (n, set) in sets { found += occurrences(in: bytes, length: n, set: set, merging: merging) }
             return found
         }
 
         /// Every window of `bytes`, `n` long, whose two hashes are those of a secret in `set`. Both hashes roll: each
         /// step takes the leaving byte out and the next one in, in constant time.
-        func occurrences(in bytes: UnsafeRawBufferPointer, length n: Int, set: LengthSet) -> [Range<Int>] {
+        func occurrences(
+            in bytes: UnsafeRawBufferPointer, length n: Int, set: LengthSet, merging: Bool = false
+        ) -> [Range<Int>] {
             guard n > 0, n <= bytes.count else { return [] }
             var h = pair(bytes[0..<n])
             var found: [Range<Int>] = []
             var i = 0
             while true {
-                if set.hashes.contains(h) { found.append(i..<i + n) }
+                if set.hashes.contains(h) {
+                    if merging, let last = found.last, last.upperBound >= i {
+                        found[found.count - 1] = last.lowerBound..<i + n
+                    } else {
+                        found.append(i..<i + n)
+                    }
+                }
                 if i + n == bytes.count { return found }
                 let out = UInt64(bytes[i]), next = UInt64(bytes[i + n])
                 h = Pair(

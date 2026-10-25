@@ -45,22 +45,22 @@ public protocol ClassifiedError: Error {
     var errorClass: ErrorClass { get }
 }
 
-/// A string scrubbed whenever it is stored, so neither a field set after construction nor reflection (`dump`,
-/// `Mirror`) can reach an unscrubbed value.
+/// A string scrubbed whenever it is stored and again whenever it is read, so neither a field set after construction
+/// nor a secret registered since can reach a reader.
 @propertyWrapper
 public struct Scrubbed: Sendable, Equatable {
     private var value: String
     public init(wrappedValue: String) { value = Secret.scrub(wrappedValue) }
     public var wrappedValue: String {
-        get { value }
+        get { Secret.scrub(value) }
         set { value = Secret.scrub(newValue) }
     }
 }
 
 /// A classified failure. `type`, `code`, `param` and `message` come from the provider's error body or event; every
-/// string is scrubbed whenever it is stored, and ``description`` scrubs again. No header or bearer is ever stored.
+/// string is scrubbed whenever it is stored and whenever it is read, and ``description`` scrubs again. No header or bearer is ever stored.
 /// `message` is for diagnostics, never for display.
-public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringConvertible {
+public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     public var errorClass: ErrorClass
     /// The HTTP status; 0 if none.
     public var status: Int
@@ -111,6 +111,17 @@ public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringC
         return Secret.scrub(s)
     }
 
+    /// Reflection (`dump`, `Mirror`) shows each field as a read gives it, scrubbed when read.
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "errorClass": errorClass, "status": status, "type": type, "code": code, "param": param,
+                "message": message, "requestID": requestID, "route": route, "fatal": fatal, "cause": cause,
+                "eventType": eventType,
+            ], displayStyle: .struct)
+    }
+
     /// The HTTP rows of the taxonomy.
     public static func classify(status: Int, code: String) -> ErrorClass {
         switch status {
@@ -140,7 +151,7 @@ public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringC
     public static func connectionClosed(code: Int, reason: String) -> RealtimeError {
         RealtimeError(
             classify(closeCode: code), code: String(code),
-            message: "realtime connection closed: " + Secret.scrub(reason))
+            message: "realtime connection closed: " + reason)
     }
 
     private static let fatalCodes: Set<String> = ["session_expired", "invalid_api_key", "session_not_found"]
@@ -162,7 +173,7 @@ public struct RealtimeError: ClassifiedError, Sendable, Equatable, CustomStringC
             c = .server  // server_error and anything a later API adds
         }
         return RealtimeError(
-            c, type: Secret.scrub(type), code: Secret.scrub(code), param: Secret.scrub(param),
-            message: Secret.scrub(message), fatal: fatalCodes.contains(code) || fatalTypes.contains(type))
+            c, type: type, code: code, param: param, message: message,
+            fatal: fatalCodes.contains(code) || fatalTypes.contains(type))
     }
 }

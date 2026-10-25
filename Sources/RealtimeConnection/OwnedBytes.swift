@@ -28,8 +28,9 @@ package final class OwnedBytes: @unchecked Sendable {
 }
 
 /// A reply body read into memory of its own, at most `limit` bytes: sized from the length the sender declared and
-/// grown by doubling when the body is longer, each buffer outgrown wiped as it is released.
-struct BodyBuffer {
+/// grown by doubling when the body is longer, each buffer outgrown wiped as it is released. Noncopyable: copies would
+/// share one buffer, and appending to both would write over each other's bytes.
+struct BodyBuffer: ~Copyable {
     private var owned: OwnedBytes
     private(set) var count = 0
     let limit: Int
@@ -55,6 +56,9 @@ struct BodyBuffer {
     }
 
     /// The bytes read, as `Data` that holds this buffer: it is wiped once the last copy of the `Data` is released.
+    /// Foundation copies a body of at most 14 bytes into the `Data` value itself and releases the buffer at once, so
+    /// such a body is not wiped; none that short can carry a secret (a mint reply holds a value and an expiry, an
+    /// error body an error object).
     var data: Data {
         guard count > 0, let base = owned.bytes.baseAddress else { return Data() }
         let owned = owned
