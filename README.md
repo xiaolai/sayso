@@ -4,8 +4,9 @@ Shared building blocks for apps that use a local Codex sign-in to drive OpenAI's
 OpenAI-compatible service, a local model or a reader's own CLI a question. Specified once, and implemented in Go and
 Swift against one shared set of fixtures where the contract is the wire.
 
-Status: early. The contract and its fixtures cover the five components both implementations share; the AI providers
-are Swift-only until their fixtures and Go client land (see [Parity](spec/chat-completions.md#parity)).
+Status: early. The contract and its fixtures cover the five components both implementations share. Of the AI
+providers, the OpenAI-compatible client is Swift-only until its fixtures and Go client land (see
+[Parity](spec/chat-completions.md#parity)); the CLI and Apple on-device providers are Swift-only by design.
 
 | Component | Spec | Go | Swift |
 |---|---|---|---|
