@@ -45,9 +45,7 @@ const mersenne = 1<<61 - 1
 func mulMod(a, b uint64) uint64 {
 	hi, lo := bits.Mul64(a, b)
 	r := (hi<<3 | lo>>61) + lo&mersenne // a*b = q*2^61 + r, and 2^61 is 1 modulo 2^61-1
-	if r >= mersenne {
-		r -= mersenne
-	}
+	// r < 2^62-2, twice the modulus, so one subtraction reduces it
 	if r >= mersenne {
 		r -= mersenne
 	}
@@ -216,8 +214,13 @@ func patternSpans(s string) [][2]int {
 // sealed is an opaque handle to a secret held in the vault. Nothing reachable from a Token or ClientSecret holds the
 // secret itself, so no formatting or reflection path through one can print it: fmt, a reflect.Value of the field,
 // or a dumper that walks unexported fields finds only a number. The vault entry is dropped once the last copy of
-// the handle is unreachable.
-type sealed struct{ id uint64 }
+// the handle is unreachable. The pointer field keeps the handle out of the tiny allocator, which batches small
+// pointer-free objects into one block that a live neighbour (the vault's own boxed key) would keep from ever being
+// collected, its cleanup with it.
+type sealed struct {
+	id uint64
+	_  *byte
+}
 
 var (
 	vault   sync.Map // uint64 -> string

@@ -6,18 +6,20 @@ package memscan
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 
-// Calls back into Go with each writable region holding pages.
+// Calls back into Go with each writable region holding pages. Returns the status that ended the walk:
+// KERN_INVALID_ADDRESS once no region lies past the last one, anything else a failure.
 extern void memscanRegion(mach_vm_address_t lo, mach_vm_address_t hi);
 
-static void memscanRegions(void) {
+static kern_return_t memscanRegions(void) {
 	mach_vm_address_t address = 0;
 	natural_t depth = 0;
 	for (;;) {
 		mach_vm_size_t size = 0;
 		vm_region_submap_info_data_64_t info;
 		mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
-		if (mach_vm_region_recurse(mach_task_self(), &address, &size, &depth, (vm_region_recurse_info_t)&info, &count) != KERN_SUCCESS) {
-			return;
+		kern_return_t kr = mach_vm_region_recurse(mach_task_self(), &address, &size, &depth, (vm_region_recurse_info_t)&info, &count);
+		if (kr != KERN_SUCCESS) {
+			return kr;
 		}
 		if (info.is_submap) {
 			depth++;
@@ -41,11 +43,10 @@ static mach_vm_size_t memscanRead(mach_vm_address_t a, void *out, mach_vm_size_t
 import "C"
 
 import (
+	"fmt"
 	"sync"
 	"unsafe"
 )
-
-func addr(b []byte) uintptr { return uintptr(unsafe.Pointer(&b[0])) }
 
 var (
 	mu    sync.Mutex
@@ -57,15 +58,18 @@ func memscanRegion(lo, hi C.mach_vm_address_t) {
 	found = append(found, [2]uintptr{uintptr(lo), uintptr(hi)})
 }
 
-// regions calls f with each writable region holding pages. They are listed first and visited after, so the visit's
-// own allocations do not change the list as it is walked.
+// regions calls f with each writable region holding pages, touching regions joined. They are listed first and
+// visited after, so the visit's own allocations do not change the list as it is walked. A walk that ends in anything
+// but the end of the address space fails the scan rather than leave the regions past it unscanned.
 func regions(f func(lo, hi uintptr)) error {
 	mu.Lock()
 	defer mu.Unlock()
 	found = found[:0]
-	C.memscanRegions()
-	list := append([][2]uintptr(nil), found...)
-	for _, r := range list {
+	if kr := C.memscanRegions(); kr != C.KERN_INVALID_ADDRESS {
+		return fmt.Errorf("memscan: listing the memory regions failed: kern_return_t %d", int(kr))
+	}
+	spans, _ := union(found)
+	for _, r := range spans {
 		f(r[0], r[1])
 	}
 	return nil

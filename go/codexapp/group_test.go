@@ -147,3 +147,26 @@ func TestCloseSignalsNothingOnceTheSystemReapedTheChild(t *testing.T) {
 		t.Errorf("Close waited %v on a group that is not ours", d)
 	}
 }
+
+// A probe that finds the group empty is not the last word: a member can fork and exit between its steps, leaving a
+// live member it never saw. While the exited child is unreaped the group is still ours, so Close sends it SIGKILL
+// before reaping.
+func TestCloseKillsTheGroupItFoundEmptyBeforeReaping(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	c, err := Start(t.Context(), Config{Bin: fakeCodex(t, "os._exit(0)\n"), Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := c.PID()
+	recv(t, "the child's exit", c.k.exited)
+	var sent []syscall.Signal
+	c.k.testLiveGroup = func(int) bool { return false } // the probe missed a member
+	c.k.testSignal = func(_ int, sig syscall.Signal) { sent = append(sent, sig) }
+	_ = c.Close()
+	if len(sent) != 1 || sent[0] != syscall.SIGKILL {
+		t.Errorf("Close sent %v to the group it found empty, want one SIGKILL", sent)
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("Close left the child unreaped: %v", err)
+	}
+}

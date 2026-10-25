@@ -44,6 +44,17 @@ func TestChildStaysUnreapedUntilClose(t *testing.T) {
 	}
 }
 
+// waitid keeps its error: only ECHILD says the process is not our child, so a failure of another kind is not taken
+// for the loss of the child.
+func TestWaitidReportsWhyItFailed(t *testing.T) {
+	if e := waitid(os.Getpid(), wExited|wNoWait|wNoHang); e != syscall.ECHILD {
+		t.Errorf("waitid on a process that is not our child: %v, want ECHILD", e)
+	}
+	if e := waitid(os.Getpid(), 0); e != syscall.EINVAL {
+		t.Errorf("waitid with no state to wait for: %v, want EINVAL", e)
+	}
+}
+
 // fmt prints a struct holding an AuthStatus in an unexported field by reflection, without its redacting methods; the
 // token is behind a pointer there, so only an address appears.
 func TestAuthStatusNestedFormatting(t *testing.T) {
@@ -57,6 +68,16 @@ func TestAuthStatusNestedFormatting(t *testing.T) {
 	}
 	if st.Token() != "opaque-canary-nested-1" {
 		t.Fatal("the token is unreadable through Token")
+	}
+	// A method that repeats the token is stored scrubbed, so the reflection path shows no copy of it either.
+	got, ok := authStatus([]byte(`{"authMethod":"opaque-canary-nested-2","authToken":"opaque-canary-nested-2"}`))
+	if !ok {
+		t.Fatal("refused")
+	}
+	for _, verb := range []string{"%v", "%+v", "%#v"} {
+		if s := fmt.Sprintf(verb, holder{got}); strings.Contains(s, "canary") {
+			t.Errorf("%s shows the token through Method: %s", verb, s)
+		}
 	}
 }
 

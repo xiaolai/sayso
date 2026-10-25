@@ -106,7 +106,7 @@ func readCase(t *testing.T, parts []part) (State, []int, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = readAuthFile(loc, nil)
+	_, e = readAuthFile(t.Context(), loc, nil)
 	loc.close()
 	found, err := s.Occurrences()
 	if errors.Is(err, memscan.ErrUnsupported) {
@@ -197,4 +197,13 @@ func TestAnUnreadableFileLeavesNothing(t *testing.T) {
 	} {
 		assertNoCopy(t, parts, StateCodexError)
 	}
+}
+
+// An account claim the reader refuses is cleared with the buffer it was decoded into.
+func TestARefusedAccountClaimLeavesNothing(t *testing.T) {
+	assertNoCopy(t, doc(
+		text(`{"auth_mode":"chatgpt","tokens":{"access_token":"`),
+		jwtOf(text(`{"exp":1800003600,"https://api.openai.com/auth":{"chatgpt_account_id":"`), needle(), text(`!"}}`)),
+		text(`"}}`),
+	), StateReady)
 }

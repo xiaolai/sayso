@@ -2,6 +2,9 @@ package fixtures
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -81,5 +84,61 @@ func TestExpandRepeats(t *testing.T) {
 	_, err = expandRepeats(json.RawMessage(`{"script": "a", "transcript": {"repeat": "a", "times": -1, "prefix": "", "suffix": ""}}`), names)
 	if err == nil || !strings.Contains(err.Error(), "transcript") {
 		t.Errorf("malformed transcript repeat: %v", err)
+	}
+}
+
+// corpus writes a manifest and its files into a fresh folder.
+func corpus(t *testing.T, manifest string, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "MANIFEST.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// Load refuses a manifest that lists an id twice, a case in another file than its entry names, and a case whose
+// requirements differ from its entry's; a corpus that agrees with its manifest loads.
+func TestLoadChecksTheManifestEntry(t *testing.T) {
+	entry := func(id, file string, requires string) string {
+		return `{"id":"` + id + `","file":"` + file + `","component":"c","requires":` + requires + `}`
+	}
+	manifest := func(entries ...string) string {
+		return `{"count":` + strconv.Itoa(len(entries)) + `,"fixtures":[` + strings.Join(entries, ",") + `]}`
+	}
+	files := map[string]string{
+		"a.jsonl": `{"id":"one","component":"c","requires":["x"]}` + "\n",
+		"b.jsonl": `{"id":"two","component":"c"}` + "\n",
+	}
+	good := corpus(t, manifest(entry("one", "a.jsonl", `["x"]`), entry("two", "b.jsonl", `[]`)), files)
+	if cases, err := load(good, "c"); err != nil || len(cases) != 2 {
+		t.Fatalf("a consistent corpus: %d cases, %v", len(cases), err)
+	}
+	for name, m := range map[string]string{
+		"duplicate id":     manifest(entry("one", "a.jsonl", `["x"]`), entry("one", "a.jsonl", `["x"]`), entry("two", "b.jsonl", `[]`)),
+		"wrong file":       manifest(entry("one", "a.jsonl", `["x"]`), entry("two", "a.jsonl", `[]`), entry("pad", "b.jsonl", `[]`)),
+		"stale requires":   manifest(entry("one", "a.jsonl", `[]`), entry("two", "b.jsonl", `[]`)),
+		"missing requires": manifest(entry("one", "a.jsonl", `["x"]`), entry("two", "b.jsonl", `["y"]`)),
+	} {
+		if _, err := load(corpus(t, m, files), "c"); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+// Write leaves the caller's component list as it was given.
+func TestWriteKeepsTheCallersSlice(t *testing.T) {
+	components := []string{"z", "a"}
+	var r Results
+	if err := r.Write(filepath.Join(t.TempDir(), "results.json"), components, nil); err != nil {
+		t.Fatal(err)
+	}
+	if components[0] != "z" || components[1] != "a" {
+		t.Errorf("components reordered to %q", components)
 	}
 }

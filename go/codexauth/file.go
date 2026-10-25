@@ -1,6 +1,7 @@
 package codexauth
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/xiaolai/sayso/go/failure"
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"github.com/xiaolai/sayso/go/secret"
 )
@@ -130,10 +132,6 @@ func openDirNoFollow(p string, via *folderID) (fd int, through bool, err error) 
 		if name == "" {
 			continue // p is "/"
 		}
-		if name == "." || name == ".." {
-			_ = unix.Close(fd)
-			return -1, false, errors.New("the path names a relative folder")
-		}
 		next, err := openRetry(fd, name)
 		_ = unix.Close(fd)
 		if err != nil {
@@ -164,8 +162,9 @@ func openRetry(dir int, name string) (int, error) {
 var errNoFile = errors.New("auth.json does not exist")
 
 // readAuthFile reads the file at loc and returns the ChatGPT token it holds. A missing file is no-sign-in-file
-// wrapping errNoFile; a parse failure is retried once after onRetry and a short delay.
-func readAuthFile(loc authLocation, onRetry func()) (secret.Token, *Error) {
+// wrapping errNoFile; a parse failure is retried once after onRetry and a short delay. A ctx ended before the re-read
+// or after it is a cancelled codex-error, by its cancellation or its deadline.
+func readAuthFile(ctx context.Context, loc authLocation, onRetry func()) (secret.Token, *Error) {
 	tok, e, parsed := readOnce(loc)
 	if parsed {
 		return tok, e
@@ -173,9 +172,23 @@ func readAuthFile(loc authLocation, onRetry func()) (secret.Token, *Error) {
 	if onRetry != nil {
 		onRetry()
 	}
-	time.Sleep(tornRetryDelay)
+	cancelled := func() *Error {
+		e := fail(StateCodexError, "reading auth.json was cancelled", ctx.Err())
+		e.Err.(*failure.Error).Class = failure.ClassCancelled
+		return e
+	}
+	delay := time.NewTimer(tornRetryDelay)
+	defer delay.Stop()
+	select {
+	case <-ctx.Done():
+		return secret.Token{}, cancelled()
+	case <-delay.C:
+	}
 	tok, e, parsed = readOnce(loc)
-	if !parsed {
+	switch {
+	case ctx.Err() != nil:
+		return secret.Token{}, cancelled()
+	case !parsed:
 		return secret.Token{}, fail(StateCodexError, "auth.json is not a valid sign-in file", nil)
 	}
 	return tok, e

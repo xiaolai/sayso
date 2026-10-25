@@ -54,7 +54,8 @@ func StringEquals(doc []byte, v Span, s string) bool {
 }
 
 // AppendString appends the decoded string at v to dst; false, with dst unchanged, for any other value. A dst with
-// capacity v.End-v.Start never grows, so no copy of the string is left behind in a dropped array.
+// room for v.End-v.Start more bytes (cap(dst)-len(dst) at least that) never grows, so no copy of the string is left
+// behind in a dropped array.
 func AppendString(dst, doc []byte, v Span) ([]byte, bool) {
 	if KindOf(doc, v) != '"' {
 		return dst, false

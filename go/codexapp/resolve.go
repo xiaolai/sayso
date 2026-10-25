@@ -70,15 +70,19 @@ func Resolve(explicit, path string, candidates []string) (string, error) {
 			}
 			return "", &resolveError{explicit: sealed(explicit), reason: why}
 		}
-		if p, ok := lookIn(filepath.SplitList(path), explicit); ok {
+		p, refused := lookIn(filepath.SplitList(path), explicit)
+		switch {
+		case p != "":
 			return p, nil
+		case refused != "":
+			return "", &resolveError{explicit: sealed(explicit), reason: "is on PATH but " + refused}
 		}
 		return "", &resolveError{explicit: sealed(explicit), reason: "is not on PATH"}
 	}
-	if p, ok := lookIn(filepath.SplitList(path), "codex"); ok {
+	if p, _ := lookIn(filepath.SplitList(path), "codex"); p != "" {
 		return p, nil
 	}
-	if p, ok := lookIn(candidates, "codex"); ok {
+	if p, _ := lookIn(candidates, "codex"); p != "" {
 		return p, nil
 	}
 	return "", ErrNotFound
@@ -110,20 +114,43 @@ func (e *resolveError) GoString() string { return e.Error() }
 // Format prints Error for every verb.
 func (e *resolveError) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(e.Error())) }
 
-func lookIn(dirs []string, name string) (string, bool) {
+// lookIn returns the first name in dirs that executable accepts; or "" and why the first one that exists was refused,
+// "" when none exists.
+func lookIn(dirs []string, name string) (found, refused string) {
 	if strings.ContainsRune(name, 0) {
-		return "", false
+		return "", ""
 	}
 	for _, d := range dirs {
-		// A relative PATH entry would resolve against our working folder; a NUL would be cleaned away by Join.
+		// A relative PATH entry would resolve against our working folder; a NUL would end the path the system reads.
 		if d == "" || !filepath.IsAbs(d) || strings.ContainsRune(d, 0) {
 			continue
 		}
-		if p, why := executable(filepath.Join(d, name)); why == "" {
-			return p, true
+		p := d + "/" + name // not Join, whose cleaning would take a ".." in d before the filesystem does
+		abs, why := executable(p)
+		if why == "" {
+			return abs, ""
+		}
+		if _, err := os.Stat(p); err == nil && refused == "" {
+			refused = why
 		}
 	}
-	return "", false
+	return "", refused
+}
+
+// absPath makes p absolute. It is cleaned only when it holds no "..": filepath.Clean takes a ".." lexically, while
+// the system takes it after following the link before it, which may lead elsewhere.
+func absPath(p string) string {
+	if !filepath.IsAbs(p) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return ""
+		}
+		p = wd + "/" + p
+	}
+	if slices.Contains(strings.Split(p, "/"), "..") {
+		return p
+	}
+	return filepath.Clean(p)
 }
 
 // executable returns the absolute form of p when it is a regular file this process may execute (an execute bit for
@@ -134,8 +161,8 @@ func executable(p string) (string, string) {
 	if strings.ContainsRune(p, 0) {
 		return "", notExecutable
 	}
-	abs, err := filepath.Abs(p)
-	if err != nil {
+	abs := absPath(p)
+	if abs == "" {
 		return "", notExecutable
 	}
 	fi, err := os.Stat(abs)

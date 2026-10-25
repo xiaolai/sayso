@@ -75,3 +75,51 @@ func TestParseHanNumeralDigitStrings(t *testing.T) {
 		}
 	}
 }
+
+// A long run of spaces is lexed in time linear in its length: only a minus looks across the spaces around it.
+func TestLongWhitespaceIsLinear(t *testing.T) {
+	text := "5" + strings.Repeat(" ", MaxBytes-2) + "x"
+	start := cpuTime()
+	Matches(text, text, "en")
+	if elapsed := cpuTime() - start; elapsed > raceFactor*time.Second {
+		t.Errorf("took %v", elapsed)
+	}
+}
+
+// A signed operand after spaces ("5 - - 2") keeps the minus before it spoken: "minus negative two" reads it, and
+// "negative two" alone does not.
+func TestASpacedSignedOperandKeepsTheMinus(t *testing.T) {
+	for _, script := range []string{"5 - - 2", "5 - -2", "5 - − 2"} {
+		if !Matches("five minus negative two", script, "en") {
+			t.Errorf("%q: the full reading is refused", script)
+		}
+		if Matches("five negative two", script, "en") {
+			t.Errorf("%q: the minus may be dropped", script)
+		}
+	}
+}
+
+func TestAnotherSentenceDoesNotMakeACodeShouting(t *testing.T) {
+	for _, c := range []struct{ said, script string }{
+		{"a p i stop", "API! STOP!"},
+		{"stop a p i", "STOP! API!"},
+		{"a p i stop", "API. STOP"},
+	} {
+		if !Matches(c.said, c.script, "en") {
+			t.Errorf("%q: %q is refused", c.script, c.said)
+		}
+	}
+	if Matches("a p i stop", "API STOP", "en") {
+		t.Error(`"API STOP": a shouted word is read letter by letter`)
+	}
+}
+
+func TestASpokenDomainDotTakesNoMarkOfALabel(t *testing.T) {
+	const script = "Visit ‘foo.dot’ now."
+	if !Matches("Visit foo dot dot’ now.", script, "en") {
+		t.Error("the mark on its own label is refused")
+	}
+	if Matches("Visit foo dot’ dot now.", script, "en") {
+		t.Error("the mark moves to the spoken dot")
+	}
+}

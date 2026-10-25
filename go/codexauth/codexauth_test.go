@@ -325,7 +325,7 @@ func TestFileReadsThroughThePinnedFolder(t *testing.T) {
 	if err := os.Symlink(outside, inside); err != nil {
 		t.Fatal(err)
 	}
-	tok, e := readAuthFile(loc, nil)
+	tok, e := readAuthFile(t.Context(), loc, nil)
 	if e == nil && tok.Bearer() == "outside-token" {
 		t.Fatal("the read followed the swapped folder outside the confinement")
 	}
@@ -421,4 +421,117 @@ func TestFormattingDoesNotRaceAFetch(t *testing.T) {
 		_, _ = c.RefreshAfter(t.Context(), tok)
 	}
 	close(stop)
+}
+
+// refreshing is credentials holding a Codex token within the margin, with refresh as the refresh seam.
+func refreshing(t *testing.T, now time.Time, refresh func(context.Context) (secret.Token, error)) *Credentials {
+	t.Helper()
+	c, err := New(Config{Source: SourceCodex, Margin: 10 * time.Minute, Timeout: time.Second, Env: codexapp.EnvOf([]string{}),
+		Home: t.TempDir(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := secret.NewToken(jwt(now.Unix()+60), time.Unix(now.Unix()+60, 0), "", "codex")
+	c.cur, c.refreshable, c.refresh = &stale, true, refresh
+	return c
+}
+
+// A refresh whose reply names another sign-in starts the backoff, and says when it ends.
+func TestSignInChangeOnRefreshCarriesTheRetryTime(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	c := refreshing(t, now, func(context.Context) (secret.Token, error) {
+		return secret.Token{}, fail(StateNotSignedIn, "Codex is not signed in", nil)
+	})
+	_, err := c.Token(t.Context())
+	var e *Error
+	if !errors.As(err, &e) || e.State != StateNotSignedIn || !e.RetryAt.Equal(now.Add(backoffStart)) {
+		t.Fatalf("Token: %v, want not-signed-in retrying at %v", err, now.Add(backoffStart))
+	}
+}
+
+// A refresh that falls back to auth.json (Codex lost getAuthStatus) switches to the file source only once its token is
+// accepted: a stale one leaves the Codex source in force, under the backoff, and the refused bearer is not accepted.
+func TestRefreshFallingBackToTheFileKeepsTheRules(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	calls := 0
+	staleFile := secret.NewToken(jwt(now.Unix()+60), time.Unix(now.Unix()+60, 0), "", "file")
+	c := refreshing(t, now, func(context.Context) (secret.Token, error) { calls++; return staleFile, nil })
+	if _, err := c.Token(t.Context()); StateOf(err) != StateExpired {
+		t.Fatalf("a stale file token: %v", err)
+	}
+	if _, err := c.Token(t.Context()); StateOf(err) != StateExpired || calls != 1 || !c.refreshable {
+		t.Fatalf("the next call: %v, %d refreshes, refreshable %v; want the backoff's refusal", err, calls, c.refreshable)
+	}
+
+	refused := secret.NewToken(jwt(now.Unix()+7200), time.Unix(now.Unix()+7200, 0), "", "file")
+	c = refreshing(t, now, func(context.Context) (secret.Token, error) { return refused, nil })
+	if _, err := c.RefreshAfter(t.Context(), *c.cur); err != nil {
+		t.Fatal(err)
+	}
+	if c.refreshable {
+		t.Error("a token from auth.json is still taken for one Codex can refresh")
+	}
+	if tok, err := c.RefreshAfter(t.Context(), refused); err == nil {
+		t.Errorf("the refused bearer came back from auth.json: %v", tok.Bearer() == refused.Bearer())
+	}
+
+	c = refreshing(t, now, func(context.Context) (secret.Token, error) { return refused, nil })
+	c.refused = refused.Bearer()
+	if tok, err := c.refreshLocked(t.Context()); err == nil {
+		t.Errorf("a refresh falling back to the refused bearer succeeded: %v", tok.Bearer() == refused.Bearer())
+	}
+}
+
+// A refresh ended by the caller's deadline is cancelled, as one ended by its cancellation is.
+func TestRefreshPastTheCallersDeadlineIsCancelled(t *testing.T) {
+	c := refreshing(t, time.Unix(1_800_000_000, 0), func(ctx context.Context) (secret.Token, error) {
+		<-ctx.Done()
+		return secret.Token{}, ctx.Err()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	_, err := c.Token(ctx)
+	if StateOf(err) != StateExpired || openaihttp.Classify(err) != openaihttp.ClassCancelled || c.backoff != 0 {
+		t.Fatalf("state %s class %s backoff %v, want expired, cancelled, none", StateOf(err), openaihttp.Classify(err), c.backoff)
+	}
+}
+
+// The retry time is encoded to the nanosecond, so a consumer never schedules before the backoff ends.
+func TestRetryAtKeepsFractionalSeconds(t *testing.T) {
+	b, err := Error{State: StateExpired, RetryAt: time.Unix(1_800_000_000, 500_000_000)}.MarshalJSON()
+	if err != nil || !strings.Contains(string(b), `"retryAt":"2027-01-15T08:00:00.5Z"`) {
+		t.Errorf("MarshalJSON: %s %v", b, err)
+	}
+}
+
+// A token whose header or signature is empty or not base64url is not a JWT, so it names no account (AUTH-08).
+func TestAMalformedEnvelopeNamesNoAccount(t *testing.T) {
+	const header, payload = "eyJhbGciOiJub25lIn0", "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xIn19"
+	if id, ok := accountClaim(header + "." + payload + ".c2ln"); !ok || id != "acct-1" {
+		t.Fatalf("a well-formed token: %q %v", id, ok)
+	}
+	for _, tok := range []string{"." + payload + ".c2ln", header + "." + payload + ".", "e!J." + payload + ".c2ln", header + "." + payload + ".c2 ln"} {
+		if id, ok := accountClaim(tok); ok {
+			t.Errorf("%q names account %q", tok, id)
+		}
+		if newToken(tok, "file").AccountID != "" {
+			t.Errorf("%q gives a token an account", tok)
+		}
+	}
+}
+
+// A read cancelled while it waits to re-read a torn auth.json returns the cancellation, not the token re-read.
+func TestFileRetryStopsWhenCancelled(t *testing.T) {
+	c := fileCreds(t, `{"tokens":`)
+	ctx, cancel := context.WithCancel(t.Context())
+	c.cfg.OnFileRetry = func() {
+		whole := `{"auth_mode":"chatgpt","tokens":{"access_token":"` + jwt(time.Now().Unix()+3600) + `"}}`
+		if err := os.WriteFile(filepath.Join(c.cfg.Home, ".codex", "auth.json"), []byte(whole), 0o600); err != nil {
+			t.Error(err)
+		}
+		cancel()
+	}
+	if _, err := c.Token(ctx); err == nil || openaihttp.Classify(err) != openaihttp.ClassCancelled {
+		t.Fatalf("Token: %v, class %s; want cancelled", err, openaihttp.Classify(err))
+	}
 }

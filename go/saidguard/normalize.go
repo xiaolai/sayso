@@ -5,14 +5,13 @@ import (
 	"unicode"
 
 	"golang.org/x/text/unicode/norm"
-	"golang.org/x/text/width"
 )
 
 // --- normalisation shared by both sides ---
 
 // svMaxMarkRun bounds a run of combining marks. Normalisers differ beyond 30 (Go's inserts U+034F to keep the text
-// stream-safe, Foundation's does not), so a side with a longer run never matches; a lowercase mapping can add one
-// mark (İ → i̇), hence 29.
+// stream-safe, Foundation's does not), so a side with a longer run never matches; Foundation's full lowercase mapping
+// can add one mark (İ → i̇; svLower's simple mapping gives i), hence 29 in both implementations.
 const svMaxMarkRun = 29
 
 // svOverlongMarks reports a run of more than svMaxMarkRun non-starters (canonical combining class above zero, or
@@ -40,7 +39,7 @@ func svMarkRun(s string) bool {
 
 func svPre(s string) string {
 	s = svSuperscripts(strings.ToValidUTF8(s, " "))
-	return width.Fold.String(norm.NFKC.String(preNormalize(norm.NFKC.String(s))))
+	return norm.NFKC.String(preNormalize(norm.NFKC.String(s)))
 }
 
 // svSuperscripts writes a superscript digit as "^" and the digit before NFKC would fold it into the number before it

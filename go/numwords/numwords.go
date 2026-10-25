@@ -71,15 +71,15 @@ func Integer(ds string) []string {
 	if ds == "" || !asciiDigits(ds) {
 		return nil
 	}
-	if len(ds) > 1 && ds[0] == '0' || len(ds) > 15 {
+	if len(ds) > 1 && ds[0] == '0' {
 		return Digits(ds)
 	}
 	var n uint64
 	for _, d := range ds {
-		n = n*10 + uint64(d-'0')
-	}
-	if n > MaxCardinal {
-		return Digits(ds)
+		// Checked at every digit, so n never exceeds MaxCardinal*10+9 and cannot overflow.
+		if n = n*10 + uint64(d-'0'); n > MaxCardinal {
+			return Digits(ds)
+		}
 	}
 	return Cardinal(n)
 }
@@ -100,8 +100,11 @@ var ordinalIrregular = map[string]string{
 }
 
 // Ordinal turns a cardinal reading into its ordinal: "forty", "two" becomes
-// "forty", "second".
+// "forty", "second". No words read as none.
 func Ordinal(words []string) []string {
+	if len(words) == 0 {
+		return nil
+	}
 	last := words[len(words)-1]
 	switch {
 	case ordinalIrregular[last] != "":

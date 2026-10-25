@@ -81,8 +81,11 @@ func TestDecodeRateLimits(t *testing.T) {
 		`{"rateLimits":{"primary":{"usedPercent":"10"}}}`, // the wrong type
 		`{"ordinaryUsageAllowed":"yes"}`,                  // the wrong type
 		`{"rateLimits":{"primary":{"usedPercent":1,"resetsAt":1.5}}}`,
-		`{"rateLimits":{"primary":{"usedPercent":12.5}}}`,       // Codex's schema: an int32
-		`{"rateLimits":{"primary":{"usedPercent":2147483648}}}`, // beyond int32
+		`{"rateLimits":{"primary":{"usedPercent":12.5}}}`,                              // Codex's schema: an int32
+		`{"rateLimits":{"primary":{"usedPercent":2147483648}}}`,                        // beyond int32
+		`{"rateLimits":{"primary":{"usedPercent":1,"resetsAt":9223372036854775807}}}`,  // beyond year 9999
+		`{"rateLimits":{"primary":{"usedPercent":1,"resetsAt":253402300800}}}`,         // year 10000
+		`{"rateLimits":{"primary":{"usedPercent":1,"resetsAt":-9223372036854775808}}}`, // before year 1
 	} {
 		if _, err := decodeRateLimits(json.RawMessage(bad)); err == nil {
 			t.Errorf("accepted %s", bad)

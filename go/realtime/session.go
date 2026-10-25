@@ -67,7 +67,10 @@ type DialConfig struct {
 // Session is one realtime WebSocket (NET-03): one reader goroutine feeds a channel, writes are serialised, and no
 // client pings are ever sent: liveness comes from the caller's own timers. A Session dropped without Close is closed
 // when it is collected: the reader holds its core, never the Session, and its methods keep it alive while they run.
-type Session struct{ k *sessionCore }
+type Session struct {
+	k       *sessionCore
+	cleanup runtime.Cleanup // closes a session dropped without Close; Close stops it
+}
 
 // sessionCore is a Session's state, shared with its reader goroutine.
 type sessionCore struct {
@@ -181,7 +184,7 @@ func Dial(ctx context.Context, cfg DialConfig) (*Session, error) {
 	s := &Session{k: k}
 	// In a goroutine of its own: close may wait out the grace, and the runtime asks a long cleanup not to block the
 	// goroutines that run the others.
-	runtime.AddCleanup(s, func(k *sessionCore) {
+	s.cleanup = runtime.AddCleanup(s, func(k *sessionCore) {
 		k.logger.Debug("realtime: a session was dropped without Close; closing it")
 		go func() { _ = k.close() }()
 	}, k)
@@ -202,8 +205,8 @@ func (s *Session) Next(ctx context.Context) (Event, error) {
 	return s.k.next(ctx)
 }
 
-// Send writes one client event as JSON, which must be valid UTF-8: a json.RawMessage is passed through as it is, and
-// invalid UTF-8 is an internal error that sends nothing. Writes are serialised; waiting for an earlier write observes
+// Send writes one client event as JSON, which must be valid UTF-8: a json.RawMessage is sent as json.Marshal writes
+// it, compacted and with <, > and & escaped, and invalid UTF-8 is an internal error that sends nothing. Writes are serialised; waiting for an earlier write observes
 // ctx and Close.
 func (s *Session) Send(ctx context.Context, event any) error {
 	defer runtime.KeepAlive(s)
@@ -214,6 +217,7 @@ func (s *Session) Send(ctx context.Context, event any) error {
 // 2 s. It waits for the reader goroutine, so nothing outlives it. Safe to call more than once.
 func (s *Session) Close() error {
 	defer runtime.KeepAlive(s)
+	s.cleanup.Stop()
 	return s.k.close()
 }
 
@@ -306,6 +310,11 @@ func (s *sessionCore) send(ctx context.Context, event any) error {
 	if err := ctx.Err(); err != nil {
 		return err // cancelled before the call: nothing is encoded or sent, and the session is untouched
 	}
+	select {
+	case <-s.closing:
+		return ErrClosed // closed before the call: nothing is encoded, no marshaller runs
+	default:
+	}
 	b, err := json.Marshal(event)
 	if err != nil {
 		// A fixed message: a custom marshaller's error text could carry anything.
@@ -340,6 +349,9 @@ func (s *sessionCore) send(ctx context.Context, event any) error {
 	}
 	if s.trace != nil {
 		s.trace("client", b)
+		if err := ctx.Err(); err != nil {
+			return err // ended while Trace ran: the write has not started
+		}
 	}
 	if err := s.conn.Write(ctx, websocket.MessageText, b); err != nil {
 		select {

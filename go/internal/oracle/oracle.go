@@ -57,25 +57,26 @@ type response struct {
 // answer writes each case's line as soon as it is computed, unbuffered, so a case that crashes the process is the
 // first one missing from out.
 func answer(in, out string, ops map[string]Op) (int, error) {
-	data, err := os.ReadFile(in)
+	src, err := os.Open(in)
 	if err != nil {
 		return 0, err
 	}
+	defer src.Close()
 	f, err := os.Create(out)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc := bufio.NewScanner(src)
 	sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
 	n := 0
-	for sc.Scan() {
+	for lineNo := 1; sc.Scan(); lineNo++ {
 		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
 			continue
 		}
 		var r request
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			return n, fmt.Errorf("line %d: %w", n+1, err)
+			return n, fmt.Errorf("line %d: %w", lineNo, err)
 		}
 		op, ok := ops[r.Op]
 		if !ok {
@@ -106,12 +107,16 @@ func answer(in, out string, ops map[string]Op) (int, error) {
 func selfCheck(t *testing.T, ops map[string]Op, checks []Check) {
 	covered := map[string]bool{}
 	var lines bytes.Buffer
+	enc := json.NewEncoder(&lines) // one line per request, newline included; < > & as written
+	enc.SetEscapeHTML(false)
 	for i, c := range checks {
 		if ops[c[0]] == nil {
 			t.Fatalf("check %d names op %q, which this package does not answer", i, c[0])
 		}
 		covered[c[0]] = true
-		fmt.Fprintf(&lines, `{"id":"check-%d","op":%q,"input":%s}`+"\n", i, c[0], c[1])
+		if err := enc.Encode(request{fmt.Sprintf("check-%d", i), c[0], json.RawMessage(c[1])}); err != nil {
+			t.Fatalf("check %d: input: %v", i, err)
+		}
 	}
 	var missing []string
 	for name := range ops {
@@ -139,7 +144,10 @@ func selfCheck(t *testing.T, ops map[string]Op, checks []Check) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n"))
+	var got [][]byte // no output is no lines, not one empty line
+	if len(data) > 0 {
+		got = bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n"))
+	}
 	if len(got) != len(checks) {
 		t.Fatalf("wrote %d lines for %d checks", len(got), len(checks))
 	}

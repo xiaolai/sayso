@@ -26,6 +26,12 @@ func TestBorrowedReadsAsEncodingJSON(t *testing.T) {
 			t.Errorf("%s: StringEquals", s)
 		}
 	}
+	// A destination that already holds bytes, with room for the span beyond them, is appended to in place.
+	str := []byte(`"abcdef"`)
+	dst := make([]byte, 7, 7+len(str))
+	if got, ok := AppendString(dst, str, Root(str)); !ok || string(got[7:]) != "abcdef" || &got[0] != &dst[0] {
+		t.Errorf("a nonempty destination with room grew or lost the string: %q", got)
+	}
 	doc := []byte(`{"a":1,"exp":2}`)
 	if v, ok := Member(doc, Root(doc), "exp"); !ok || string(doc[v.Start:v.End]) != "2" {
 		t.Error("an escaped name did not match")

@@ -274,7 +274,9 @@ func svNumberUnits(text, language string) []svUnit {
 		digitForms = append(digitForms, svGroupDigits(intPart)+fracText) // also beyond the cardinal range
 	}
 	for _, d := range digitForms {
-		unit = append(unit, lit(sign+d+suffix))
+		if s := lit(sign + d + suffix); !svUnitHas(unit, s) { // "42" and "1,000" are already the reading as written
+			unit = append(unit, s)
+		}
 		if sign != "" && base == "en" {
 			unit = append(unit, lit("minus", d+suffix), lit("negative", d+suffix))
 		}
@@ -573,16 +575,9 @@ func svAltHas(alt svAlt, s string) bool {
 func svHanUnit(run string) svUnit {
 	unit := svUnit{lit(svSplitRunes(run)...)}
 	rs := []rune(run)
-	hasUnit := false
-	for _, r := range rs {
-		if _, ok := svHanDigit[r]; !ok {
-			hasUnit = true
-		}
-	}
-	if !hasUnit {
-		// A digit string (二〇二四). Two digits are an approximation (两三天, 三五天: two or three days), and 两 is
-		// never a digit of a string, so neither has a reading in digits.
-		if len(rs) == 2 || len(rs) > 2 && strings.ContainsRune(run, '两') {
+	if digits, number := svHanDigitString(rs); digits {
+		// A digit string (二〇二四). One that is no number (svHanDigitString) has no reading in digits.
+		if !number {
 			return unit
 		}
 		var ds strings.Builder

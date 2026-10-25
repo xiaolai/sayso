@@ -590,3 +590,60 @@ func TestOpenChecksBeforeTheSecret(t *testing.T) {
 		t.Fatalf("the source was asked %d times", n)
 	}
 }
+
+// After Close, Send is ErrClosed whatever the event: nothing is encoded, a marshaller is never run.
+func TestSendAfterCloseEncodesNothing(t *testing.T) {
+	s := dialHandler(t, func(c *websocket.Conn) { _, _, _ = c.Read(context.Background()) }, nil)
+	_ = s.Close()
+	if err := s.Send(context.Background(), badEvent{}); !errors.Is(err, realtime.ErrClosed) {
+		t.Fatalf("Send after Close: %v, want ErrClosed", err)
+	}
+}
+
+// A ctx ended while Trace runs stops the write before it starts, so the session stays open.
+func TestCancelDuringTraceLeavesTheSessionOpen(t *testing.T) {
+	got := make(chan string, 4)
+	hs := fakeopenai.WebSocket(t, func(c *websocket.Conn) {
+		for {
+			_, b, err := c.Read(context.Background())
+			if err != nil {
+				return
+			}
+			got <- string(b)
+		}
+	}, nil)
+	c, base := fakeopenai.Client(t, hs.URL)
+	var cancel atomic.Pointer[context.CancelFunc]
+	cfg := config(c, base)
+	cfg.Trace = func(dir string, _ []byte) {
+		if dir == "client" {
+			if f := cancel.Load(); f != nil {
+				(*f)()
+			}
+		}
+	}
+	s, err := realtime.Dial(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	for range 50 { // the library's own select picks at random: try often enough to meet it
+		ctx, f := context.WithCancel(context.Background())
+		cancel.Store(&f)
+		if err := s.Send(ctx, map[string]string{"type": "cancelled"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Send cancelled in Trace: %v", err)
+		}
+	}
+	cancel.Store(nil)
+	if err := s.Send(context.Background(), map[string]string{"type": "after"}); err != nil {
+		t.Fatalf("Send after: %v", err)
+	}
+	select {
+	case m := <-got:
+		if !strings.Contains(m, "after") {
+			t.Fatalf("the peer received %q", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the peer received nothing")
+	}
+}

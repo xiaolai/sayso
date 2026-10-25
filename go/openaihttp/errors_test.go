@@ -174,3 +174,35 @@ func TestErrorStringScrubsEveryField(t *testing.T) {
 		t.Fatalf("Error() = %q", got)
 	}
 }
+
+// A code that is not a string is kept as its exact JSON text, but a secret escaped inside one of its strings, a name
+// included, is scrubbed as the decoded string would be.
+func TestCompositeCodeScrubsItsEscapedStrings(t *testing.T) {
+	esc := string([]byte{92, 117}) + "0065" // a backslash-u escape of "e"
+	for _, code := range []string{`{"detail":"` + esc + `k_canary"}`, `{"` + esc + `k_canary":1}`, `["x ` + esc + `k_canary"]`} {
+		var e *Error
+		body := `{"error":{"code":` + code + `}}`
+		if !errors.As(CheckResponse(reply(nil, 400, nil, body), ""), &e) || strings.Contains(e.Code, "canary") {
+			t.Errorf("code %s kept as %q", code, e.Code)
+		}
+	}
+	var e *Error
+	if errors.As(CheckResponse(reply(nil, 400, nil, `{"error":{"code":{"a": "b\n"}}}`), ""), &e) && e.Code != `{"a": "b\n"}` {
+		t.Errorf("a clean code is %q, want its exact text", e.Code)
+	}
+}
+
+type failingBody struct{ err error }
+
+func (b failingBody) Read([]byte) (int, error) { return 0, b.err }
+func (failingBody) Close() error               { return nil }
+
+// A body cut off while it is read keeps the status class, and the cause.
+func TestCheckResponseKeepsTheBodyReadError(t *testing.T) {
+	cut := errors.New("cut off")
+	resp := &http.Response{StatusCode: 503, Header: http.Header{}, Body: failingBody{cut}, ContentLength: -1}
+	err := CheckResponse(resp, "")
+	if Classify(err) != ClassServer || !errors.Is(err, cut) {
+		t.Errorf("class %s, cause kept %v", Classify(err), errors.Is(err, cut))
+	}
+}

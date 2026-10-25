@@ -31,6 +31,21 @@ func TestNumberWords(t *testing.T) {
 	if _, ok := SmallValue("hundred"); ok {
 		t.Error("hundred is not a small value")
 	}
+	if got := Join(Integer("999999999999999")); got != Join(Cardinal(MaxCardinal)) {
+		t.Errorf("MaxCardinal: %q", got)
+	}
+	if got := Integer("1000000000000000"); len(got) != 16 {
+		t.Errorf("MaxCardinal+1 is not read digit by digit: %q", got)
+	}
+}
+
+// Ordinal of no words is no words, never a crash: Integer("") reads as none.
+func TestOrdinalOfNothing(t *testing.T) {
+	for _, words := range [][]string{nil, {}, Integer("")} {
+		if got := Ordinal(words); got != nil {
+			t.Errorf("Ordinal(%q) = %q, want nil", words, got)
+		}
+	}
 }
 
 // Digits and Integer read any string without panicking: nil unless it holds only ASCII digits (and, for Integer, is

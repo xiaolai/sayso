@@ -19,7 +19,7 @@ const noPreempt = "asyncpreemptoff=1"
 // measures the buffers the package owns. A package whose tests scan memory calls it from its TestMain.
 func Main(m *testing.M) {
 	godebug := os.Getenv("GODEBUG")
-	if strings.Contains(","+godebug+",", ","+noPreempt+",") {
+	if preemptOff(godebug) {
 		os.Exit(m.Run())
 	}
 	if godebug != "" {
@@ -37,4 +37,16 @@ func Main(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// preemptOff reports whether godebug turns asynchronous preemption off. The runtime applies the last entry for a
+// key, so the last asyncpreemptoff entry decides.
+func preemptOff(godebug string) bool {
+	off := false
+	for entry := range strings.SplitSeq(godebug, ",") {
+		if key, value, _ := strings.Cut(entry, "="); key == "asyncpreemptoff" {
+			off = value == "1"
+		}
+	}
+	return off
 }

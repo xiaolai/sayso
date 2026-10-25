@@ -401,13 +401,15 @@ func decodeDone(typ string, w wire.Object) (Event, error) {
 	if !ok {
 		return nil, missing(typ, "response")
 	}
-	v, _, err := strs(r, "id", "status")
+	id, hasID, err := r.String("id")
 	if err != nil {
 		return nil, err
 	}
-	_, hasID := r.Field("id")
-	_, hasStatus := r.Field("status")
-	ev := ResponseDone{ResponseID: v[0], Status: ResponseStatus(v[1])}
+	status, hasStatus, err := r.String("status")
+	if err != nil {
+		return nil, err
+	}
+	ev := ResponseDone{ResponseID: id, Status: ResponseStatus(status)}
 	if details, ok, err := r.Object("status_details"); err != nil {
 		return nil, err
 	} else if ok {

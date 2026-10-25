@@ -2,6 +2,8 @@ package codexapp
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -247,4 +249,25 @@ func refuseAsync(t *testing.T, k *core, id string) <-chan struct{} {
 	refused := make(chan struct{})
 	go func() { k.refuse([]byte(strconv.Quote(id))); close(refused) }()
 	return refused
+}
+
+// A caller that gives up before its turn releases its message and context at once, rather than leaving them on the
+// queue until the writer reaches it.
+func TestAbandonedRequestReleasesItsPayload(t *testing.T) {
+	k, _, _ := bareCore(t) // the writer never starts, so the request stays queued
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- k.send(ctx, big, time.Now().Add(5*time.Second)) }()
+	waitFor(t, "the request to be queued", func() bool { return len(queuedLines(k)) == 1 })
+	cancel()
+	if err := recv(t, "the abandoned send", done); !errors.Is(err, context.Canceled) {
+		t.Fatalf("send: %v, want the cancellation", err)
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for _, o := range k.out {
+		if o.b != nil || o.ctx != nil {
+			t.Errorf("the abandoned request still holds %d bytes and its context", len(o.b))
+		}
+	}
 }

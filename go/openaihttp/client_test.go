@@ -355,3 +355,49 @@ func redirectRefusal(resp *http.Response, err error) error {
 	}
 	return CheckResponse(resp, "")
 }
+
+// A bearer under a non-canonical key, or after an empty first value, is still checked: the transport sends both.
+func TestOriginPolicyFindsEveryAuthorization(t *testing.T) {
+	for _, h := range []http.Header{
+		{"Authorization": {"", canaryBearer}},
+		{"authorization": {canaryBearer}},
+	} {
+		base := &recorder{}
+		c, err := NewClient(WithBaseTransport(base))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodGet, "https://api.example.org/v1/x", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header = h
+		if resp, err := c.Do(req); err == nil {
+			_ = resp.Body.Close()
+			t.Errorf("%v: request allowed, want refusal", h.Get("Authorization") == "")
+		}
+		if n := len(base.requests()); n != 0 {
+			t.Errorf("base transport saw %d requests, want 0", n)
+		}
+	}
+}
+
+type idleRecorder struct {
+	recorder
+	closed bool
+}
+
+func (r *idleRecorder) CloseIdleConnections() { r.closed = true }
+
+// Closing the client's idle connections reaches the transport below the policy.
+func TestCloseIdleConnectionsReachesTheBaseTransport(t *testing.T) {
+	base := &idleRecorder{}
+	c, err := NewClient(WithBaseTransport(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.CloseIdleConnections()
+	if !base.closed {
+		t.Error("CloseIdleConnections did not reach the base transport")
+	}
+}

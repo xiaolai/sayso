@@ -67,7 +67,8 @@ var removedEnv = []string{
 const repairPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 // ChildEnv is env minus the authentication overrides, with CODEX_HOME replaced when codexHome is set and PATH
-// repaired for bin. Nothing else is added, so no secret can reach the child's environment through this package.
+// repaired for bin. Only those overrides are removed: every other inherited variable, credentials of other services
+// included, is forwarded as it is. Nothing else is added.
 func ChildEnv(env []string, bin, codexHome string) []string {
 	out := make([]string, 0, len(env)+2)
 	inherited := ""

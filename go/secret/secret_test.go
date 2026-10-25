@@ -243,3 +243,52 @@ func TestRegisterKeepsNothingOfTheSecret(t *testing.T) {
 		}
 	}
 }
+
+// tinySink keeps small pointer-free values alive beside the handles allocated between them.
+var tinySink []*uint64
+
+// A dropped token's vault entry is deleted even when small values allocated beside its handle stay reachable: a
+// handle the tiny allocator batched with one of them would never be collected. The race detector turns the tiny
+// allocator off, so this case is decided by a run without -race.
+func TestVaultEntryIsDroppedBesideLiveTinyValues(t *testing.T) {
+	ids := make([]uint64, 0, 64)
+	for i := range 64 {
+		tok := NewToken("vault-canary-"+strconv.Itoa(i), time.Time{}, "", "")
+		ids = append(ids, tok.bearer.id)
+		tinySink = append(tinySink, new(uint64))
+	}
+	defer func() { tinySink = nil }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		runtime.GC()
+		left := 0
+		for _, id := range ids {
+			if _, ok := vault.Load(id); ok {
+				left++
+			}
+		}
+		if left == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d vault entries outlived their tokens", left, len(ids))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// One conditional subtraction reduces mulMod's fold: for a, b below the modulus it is below twice the modulus.
+func TestMulModMatchesBigReduction(t *testing.T) {
+	for _, a := range []uint64{0, 1, 2, mersenne - 2, mersenne - 1, 1 << 60, 12345678901234567} {
+		for _, b := range []uint64{0, 1, 3, mersenne - 2, mersenne - 1, 1 << 60, 98765432109876543} {
+			if a >= mersenne || b >= mersenne {
+				continue
+			}
+			hi, lo := bits.Mul64(a, b)
+			_, want := bits.Div64(hi, lo, mersenne)
+			if got := mulMod(a, b); got != want {
+				t.Errorf("mulMod(%d, %d) = %d, want %d", a, b, got, want)
+			}
+		}
+	}
+}

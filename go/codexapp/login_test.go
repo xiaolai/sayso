@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,5 +79,26 @@ func TestLoginRefusesWhatStartRefuses(t *testing.T) {
 		Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &out})
 	if openaihttp.Classify(err) != openaihttp.ClassCodexError {
 		t.Fatalf("a failed flow: %v, class %s", err, openaihttp.Classify(err))
+	}
+}
+
+// Login returns once the flow exits, even when its input is a reader that never ends: it does not wait for a read
+// the flow no longer needs.
+func TestLoginReturnsWhileItsInputIsStillOpen(t *testing.T) {
+	script := loginScript(t)
+	in, feed := io.Pipe()
+	defer feed.Close()
+	go func() { _, _ = feed.Write([]byte("typed\n")) }()
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- Login(Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"})}, false,
+			Streams{Stdin: in, Stdout: &out, Stderr: &out})
+	}()
+	if err := recv(t, "Login", done); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "stdin=typed\n") {
+		t.Errorf("the flow reported %q", out.String())
 	}
 }

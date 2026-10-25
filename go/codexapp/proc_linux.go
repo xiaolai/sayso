@@ -34,8 +34,11 @@ func groupAlive(pgid int) bool {
 			continue
 		}
 		stat, err := os.ReadFile("/proc/" + name + "/stat")
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 			continue // exited meanwhile
+		}
+		if err != nil {
+			return true // unreadable: it may be a live member, as when /proc cannot be opened
 		}
 		// pid (comm) state ppid pgrp ...: comm may hold spaces and parentheses, so the fields start after the last ')'.
 		i := bytes.LastIndexByte(stat, ')')

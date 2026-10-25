@@ -13,7 +13,7 @@ package saidguard
 
 import (
 	"math"
-	"strings"
+	"slices"
 )
 
 // Version is the said guard's revision (spec/said-guard.md), raised whenever a change makes the guard refuse a
@@ -42,16 +42,11 @@ func Matches(said, spoken, language string) bool {
 // a value that overflows. Units are read by the strict parser the said guard uses; recite's canonicaliser shares it.
 func ParseHanNumeral(s string) (uint64, bool) {
 	rs := []rune(s)
-	digits := len(rs) > 0
-	for _, r := range rs {
-		if _, ok := svHanDigit[r]; !ok {
-			digits = false
-		}
-	}
+	digits, number := svHanDigitString(rs)
 	if !digits {
 		return svParseHan(rs)
 	}
-	if len(rs) == 2 || len(rs) > 2 && strings.ContainsRune(s, '两') {
+	if !number {
 		return 0, false
 	}
 	var n uint64
@@ -63,4 +58,19 @@ func ParseHanNumeral(s string) (uint64, bool) {
 		n = n*10 + d
 	}
 	return n, true
+}
+
+// svHanDigitString reports whether rs is a non-empty run of Han digits only, and whether that run is a number: one
+// digit, or three or more without 两. Two digits are an approximation (两三天, 三五天: two or three days), and 两 is
+// never a digit of a string. ParseHanNumeral and the said guard's readings (svHanUnit) decide it here, so they agree.
+func svHanDigitString(rs []rune) (digits, number bool) {
+	if len(rs) == 0 {
+		return false, false
+	}
+	for _, r := range rs {
+		if _, ok := svHanDigit[r]; !ok {
+			return false, false
+		}
+	}
+	return true, len(rs) != 2 && !(len(rs) > 2 && slices.Contains(rs, '两'))
 }

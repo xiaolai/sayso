@@ -18,10 +18,9 @@ const (
 )
 
 type svRaw struct {
-	text       string
-	kind       svKind
-	start, end int    // rune offsets in the normalised text
-	gap        string // the text between the previous raw and this one
+	text string
+	kind svKind
+	gap  string // the text between the previous raw and this one
 	// For a word whose first or last letter touches marks svUnquote dropped as possible quotation marks, how many: they
 	// may as well be apostrophes, so the word may also be read with them ("‘the students’ books’", "''yes''").
 	optLead, optTrail int
@@ -80,8 +79,12 @@ func svBetweenNumbers(rs []rune, i int) bool {
 	} else if p >= 2 && svOrdinalSuffixAt(rs, p-1) {
 		p -= 2
 	}
-	if n < len(rs) && (svMinus(rs[n]) && svSignAt(rs, n) || rs[n] == '+' && svOperandAt(rs, n+1)) {
-		n++ // a signed operand ("5 - -2", "5 - +2")
+	if n < len(rs) && svMinus(rs[n]) {
+		if o := svSignOperand(rs, n); o >= 0 {
+			n = o // a signed operand, its sign spaced or not ("5 - -2", "5 - - 2")
+		}
+	} else if n < len(rs) && rs[n] == '+' && svOperandAt(rs, n+1) {
+		n++ // "5 - +2"
 	}
 	return p >= 0 && (svDigit(rs[p]) || isHanNumeral(rs[p])) && svOperandAt(rs, n)
 }
@@ -214,7 +217,7 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			text = "'" // one apostrophe, however written
 		}
 		body = -1
-		raw := svRaw{text: text, kind: kind, start: i, end: j, gap: string(rs[prevEnd:i]), dash: dash}
+		raw := svRaw{text: text, kind: kind, gap: string(rs[prevEnd:i]), dash: dash}
 		if kind == svWord {
 			raw.optLead = droppedBefore(i)
 			raw.optTrail = droppedFrom(j)
@@ -232,8 +235,10 @@ func svLex(s string, hanNumbers bool) []svRaw {
 	}
 	for i := 0; i < len(rs); {
 		r := rs[i]
+		// Only a minus looks across the spaces around it: asked at every space, a run of them would cost its square.
+		between := svMinus(r) && svBetweenNumbers(rs, i)
 		sign := -1
-		if !svBetweenNumbers(rs, i) {
+		if !between {
 			sign = svSignOperand(rs, i)
 		}
 		switch {
@@ -264,7 +269,7 @@ func svLex(s string, hanNumbers bool) []svRaw {
 			}
 			emit(svNumber, i, j, svDashNone)
 			i = j
-		case svMinus(r) && svBetweenNumbers(rs, i):
+		case between:
 			emit(svSymbol, i, i+1, svDashNone)
 			i++
 		case r == '−':

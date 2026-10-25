@@ -32,13 +32,13 @@ func svScriptUnits(s, language string) []svUnit {
 	raws := svLex(svPre(s), baseLanguage(language) == "zh")
 	english := baseLanguage(language) == "en"
 	var units []svUnit
-	word := func(k int) bool { return k >= 0 && k < len(raws) && raws[k].kind == svWord }
+	isWord := func(k int) bool { return word(raws, k) }
 	lower := func(k int) string { return svNormApostrophes(svLower(raws[k].text, language)) }
 	// A capitalised word inside a sentence ("Main" in "on Main St."), not the first word of one.
 	innerCapital := func(k int) bool {
-		return word(k) && k > 0 && svIsCapitalised(raws[k].text) && !strings.ContainsAny(raws[k].gap, svSentenceEnds+":")
+		return isWord(k) && k > 0 && svIsCapitalised(raws[k].text) && !strings.ContainsAny(raws[k].gap, svSentenceEnds+":")
 	}
-	nextCapital := func(k int) bool { return word(k+1) && svIsCapitalised(raws[k+1].text) }
+	nextCapital := func(k int) bool { return isWord(k+1) && svIsCapitalised(raws[k+1].text) }
 	inExpression, inWordExpression := svExpressions(raws, false), svExpressions(raws, true)
 
 	// Spoken zeros: "oh" or "o" in a run of digits and number words with no punctuation inside ("oh oh seven",
@@ -50,9 +50,9 @@ func svScriptUnits(s, language string) []svUnit {
 				return true
 			}
 			_, ok := svNumberWordValue(lower(k))
-			return word(k) && ok
+			return isWord(k) && ok
 		}
-		oh := func(k int) bool { return word(k) && (lower(k) == "oh" || lower(k) == "o") }
+		oh := func(k int) bool { return isWord(k) && (lower(k) == "oh" || lower(k) == "o") }
 		for k := 0; k < len(raws); {
 			j, hasDigit := k, false
 			for j < len(raws) && (digitish(j) || oh(j)) && (j == k || !raws[j].punctBefore()) {
@@ -69,7 +69,7 @@ func svScriptUnits(s, language string) []svUnit {
 		}
 	}
 	singleLetter := func(k int) bool {
-		if !word(k) || zero[k] {
+		if !isWord(k) || zero[k] {
 			return false
 		}
 		t := []rune(raws[k].text)
@@ -167,7 +167,7 @@ func svScriptUnits(s, language string) []svUnit {
 		// sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
 		// domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
 		labels, j, lowercase := []string{low}, k+1, low == r.text
-		for lowercase && j < len(raws) && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+		for lowercase && j < len(raws) && isWord(j) && raws[j].gap == "." && lower(j) == raws[j].text {
 			labels = append(labels, lower(j))
 			j++
 		}
@@ -196,7 +196,7 @@ func svScriptUnits(s, language string) []svUnit {
 		if english && svPhraseWord(strings.FieldsFunc(low, svJoiner)[0]) {
 			var words []string
 			ends := []int{} // ends[l-1]: the words in the first l raws
-			for j := k; j < len(raws) && j < k+svMaxPhraseWords && word(j) && (j == k || !raws[j].punctBefore()); j++ {
+			for j := k; j < len(raws) && j < k+svMaxPhraseWords && isWord(j) && (j == k || !raws[j].punctBefore()); j++ {
 				parts := strings.FieldsFunc(lower(j), svJoiner)
 				ok := len(parts) > 0
 				for _, p := range parts {
@@ -236,7 +236,7 @@ func svScriptUnits(s, language string) []svUnit {
 			}
 		}
 		// "for example" and "et cetera" may be transcribed abbreviated.
-		if english && word(k+1) && !raws[k+1].punctBefore() {
+		if english && isWord(k+1) && !raws[k+1].punctBefore() {
 			pair := low + " " + lower(k+1)
 			if abbr := map[string]string{"for example": "e.g", "et cetera": "etc", "that is": "i.e"}[pair]; abbr != "" {
 				units = append(units, svUnit{lit(low, lower(k+1)), lit(abbr)})
@@ -296,6 +296,10 @@ func svKeepMarks(units []svUnit, span []svRaw, language string) {
 	}
 	at := 0
 	for u, unit := range units {
+		// A unit that may go unspoken (a domain's "dot", a dash) stands for no written word, so it takes none.
+		if slices.ContainsFunc(unit, func(seq svSeq) bool { return len(seq) == 0 }) {
+			continue
+		}
 		literal := slices.IndexFunc(unit, func(seq svSeq) bool { return spells(seq, at) })
 		if literal < 0 {
 			continue
@@ -398,8 +402,12 @@ func svWithCodeReadings(unit svUnit, raws []svRaw, k int, low string) svUnit {
 	text := raws[k].text
 	rs := []rune(text)
 	// A capital neighbour that is a word, not a code, makes this shouting ("STOP NOW"); two codes stay codes ("API URL").
+	// A neighbour in another sentence ("API! STOP!") does not.
 	shout := func(j int) bool {
 		if j < 0 || j >= len(raws) || raws[j].kind != svWord || !svAllCaps(raws[j].text) {
+			return false
+		}
+		if strings.ContainsAny(raws[max(j, k)].gap, ".!?…。！？") {
 			return false
 		}
 		n := len([]rune(raws[j].text))

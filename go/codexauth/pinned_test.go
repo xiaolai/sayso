@@ -57,7 +57,7 @@ func TestFolderSwappedAfterResolutionIsRefused(t *testing.T) {
 			defer func() { afterResolve = nil }()
 			loc, e := authFilePath(filepath.Join(base, "confine", "a", "b"), base, confine)
 			if e == nil {
-				tok, _ := readAuthFile(loc, nil)
+				tok, _ := readAuthFile(t.Context(), loc, nil)
 				loc.close()
 				t.Fatalf("the swapped path was opened; it read %q", tok.Source)
 			}
@@ -80,7 +80,7 @@ func TestLinkedCodexHomeStillResolves(t *testing.T) {
 		t.Fatalf("a linked CODEX_HOME inside the confinement was refused: %v", e)
 	}
 	defer loc.close()
-	if tok, e := readAuthFile(loc, nil); e != nil || tok.Bearer() != "confine-token" {
+	if tok, e := readAuthFile(t.Context(), loc, nil); e != nil || tok.Bearer() != "confine-token" {
 		t.Fatalf("read %v", e)
 	}
 }
@@ -125,7 +125,7 @@ func TestAuthFileLinkToItsOwnInodeIsRefused(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		tok, e := readAuthFile(loc, hook)
+		tok, e := readAuthFile(t.Context(), loc, hook)
 		loc.close()
 		if e == nil || e.State != StateCodexError {
 			t.Fatalf("retry %v: read %q, %v; want codex-error", onRetry, tok.Bearer(), e)
@@ -151,7 +151,7 @@ func TestSearchableUnreadableAncestorIsWalked(t *testing.T) {
 		t.Fatalf("authFilePath: %v", e)
 	}
 	defer loc.close()
-	tok, e := readAuthFile(loc, nil)
+	tok, e := readAuthFile(t.Context(), loc, nil)
 	if e != nil || tok.Bearer() != "confine-token" {
 		t.Fatalf("read through a searchable, unreadable ancestor: %v", e)
 	}
@@ -179,7 +179,7 @@ func TestConfinementComparesFoldersNotSpellings(t *testing.T) {
 		if e != nil {
 			t.Fatalf("%s confined to %s: %v", tc.home, tc.confine, e)
 		}
-		tok, e := readAuthFile(loc, nil)
+		tok, e := readAuthFile(t.Context(), loc, nil)
 		loc.close()
 		if e != nil || tok.Bearer() != "confine-token" {
 			t.Fatalf("%s confined to %s: read %v", tc.home, tc.confine, e)

@@ -106,13 +106,13 @@ func authStatus(result []byte) (AuthStatus, bool) {
 		return AuthStatus{}, false
 	}
 	st := AuthStatus{HasMethod: hasMethod, RequiresOpenAIAuth: !hasRequires || wire.KindOf(result, requires) == 't'}
-	if hasMethod {
-		st.Method = decoded(result, method)
-	}
 	if hasToken {
 		t := decoded(result, token)
 		secret.Register(t)
 		st.token = sealed(t)
+	}
+	if hasMethod { // after the token is registered, so a method that repeats it is stored scrubbed
+		st.Method = secret.Scrub(decoded(result, method))
 	}
 	return st, true
 }
@@ -247,24 +247,38 @@ func decodeRateLimits(raw json.RawMessage) (RateLimits, error) {
 		if !ok {
 			continue
 		}
-		// Codex's schema (RateLimitWindow, codex app-server generate-json-schema) makes usedPercent a required int32.
-		used, ok, err := w.Int("usedPercent")
-		if err != nil || !ok || used < math.MinInt32 || used > math.MaxInt32 {
-			return RateLimits{}, wire.ErrInvalid
-		}
-		mins, _, err := w.Int("windowDurationMins")
+		rw, err := decodeRateWindow(name, w)
 		if err != nil {
 			return RateLimits{}, err
-		}
-		rw := RateWindow{Name: name, UsedPercent: float64(used), WindowMins: int(mins)}
-		resets, ok, err := w.Int("resetsAt")
-		if err != nil {
-			return RateLimits{}, err
-		}
-		if ok {
-			rw.ResetsAt = time.Unix(resets, 0).UTC()
 		}
 		out.Windows = append(out.Windows, rw)
 	}
 	return out, nil
+}
+
+// decodeRateWindow reads one window. resetsAt must fall in the years 0001 to 9999, which time.Time orders and
+// formats correctly.
+func decodeRateWindow(name string, w wire.Object) (RateWindow, error) {
+	// Codex's schema (RateLimitWindow, codex app-server generate-json-schema) makes usedPercent a required int32.
+	used, ok, err := w.Int("usedPercent")
+	if err != nil || !ok || used < math.MinInt32 || used > math.MaxInt32 {
+		return RateWindow{}, wire.ErrInvalid
+	}
+	mins, _, err := w.Int("windowDurationMins")
+	if err != nil {
+		return RateWindow{}, err
+	}
+	rw := RateWindow{Name: name, UsedPercent: float64(used), WindowMins: int(mins)}
+	resets, ok, err := w.Int("resetsAt")
+	if err != nil {
+		return RateWindow{}, err
+	}
+	if ok {
+		const first, last = -62135596800, 253402300799 // 0001-01-01T00:00:00Z, 9999-12-31T23:59:59Z
+		if resets < first || resets > last {
+			return RateWindow{}, wire.ErrInvalid
+		}
+		rw.ResetsAt = time.Unix(resets, 0).UTC()
+	}
+	return rw, nil
 }

@@ -9,7 +9,8 @@ import "io"
 // clears. The buffer is sized from declared, the length the sender announced (-1 when unknown), with room to see the
 // end without growing, at most limit; when it fills before the end it moves into one twice the size, at most limit,
 // and the one outgrown is cleared. A read error ends the reading and is returned with what was read; io.EOF, as
-// io.ReadAll reads it, is no error.
+// io.ReadAll reads it, is no error. A reader that returns nothing 100 times in a row ends the reading with
+// io.ErrNoProgress, as bufio does. The bytes beyond those returned, which a reader may use as scratch, are cleared.
 func Read(r io.Reader, declared int64, limit int) ([]byte, error) {
 	size := min(512, limit)
 	switch {
@@ -20,21 +21,31 @@ func Read(r io.Reader, declared int64, limit int) ([]byte, error) {
 	}
 	buf := make([]byte, size)
 	n := 0
-	for n < limit {
+	var err error
+	for empty := 0; n < limit; {
 		if n == len(buf) {
 			grown := make([]byte, min(2*len(buf), limit))
 			copy(grown, buf[:n])
 			clear(buf)
 			buf = grown
 		}
-		k, err := r.Read(buf[n:])
+		var k int
+		k, err = r.Read(buf[n:])
 		n += k
 		if err == io.EOF {
+			err = nil
 			break
 		}
 		if err != nil {
-			return buf[:n], err
+			break
+		}
+		if k > 0 {
+			empty = 0
+		} else if empty++; empty >= 100 {
+			err = io.ErrNoProgress
+			break
 		}
 	}
-	return buf[:n], nil
+	clear(buf[n:])
+	return buf[:n], err
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"slices"
 	"strconv"
 
@@ -152,7 +153,14 @@ func (k *core) eventLoop() {
 			}
 			d := k.events[0]
 			k.events[0] = eventData{}
-			k.events = k.events[1:]
+			switch {
+			case len(k.events) > 1:
+				k.events = k.events[1:]
+			case cap(k.events) <= 64: // drained: a small array is reused rather than reallocated per event
+				k.events = k.events[:0]
+			default: // drained after a burst: its array is not held while idle
+				k.events = nil
+			}
 			k.mu.Unlock()
 			if k.testEventAdmitted != nil {
 				k.testEventAdmitted()
@@ -162,7 +170,7 @@ func (k *core) eventLoop() {
 				return // collected: its cleanup closes the child
 			}
 			k.onEvent(c, newEvent(d.method, d.params, d.request))
-			c = nil // held no longer than the handler runs
+			runtime.KeepAlive(c) // held until the handler returns, whether or not it uses c, and no longer
 			k.mu.Lock()
 			if !k.eventsClosed { // Close cleared the counts with the queue
 				k.eventBytes -= d.size()

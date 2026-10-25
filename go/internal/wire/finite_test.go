@@ -25,6 +25,8 @@ func TestFiniteAsFloat64MatchesParseFloat(t *testing.T) {
 		strings.Repeat("9", 309), strings.Repeat("9", 310), "1" + strings.Repeat("0", 308),
 		"17976931348623158079e289", "17976931348623158080e289", "1e99999999999999999999", "1E+308", "1E-308",
 		"10e307", "100e306", "0.1e310",
+		// Exponents whose accumulation overflows a 32-bit int.
+		"1e2147483648", "1e4294967296", "1e2147483647", "1e-2147483648", "1e-4294967296", "1e-99999999999999999999",
 	}
 	for range 200 {
 		var d strings.Builder

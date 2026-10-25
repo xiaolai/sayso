@@ -151,3 +151,35 @@ func TestAPrivateSignInKeepsOnlyTheToken(t *testing.T) {
 		}
 	}
 }
+
+// A file writeNew cannot remove is reported with the failure that made it remove it: the file left behind blocks the
+// next write. One already gone is no failure.
+func TestARemovalThatFailsIsReported(t *testing.T) {
+	home := privateHome(t)
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := syscall.Open(home, syscall.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(dir)
+	if err := os.Chmod(home, 0o500); err != nil { // no write permission, so no unlink
+		t.Fatal(err)
+	}
+	defer os.Chmod(home, 0o700)
+	cause := errors.New("cause")
+	e := removeCreated(dir, fail(StateCodexError, "auth.json cannot be written", cause))
+	if !errors.Is(e, cause) || !errors.Is(e, syscall.EACCES) {
+		t.Errorf("a failed removal: %v", e)
+	}
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	if e := removeCreated(dir, fail(StateCodexError, "auth.json cannot be written", cause)); errors.Is(e, syscall.ENOENT) {
+		t.Errorf("a file already gone: %v", e)
+	}
+}

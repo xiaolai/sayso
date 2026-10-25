@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -37,9 +36,11 @@ type Case struct {
 }
 
 // Load returns every case of component, in manifest order, after checking that the files hold exactly the manifest's
-// ids for that component.
-func Load(component string) ([]Case, error) {
-	data, err := os.ReadFile(filepath.Join(Dir, "MANIFEST.json"))
+// ids for that component, each in the file and with the requirements its manifest entry names.
+func Load(component string) ([]Case, error) { return load(Dir, component) }
+
+func load(dir, component string) ([]Case, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "MANIFEST.json"))
 	if err != nil {
 		return nil, fmt.Errorf("fixtures are read from the repository checkout: %w", err)
 	}
@@ -55,8 +56,13 @@ func Load(component string) ([]Case, error) {
 	}
 	files := map[string]bool{}
 	want := map[string]Entry{}
+	listed := map[string]bool{}
 	var order []string
 	for _, e := range m.Fixtures {
+		if listed[e.ID] {
+			return nil, fmt.Errorf("manifest lists fixture %s twice", e.ID)
+		}
+		listed[e.ID] = true
 		if e.Component == component {
 			files[e.File] = true
 			want[e.ID] = e
@@ -68,7 +74,7 @@ func Load(component string) ([]Case, error) {
 	}
 	got := map[string]Case{}
 	for file := range files {
-		raws, err := read(filepath.Join(Dir, file))
+		raws, err := read(filepath.Join(dir, file))
 		if err != nil {
 			return nil, err
 		}
@@ -86,8 +92,15 @@ func Load(component string) ([]Case, error) {
 			if _, dup := got[head.ID]; dup {
 				return nil, fmt.Errorf("fixture %s appears twice", head.ID)
 			}
-			if _, ok := want[head.ID]; !ok {
+			entry, ok := want[head.ID]
+			if !ok {
 				return nil, fmt.Errorf("fixture %s is not in the manifest", head.ID)
+			}
+			if entry.File != file {
+				return nil, fmt.Errorf("fixture %s is in %s, but the manifest names %s", head.ID, file, entry.File)
+			}
+			if !slices.Equal(entry.Requires, head.Requires) {
+				return nil, fmt.Errorf("fixture %s requires %q, but the manifest says %q", head.ID, head.Requires, entry.Requires)
 			}
 			if names := repeatable[component]; len(names) > 0 {
 				expanded, err := expandRepeats(raw, names)
@@ -127,7 +140,8 @@ func read(path string) ([]json.RawMessage, error) {
 		return out, sc.Err()
 	}
 	var out []json.RawMessage
-	return out, json.Unmarshal(data, &out)
+	err = json.Unmarshal(data, &out)
+	return out, err
 }
 
 // repeatable lists, per component, the members a case may write as a repeat (spec/fixtures.md).
@@ -267,7 +281,7 @@ func (r *Results) Record(id string, o Outcome) {
 func (r *Results) Write(path string, components, capabilities []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	sort.Strings(components)
+	components = slices.Sorted(slices.Values(components)) // a sorted copy: the caller's slice is left as given
 	doc := map[string]any{"implementation": "go", "components": components, "capabilities": capabilities, "results": r.out}
 	data, err := json.MarshalIndent(doc, "", " ")
 	if err != nil {

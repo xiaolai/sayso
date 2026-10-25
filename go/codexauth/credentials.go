@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xiaolai/sayso/go/codexapp"
+	"github.com/xiaolai/sayso/go/failure"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -186,9 +187,7 @@ func (c *Credentials) release() { <-c.lock }
 
 // Info returns what the latest fetch found.
 func (c *Credentials) Info() Info {
-	if c.acquire(context.Background()) != nil {
-		return Info{}
-	}
+	c.lock <- struct{}{}
 	defer c.release()
 	return c.info
 }
@@ -268,15 +267,22 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		return secret.Token{}, e
 	}
 	tok, err := c.refresh(ctx)
-	if err == nil && !c.fresh(tok) {
+	fromFile := tok.Source == "file" // auth.json, read because Codex lost getAuthStatus: it cannot be refreshed again
+	switch {
+	case err != nil:
+	case !c.fresh(tok):
 		err = errors.New("Codex returned a token that is still within the margin")
+	case fromFile && c.refused != "" && tok.Bearer() == c.refused:
+		err = errors.New("auth.json holds the refused token, and the file source cannot refresh")
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			// The caller gave up; Codex did not fail, so no backoff is spent. The caller's cancellation is joined to
-			// the cause, which may be the timeout or the failure it produced.
+			// The caller gave up, by cancelling or by its deadline; Codex did not fail, so no backoff is spent. The
+			// caller's cancellation is joined to the cause, which may be the timeout or the failure it produced.
 			c.cfg.Logger.Debug("codexauth: refresh cancelled; no backoff spent")
-			return secret.Token{}, fail(StateExpired, "the refresh was cancelled", errors.Join(err, ctx.Err()))
+			e := fail(StateExpired, "the refresh was cancelled", errors.Join(err, ctx.Err()))
+			e.Err.(*failure.Error).Class = failure.ClassCancelled
+			return secret.Token{}, e
 		}
 		if c.backoff == 0 {
 			c.backoff = backoffStart
@@ -288,6 +294,7 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 		c.cfg.Logger.Debug("codexauth: refresh failed", "state", StateOf(err), "backoff", c.backoff, "retryAt", c.retryAt)
 		var e *Error
 		if errors.As(err, &e) && signInChanged(e.State) {
+			e.RetryAt = c.retryAt
 			return secret.Token{}, e // the refresh reply named another sign-in: classified as in step 3
 		}
 		failed := fail(StateExpired, "the refresh did not renew the sign-in", err)
@@ -297,6 +304,9 @@ func (c *Credentials) refreshLocked(ctx context.Context) (secret.Token, error) {
 	c.backoff, c.retryAt, c.lastFailure, c.refused = 0, time.Time{}, nil, ""
 	c.cfg.Logger.Debug("codexauth: refreshed the token")
 	c.cur = &tok
+	if fromFile {
+		c.refreshable = false // with the token it applies to, once that is accepted
+	}
 	c.refreshes.Add(1)
 	return tok, nil
 }
@@ -328,7 +338,7 @@ func (c *Credentials) fetchLocked(ctx context.Context) error {
 func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
 	c.info = Info{CodexHome: c.cfg.CodexHome}
 	if c.cfg.Source == SourceFile {
-		tok, e := c.fileToken(false)
+		tok, e := c.fileToken(ctx, false)
 		return tok, false, e
 	}
 	bin, err := codexapp.Resolve(c.cfg.Bin, c.searchPath(), c.cfg.Candidates)
@@ -337,7 +347,7 @@ func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
 			c.info.MissingBin = c.cfg.Bin
 			return secret.Token{}, false, fail(StateNoCodex, "no Codex executable resolved", err)
 		}
-		tok, e := c.fileToken(true)
+		tok, e := c.fileToken(ctx, true)
 		return tok, false, e
 	}
 	c.info.Bin = bin
@@ -346,7 +356,7 @@ func (c *Credentials) fetch(ctx context.Context) (secret.Token, bool, *Error) {
 
 // fileToken reads auth.json. fallback marks the file source as the fallback for a missing executable: a missing
 // file is then no-codex.
-func (c *Credentials) fileToken(fallback bool) (secret.Token, *Error) {
+func (c *Credentials) fileToken(ctx context.Context, fallback bool) (secret.Token, *Error) {
 	c.info.Source = SourceFile
 	loc, e := authFilePath(c.cfg.CodexHome, c.cfg.Home, c.cfg.ConfineCodexHome)
 	if e != nil {
@@ -358,8 +368,11 @@ func (c *Credentials) fileToken(fallback bool) (secret.Token, *Error) {
 			return secret.Token{}, fail(StateCodexError, "reading auth.json was refused", err)
 		}
 	}
-	tok, e := readAuthFile(loc, c.cfg.OnFileRetry)
+	tok, e := readAuthFile(ctx, loc, c.cfg.OnFileRetry)
 	if e != nil {
+		if ctx.Err() != nil {
+			return secret.Token{}, e // the caller's cancellation, which no fallback state may hide
+		}
 		return secret.Token{}, c.fallbackState(e, fallback)
 	}
 	return tok, nil
@@ -451,7 +464,7 @@ func (c *Credentials) storeFallback(ctx context.Context, bin string) (secret.Tok
 		e := fail(StateAppServerAuthUnavailable, "Codex lacks getAuthStatus and keeps its sign-in in "+store, nil)
 		return secret.Token{}, false, e
 	}
-	tok, e := c.fileToken(false)
+	tok, e := c.fileToken(ctx, false)
 	return tok, false, e
 }
 
@@ -469,13 +482,12 @@ func (c *Credentials) refreshCodex(ctx context.Context) (secret.Token, error) {
 	full, err := cl.GetAuthStatus(ctx, true, true)
 	if methodMissing(err) {
 		// Codex was updated to one without getAuthStatus since the token was fetched: the same config/read rule
-		// decides, and a file token cannot be refreshed again. The caller holds the lock.
+		// decides, and a file token cannot be refreshed again, which refreshLocked records once it accepts the token.
 		_ = cl.Close()
 		tok, _, e := c.storeFallback(ctx, bin)
 		if e != nil {
 			return secret.Token{}, e
 		}
-		c.refreshable = false
 		return tok, nil
 	}
 	tok, e := tokenFrom(full, err)

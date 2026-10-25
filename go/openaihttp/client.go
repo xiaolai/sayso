@@ -106,9 +106,9 @@ func NewClient(opts ...Option) (*http.Client, error) {
 	if base == nil {
 		base = newTransport(c.rootCAs)
 	}
+	// No CheckRedirect: the policy removes every 3xx's Location, so http.Client returns the 3xx and never redirects.
 	return &http.Client{
-		Transport:     &originPolicy{base: base, testOrigins: c.testOrigins, realNetwork: c.base == nil, guard: c.guard},
-		CheckRedirect: refuseRedirect,
+		Transport: &originPolicy{base: base, testOrigins: c.testOrigins, realNetwork: c.base == nil, guard: c.guard},
 	}, nil
 }
 
@@ -126,15 +126,6 @@ func newTransport(roots *x509.CertPool) *http.Transport {
 		ExpectContinueTimeout: time.Second,
 		MaxIdleConnsPerHost:   4,
 	}
-}
-
-// refuseRedirect stops every redirect, same host or not, so a bearer never follows a 3xx.
-func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	status := 0
-	if req.Response != nil {
-		status = req.Response.StatusCode
-	}
-	return &Error{Class: ClassProtocol, Status: status, Message: "redirect refused"}
 }
 
 // Guarded reports whether c sends through the origin policy, that is, whether it came from NewClient. Packages that

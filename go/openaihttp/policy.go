@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 const (
@@ -13,8 +14,8 @@ const (
 )
 
 // originPolicy refuses, before dialling, any request carrying a bearer whose origin is not exactly
-// https://api.openai.com (port 443 or empty, no userinfo, no Host override). Requests without Authorization pass
-// unchecked.
+// https://api.openai.com (port 443 or empty, no userinfo, no Host override). Requests without an Authorization value
+// pass unchecked.
 type originPolicy struct {
 	base        http.RoundTripper
 	testOrigins map[string]bool
@@ -23,7 +24,7 @@ type originPolicy struct {
 }
 
 func (p *originPolicy) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Authorization") != "" {
+	if hasAuthorization(req.Header) {
 		if err := p.check(req); err != nil {
 			if req.Body != nil {
 				_ = req.Body.Close() // RoundTripper contract: close the body even on error
@@ -40,6 +41,24 @@ func (p *originPolicy) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Header.Del("Location")
 	}
 	return resp, err
+}
+
+// hasAuthorization reports whether h holds any Authorization value, under any spelling of the key: the transport
+// sends every value of every key as written, not only Header.Get's first value under the canonical one.
+func hasAuthorization(h http.Header) bool {
+	for k, v := range h {
+		if len(v) > 0 && strings.EqualFold(k, "Authorization") {
+			return true
+		}
+	}
+	return false
+}
+
+// CloseIdleConnections closes the base transport's idle connections, when it keeps any.
+func (p *originPolicy) CloseIdleConnections() {
+	if c, ok := p.base.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
 }
 
 func (p *originPolicy) check(req *http.Request) error {

@@ -105,3 +105,28 @@ func TestMintExpiryAtInt64Bounds(t *testing.T) {
 		}
 	}
 }
+
+type countingCreds struct{ tokens int }
+
+func (c *countingCreds) Token(context.Context) (secret.Token, error) {
+	c.tokens++
+	return secret.NewToken("t", time.Time{}, "", "test"), nil
+}
+
+func (c *countingCreds) RefreshAfter(ctx context.Context, _ secret.Token) (secret.Token, error) {
+	return c.Token(ctx)
+}
+
+// A wss base URL, which the mint cannot post to, is refused before a sign-in is spent.
+func TestMintRefusesAWebSocketBaseURLBeforeSigningIn(t *testing.T) {
+	client, err := openaihttp.NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := &countingCreds{}
+	m := &realtime.Minter{Client: client, Creds: creds, Timeout: time.Second, Lifetime: time.Minute, BaseURL: "wss://api.openai.com"}
+	_, err = m.Secret(t.Context(), json.RawMessage(`{"model":"m"}`))
+	if openaihttp.Classify(err) != openaihttp.ClassInternal || creds.tokens != 0 {
+		t.Errorf("class %s after %d token calls, want internal after none", openaihttp.Classify(err), creds.tokens)
+	}
+}

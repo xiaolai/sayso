@@ -9,12 +9,27 @@ import (
 	"cmp"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"slices"
 	"syscall"
+	"unsafe"
 )
 
 // ErrUnsupported is returned where the process's memory cannot be read.
 var ErrUnsupported = errors.New("memscan: unsupported on this platform")
+
+// ErrIncomplete is returned, with the counts of what could be read, when part of the writable memory could not be
+// read: a copy there would be missed.
+var ErrIncomplete = errors.New("memscan: incomplete scan")
+
+func incomplete(missing uintptr) error {
+	if missing == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %d bytes of writable memory could not be read", ErrIncomplete, missing)
+}
+
+func addr(b []byte) uintptr { return uintptr(unsafe.Pointer(&b[0])) }
 
 const (
 	needleRoom = 1 << 12
@@ -35,7 +50,7 @@ type Scan struct {
 func New(room int) (*Scan, error) {
 	page := syscall.Getpagesize()
 	n := (needleRoom + room + page - 1) / page * page
-	b, err := syscall.Mmap(-1, 0, n+chunkSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	b, err := mapPages(n + chunkSize)
 	if err != nil {
 		return nil, err
 	}
@@ -45,11 +60,14 @@ func New(room int) (*Scan, error) {
 // Close wipes and unmaps the pages.
 func (s *Scan) Close() {
 	clear(s.pages)
-	_ = syscall.Munmap(s.pages)
+	unmapPages(s.pages)
 }
 
-// Needle makes n random lowercase letters, apart from any document, and returns their place.
+// Needle makes n random lowercase letters, apart from any document, and returns their place. n must be positive.
 func (s *Scan) Needle(n int) [2]int {
+	if n <= 0 {
+		panic("memscan: a needle must have at least one byte")
+	}
 	if s.nUsed+n > needleRoom {
 		panic("memscan: out of needle room")
 	}
@@ -68,8 +86,11 @@ func (s *Scan) Needle(n int) [2]int {
 
 // Prefix counts the first n bytes of the needle at r as a needle of their own, and returns their place: a copy cut
 // short, such as a buffer outgrown when it held only part of the needle, holds them without the whole needle. Every
-// copy of the whole needle holds them too.
+// copy of the whole needle holds them too. n must be at least 1 and at most the needle's length.
 func (s *Scan) Prefix(r [2]int, n int) [2]int {
+	if n <= 0 || n > r[1]-r[0] {
+		panic("memscan: a prefix must have at least one byte and no more than its needle")
+	}
 	p := [2]int{r[0], r[0] + n}
 	s.needles = append(s.needles, p)
 	return p
@@ -105,7 +126,8 @@ func (s *Scan) Reset(mark int) {
 	s.used = mark
 }
 
-// Occurrences counts each needle in writable memory outside the skipped pages.
+// Occurrences counts each needle in writable memory outside the skipped pages. Memory that could not be read is an
+// ErrIncomplete, returned with the counts of the rest.
 func (s *Scan) Occurrences() ([]int, error) {
 	counts := make([]int, len(s.needles))
 	s.hits = make([][]uintptr, len(s.needles))
@@ -114,39 +136,73 @@ func (s *Scan) Occurrences() ([]int, error) {
 		longest = max(longest, r[1]-r[0])
 	}
 	skip := [2]uintptr{addr(s.pages), addr(s.pages) + uintptr(len(s.pages))}
-	chunk := s.pages[s.room:]
+	var missing uintptr
 	err := regions(func(lo, hi uintptr) {
 		for _, part := range [][2]uintptr{{lo, min(hi, max(lo, skip[0]))}, {max(lo, min(hi, skip[1])), hi}} {
-			for at := part[0]; at < part[1]; {
-				n := min(uintptr(chunkSize), part[1]-at)
-				got := read(at, chunk[:n])
-				for k, r := range s.needles {
-					needle := s.pages[r[0]:r[1]]
-					for off := 0; off+len(needle) <= got; {
-						i := index(chunk[off:got], needle)
-						if i < 0 {
-							break
-						}
-						// A hit starting in the overlap is counted by the next chunk, which starts there.
-						if at+n >= part[1] || off+i < int(n)-(longest-1) {
-							counts[k]++
-							s.hits[k] = append(s.hits[k], at+uintptr(off+i))
-						}
-						off += i + 1
-					}
-				}
-				clear(chunk[:got])
-				if at+n >= part[1] {
-					break
-				}
-				at += n - uintptr(longest-1)
-			}
+			missing += s.scanSpan(part[0], part[1], longest, counts)
 		}
 	})
-	return counts, err
+	if err != nil {
+		return counts, err
+	}
+	return counts, incomplete(missing)
 }
 
-// union sorts spans and joins those that overlap, so no byte is scanned twice, and says whether any did.
+// scanSpan counts the needles in [lo, hi) a chunk at a time, each chunk starting longest-1 bytes before the last one
+// ended so a needle across their boundary is in one of them, and returns how many bytes could not be read.
+func (s *Scan) scanSpan(lo, hi uintptr, longest int, counts []int) uintptr {
+	chunk := s.pages[s.room:]
+	var missing uintptr
+	for at := lo; at < hi; {
+		n := min(uintptr(chunkSize), hi-at)
+		missing += readFully(at, chunk[:n])
+		last := at+n >= hi
+		s.match(chunk[:n], at, last, longest, counts)
+		clear(chunk[:n])
+		if last {
+			break
+		}
+		at += n - uintptr(longest-1)
+	}
+	return missing
+}
+
+// match records each needle in buf, the memory at at. A hit starting in the last longest-1 bytes of a chunk that is
+// not its span's last is left to the next chunk, which starts there.
+func (s *Scan) match(buf []byte, at uintptr, last bool, longest int, counts []int) {
+	for k, r := range s.needles {
+		needle := s.pages[r[0]:r[1]]
+		for off := 0; off+len(needle) <= len(buf); {
+			i := index(buf[off:], needle)
+			if i < 0 {
+				break
+			}
+			if last || off+i < len(buf)-(longest-1) {
+				counts[k]++
+				s.hits[k] = append(s.hits[k], at+uintptr(off+i))
+			}
+			off += i + 1
+		}
+	}
+}
+
+// readFully fills b with the memory at a and returns how many bytes it could not read. A read cut short is retried a
+// page at a time, so a page that cannot be read costs only itself; its bytes are zeroed, which no needle holds.
+func readFully(a uintptr, b []byte) uintptr {
+	page := uintptr(syscall.Getpagesize())
+	var missing uintptr
+	for off := uintptr(read(a, b)); off < uintptr(len(b)); {
+		end := min((a+off)/page*page+page-a, uintptr(len(b)))
+		got := uintptr(read(a+off, b[off:end]))
+		clear(b[off+got : end])
+		missing += end - off - got
+		off = end
+	}
+	return missing
+}
+
+// union sorts spans and joins those that overlap, so no byte is scanned twice, and says whether any did. Spans that
+// touch are joined too, without counting as an overlap, so a copy across their boundary is in one span.
 // /proc/self/maps is read a page at a time and is not a snapshot: a mapping that grows or merges with its neighbour
 // while it is read, as the Go heap's does, can be listed twice, as it was and as it became, and a copy inside both
 // would be counted twice. On amd64 CI it was: one copy at one address, counted twice.
@@ -156,9 +212,9 @@ func union(spans [][2]uintptr) ([][2]uintptr, bool) {
 	var out [][2]uintptr
 	overlapped := false
 	for _, s := range spans {
-		if n := len(out); n > 0 && s[0] < out[n-1][1] {
+		if n := len(out); n > 0 && s[0] <= out[n-1][1] {
+			overlapped = overlapped || s[0] < out[n-1][1]
 			out[n-1][1] = max(out[n-1][1], s[1])
-			overlapped = true
 			continue
 		}
 		out = append(out, s)

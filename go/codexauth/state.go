@@ -86,7 +86,7 @@ func (e Error) Format(f fmt.State, verb rune) {
 func (e Error) MarshalJSON() ([]byte, error) {
 	m := map[string]string{"state": string(e.State), "mode": secret.Scrub(e.Mode), "codexVersion": secret.Scrub(e.CodexVersion)}
 	if !e.RetryAt.IsZero() {
-		m["retryAt"] = e.RetryAt.UTC().Format(time.RFC3339)
+		m["retryAt"] = e.RetryAt.UTC().Format(time.RFC3339Nano)
 	}
 	if e.Err != nil {
 		m["error"] = secret.Scrub(e.Err.Error())

@@ -79,7 +79,7 @@ func finiteAsFloat64(n []byte) bool {
 			return true
 		}
 	}
-	exponent := 0
+	var exponent int64 // 64-bit on every platform: a 32-bit int would wrap before the saturation below
 	if i < len(n) && (n[i] == 'e' || n[i] == 'E') {
 		i++
 		neg := false
@@ -92,7 +92,7 @@ func finiteAsFloat64(n []byte) bool {
 			return true
 		}
 		for _, c := range n[es:ee] {
-			exponent = min(exponent*10+int(c-'0'), 1_000_000_000) // saturated
+			exponent = min(exponent*10+int64(c-'0'), 1_000_000_000) // saturated
 		}
 		if neg {
 			exponent = -exponent
@@ -116,8 +116,8 @@ func finiteAsFloat64(n []byte) bool {
 	if first == all {
 		return true // zero
 	}
-	if point := whole - first + exponent; point != len(overflowDigits) {
-		return point < len(overflowDigits)
+	if point := int64(whole-first) + exponent; point != int64(len(overflowDigits)) {
+		return point < int64(len(overflowDigits))
 	}
 	for k := 0; k < len(overflowDigits); k++ {
 		d := byte('0')

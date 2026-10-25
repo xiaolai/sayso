@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/xiaolai/sayso/go/failure"
 	"github.com/xiaolai/sayso/go/secret"
 )
 
@@ -131,8 +132,7 @@ func writeNew(dir int, data []byte) *Error {
 	}
 	created := func(e *Error) *Error {
 		_ = unix.Close(fd)
-		_ = unix.Unlinkat(dir, authFileName, 0)
-		return e
+		return removeCreated(dir, e)
 	}
 	if err := unix.Fchmod(fd, 0o600); err != nil {
 		return created(fail(StateCodexError, "auth.json cannot be made private", err))
@@ -151,8 +151,23 @@ func writeNew(dir int, data []byte) *Error {
 		written += k
 	}
 	if err := unix.Close(fd); err != nil {
-		_ = unix.Unlinkat(dir, authFileName, 0)
-		return fail(StateCodexError, "auth.json cannot be written", err)
+		return removeCreated(dir, fail(StateCodexError, "auth.json cannot be written", err))
 	}
 	return nil
+}
+
+// removeCreated removes the auth.json writeNew created and returns e, the failure that made it do so. A removal that
+// fails is joined to e's cause, since the file left behind holds the token and blocks the next write; a file already
+// gone leaves nothing behind.
+func removeCreated(dir int, e *Error) *Error {
+	err := unix.Unlinkat(dir, authFileName, 0)
+	for err == unix.EINTR {
+		err = unix.Unlinkat(dir, authFileName, 0)
+	}
+	if err != nil && err != unix.ENOENT {
+		f := e.Err.(*failure.Error)
+		f.Message += ", and the auth.json it created cannot be removed"
+		f.Err = errors.Join(f.Err, err)
+	}
+	return e
 }

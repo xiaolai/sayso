@@ -2,6 +2,8 @@ package codexapp
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 	"weak"
 
+	"github.com/xiaolai/sayso/go/internal/prereq"
 	"github.com/xiaolai/sayso/go/internal/wire"
 	"go.uber.org/goleak"
 )
@@ -414,5 +417,68 @@ func TestCloseDuringAStuckAnswerReportsTheClose(t *testing.T) {
 	_ = c.Close()
 	if err := recv(t, "the call", done); err == nil || !strings.Contains(err.Error(), "was closed") {
 		t.Errorf("the queued call failed with %v, want the close", err)
+	}
+}
+
+// A handler may read UserAgent while Start is still completing the handshake: an event the child writes before its
+// initialize reply is delivered then. Run under -race, an unguarded read is reported: the handler, taken from the
+// queue before the reply, reads after Start has stored the agent with nothing ordering the two.
+func TestHandlerMayReadUserAgentDuringStart(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	script := filepath.Join(t.TempDir(), "codex")
+	src := "#!" + prereq.Python(t) + "\nimport sys, json, time\n" +
+		"m = json.loads(sys.stdin.readline())\n" +
+		"print(json.dumps({'method': 'early'}), flush=True)\n" +
+		"print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n" +
+		"sys.stdin.readline()\ntime.sleep(30)\n"
+	if err := os.WriteFile(script, []byte(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan string, 1)
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second,
+		OnEvent: func(c *Client, _ Event) { time.Sleep(200 * time.Millisecond); read <- c.UserAgent() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if got := recv(t, "the early event", read); got != "" && got != "codex_cli_rs/0.162.1" {
+		t.Errorf("UserAgent during Start = %q", got)
+	}
+}
+
+// The client stays alive while its handler runs, even a handler that never touches the client it is given: a
+// dropped client is not collected, and its child not ended, under a handler still running.
+func TestRunningHandlerKeepsItsClientAlive(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	script := fakeCodex(t, "print(json.dumps({'method': 'hello'}), flush=True)\ntime.sleep(30)\n")
+	entered, release := make(chan struct{}), make(chan struct{})
+	c, err := Start(t.Context(), Config{Bin: script, Env: EnvOf([]string{"PATH=/usr/bin:/bin"}), Timeout: 5 * time.Second,
+		OnEvent: func(*Client, Event) { close(entered); <-release }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exited := c.k.exited
+	recv(t, "the handler", entered)
+	c = nil
+	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {
+		runtime.GC()
+		select {
+		case <-exited:
+			close(release)
+			t.Fatal("the client was collected, and its child ended, while its handler ran")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	close(release)
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		runtime.GC()
+		select {
+		case <-exited:
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the dropped client was not collected once its handler returned")
+		}
 	}
 }

@@ -140,12 +140,45 @@ func providerError(body []byte) (message, typ, code, param string) {
 // secret it removes leaves no copy behind.
 func scrubbedText(doc []byte, v wire.Span) string {
 	text := doc[v.Start:v.End]
-	if wire.KindOf(doc, v) == '"' {
+	switch wire.KindOf(doc, v) {
+	case '"':
 		buf := make([]byte, 0, len(text))
 		defer clear(buf[:cap(buf)])
 		text, _ = wire.AppendString(buf, doc, v)
+	case '{', '[':
+		return compositeText(doc, v)
 	}
 	return strings.Clone(secret.Scrub(unsafe.String(unsafe.SliceData(text), len(text)))) // never the view itself
+}
+
+// compositeText is an object's or array's exact JSON text, scrubbed, with each string in it, a name included, that
+// holds a secret once decoded replaced by "<redacted>": an escape would hide the secret from the scrubber. The text is
+// built in one buffer, cleared once scrubbed: a string holding a secret is at least 3 bytes and its replacement 12, so
+// four times the length never grows.
+func compositeText(doc []byte, v wire.Span) string {
+	b := make([]byte, 0, 4*(v.End-v.Start))
+	defer clear(b[:cap(b)])
+	at := v.Start
+	for i := v.Start; i < v.End; i++ {
+		if doc[i] != '"' {
+			continue
+		}
+		end := i + 1
+		for ; doc[end] != '"'; end++ {
+			if doc[end] == '\\' {
+				end++
+			}
+		}
+		end++
+		if s := scrubbedText(doc, wire.Span{Start: i, End: end}); strings.Contains(s, secret.Redacted) {
+			b = append(b, doc[at:i]...)
+			b = append(b, `"`+secret.Redacted+`"`...)
+			at = end
+		}
+		i = end - 1
+	}
+	b = append(b, doc[at:v.End]...)
+	return strings.Clone(secret.Scrub(unsafe.String(unsafe.SliceData(b), len(b))))
 }
 
 // CheckResponse returns nil for a 2xx response and a classified *Error otherwise, reading at most 64 KiB of the body
@@ -155,13 +188,14 @@ func CheckResponse(resp *http.Response, route string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	body, _ := bounded.Read(resp.Body, resp.ContentLength, maxErrorBody)
+	body, err := bounded.Read(resp.Body, resp.ContentLength, maxErrorBody)
 	defer clear(body)
 	_ = resp.Body.Close()
 	e := &Error{
 		Status:    resp.StatusCode,
 		RequestID: secret.Scrub(resp.Header.Get("x-request-id")),
 		Route:     route,
+		Err:       err, // a body cut off: the class is still the status's
 	}
 	e.Message, e.Type, e.Code, e.Param = providerError(body)
 	e.Class = classifyStatus(resp.StatusCode, e.Code)

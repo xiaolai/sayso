@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -102,8 +103,13 @@ func (m *Minter) Secret(ctx context.Context, session any) (secret.ClientSecret, 
 		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: err.Error()}
 	}
 	// The destination first, as Open checks it: a wrong BaseURL is a programming error, which must not cost a
-	// sign-in (a Codex start, perhaps a refresh) before the request is refused.
-	if err := openaihttp.CheckOrigin(m.Client, strings.TrimRight(m.BaseURL, "/")+mintPath); err != nil {
+	// sign-in (a Codex start, perhaps a refresh) before the request is refused. CheckOrigin takes a ws or wss URL as
+	// the https request that opens it, but the mint posts to the URL itself, so only https is let through.
+	target := strings.TrimRight(m.BaseURL, "/") + mintPath
+	if u, err := url.Parse(target); err == nil && u.Scheme != "https" {
+		return secret.ClientSecret{}, &openaihttp.Error{Class: openaihttp.ClassInternal, Message: "realtime: mint: the base URL is not https"}
+	}
+	if err := openaihttp.CheckOrigin(m.Client, target); err != nil {
 		var e *openaihttp.Error
 		if errors.As(err, &e) {
 			refused := *e

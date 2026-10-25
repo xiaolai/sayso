@@ -140,3 +140,14 @@ func TestTheLineReaderLeavesNothing(t *testing.T) {
 		w.check(t)
 	})
 }
+
+// Draining gives up on a reader that keeps returning nothing, as next does, rather than spin on it.
+func TestDrainGivesUpOnAReaderThatReturnsNothing(t *testing.T) {
+	l := newLineReader(&pieces{data: []byte("x"), sizes: []int{0}})
+	done := make(chan struct{})
+	go func() { l.drain(); close(done) }()
+	recv(t, "the drain", done)
+	if !errors.Is(l.err, io.ErrNoProgress) {
+		t.Errorf("drain ended with %v, want io.ErrNoProgress", l.err)
+	}
+}

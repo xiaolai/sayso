@@ -2,7 +2,9 @@ package realtime_test
 
 import (
 	"context"
+	"log/slog"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,5 +48,56 @@ func TestDroppedSessionIsClosedWhenCollected(t *testing.T) {
 			t.Fatal("a dropped session was never closed")
 		case <-time.After(20 * time.Millisecond):
 		}
+	}
+}
+
+// countHandler counts the records logged with message msg.
+type countHandler struct {
+	msg string
+	n   *atomic.Int32
+}
+
+func (h countHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h countHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		h.n.Add(1)
+	}
+	return nil
+}
+func (h countHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h countHandler) WithGroup(string) slog.Handler      { return h }
+
+// A session closed before it is dropped is not closed again when collected: only the one dropped open is.
+func TestClosedSessionIsNotClosedAgainWhenCollected(t *testing.T) {
+	hs := fakeopenai.WebSocket(t, func(c *websocket.Conn) { _, _, _ = c.Read(context.Background()) }, nil)
+	c, base := fakeopenai.Client(t, hs.URL)
+	const msg = "realtime: a session was dropped without Close; closing it"
+	var closedLogs, openLogs atomic.Int32
+	dial := func(n *atomic.Int32) *realtime.Session {
+		cfg := config(c, base)
+		cfg.Logger = slog.New(countHandler{msg, n})
+		s, err := realtime.Dial(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	func() {
+		_ = dial(&closedLogs).Close()
+		_ = dial(&openLogs).Unknown() // the control: dropped open
+	}()
+	deadline := time.After(10 * time.Second)
+	for openLogs.Load() == 0 {
+		runtime.GC()
+		select {
+		case <-deadline:
+			t.Fatal("the session dropped open was never closed")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+	if n := closedLogs.Load(); n != 0 {
+		t.Errorf("a closed session was closed again when collected (%d logs)", n)
 	}
 }

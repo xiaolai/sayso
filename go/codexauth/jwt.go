@@ -91,9 +91,12 @@ func readJWTPayload(tok string, read func(payload []byte)) bool {
 const maxAccountID = 256
 
 // accountClaim is the ChatGPT account tok names: chatgpt_account_id in its "https://api.openai.com/auth" claim
-// (spec/credentials.md, AUTH-08). False when tok is not a JWT, or the claim is absent or not a string of 1 to 256
+// (spec/credentials.md, AUTH-08). False when tok is not a JWT (jwtShaped), or the claim is absent or not a string of 1 to 256
 // ASCII letters, digits, '-', '_' and '.'. Names are exact, as for exp.
 func accountClaim(tok string) (string, bool) {
+	if !jwtShaped(tok) {
+		return "", false
+	}
 	var id string
 	readJWTPayload(tok, func(payload []byte) {
 		auth, ok := wire.Member(payload, wire.Root(payload), "https://api.openai.com/auth")
@@ -106,6 +109,7 @@ func accountClaim(tok string) (string, bool) {
 		}
 		// A decoded string is never longer than its JSON text, so the buffer never grows.
 		buf := make([]byte, 0, v.End-v.Start)
+		defer clear(buf[:cap(buf)])
 		buf, _ = wire.AppendString(buf, payload, v)
 		if len(buf) == 0 || len(buf) > maxAccountID {
 			return

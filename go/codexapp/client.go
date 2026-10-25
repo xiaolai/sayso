@@ -107,7 +107,12 @@ func (e *RPCError) Error() string { return fmt.Sprintf("JSON-RPC error %d", e.Co
 type Client struct{ k *core }
 
 // UserAgent returns the userAgent of the initialize result, "" when absent.
-func (c *Client) UserAgent() string { defer runtime.KeepAlive(c); return c.k.agent }
+func (c *Client) UserAgent() string {
+	defer runtime.KeepAlive(c)
+	c.k.mu.Lock()
+	defer c.k.mu.Unlock()
+	return c.k.agent
+}
 
 // PID returns the child's process ID.
 func (c *Client) PID() int { defer runtime.KeepAlive(c); return c.k.cmd.Process.Pid }
@@ -140,7 +145,7 @@ type core struct {
 	timeout time.Duration
 	logger  *slog.Logger
 	stderr  boundedBuffer
-	agent   string // initialize userAgent, scrubbed
+	agent   string // initialize userAgent, scrubbed; guarded by mu, since a handler may read it during Start
 
 	// out is every message waiting to be written, requests and answers to server requests alike, in the order they
 	// were queued; writeLoop alone writes, so the reader never waits on the child's input and a request is written
@@ -207,14 +212,11 @@ func checkDir(dir string) error {
 	return nil
 }
 
-// Start spawns the child in its own process group and completes the initialize handshake. A failure once the child
-// is running is a *StartError, which carries the child's stderr and, when it exited by itself, its exit status.
-func Start(ctx context.Context, cfg Config) (*Client, error) {
+// prepare applies the checks Start and Login share, the Guard last, and returns the environment the child inherits
+// before ChildEnv.
+func prepare(cfg Config) ([]string, error) {
 	if !filepath.IsAbs(cfg.Bin) {
 		return nil, fmt.Errorf("codexapp: executable path %q is not absolute", cfg.Bin)
-	}
-	if cfg.Timeout <= 0 {
-		return nil, errors.New("codexapp: a per-call Timeout is required")
 	}
 	if err := checkDir(cfg.Dir); err != nil {
 		return nil, err
@@ -224,9 +226,21 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 			return nil, fmt.Errorf("codexapp: start refused: %w", err)
 		}
 	}
-	env := cfg.Env.List()
 	if cfg.Env.IsZero() {
-		env = os.Environ()
+		return os.Environ(), nil
+	}
+	return cfg.Env.List(), nil
+}
+
+// Start spawns the child in its own process group and completes the initialize handshake. A failure once the child
+// is running is a *StartError, which carries the child's stderr and, when it exited by itself, its exit status.
+func Start(ctx context.Context, cfg Config) (*Client, error) {
+	if cfg.Timeout <= 0 {
+		return nil, errors.New("codexapp: a per-call Timeout is required")
+	}
+	env, err := prepare(cfg)
+	if err != nil {
+		return nil, err
 	}
 	k := &core{
 		timeout:    cfg.Timeout,
@@ -271,6 +285,13 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, codexError("Codex app-server could not be started", err)
 	}
 	closeAll(inR, outW, errW) // the child holds its copies
+	if err := watchable(cmd.Process.Pid); err != nil {
+		// Close could neither tell the child's exit nor keep its group ID ours: the child is ended at once instead.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		closeAll(inW, outR, errR)
+		return nil, codexError("Codex app-server cannot be watched on this system", err)
+	}
 	k.cmd, k.stdin, k.stdout, k.stderrR = cmd, inW, outR, errR
 
 	// The goroutines hold the core only, so an unclosed Client can be collected, and its cleanup ends the child.
@@ -311,7 +332,10 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, k.startFailed(c, codexError("Codex app-server sent an unexpected initialize result", nil))
 	}
-	k.agent = secret.Scrub(agent)
+	agent = secret.Scrub(agent)
+	k.mu.Lock()
+	k.agent = agent
+	k.mu.Unlock()
 	if err := k.send(ctx, map[string]any{"method": "initialized"}, time.Now().Add(k.timeout)); err != nil {
 		return nil, k.startFailed(c, err)
 	}
@@ -690,7 +714,9 @@ func (k *core) send(ctx context.Context, v any, deadline time.Time) error {
 	k.mu.Lock()
 	queued := o.state == outQueued
 	if queued {
-		o.state = outAbandoned
+		// Released now, not when writeLoop reaches it: a write blocked ahead of it would otherwise hold it.
+		clear(o.b)
+		o.state, o.b, o.ctx = outAbandoned, nil, nil
 	}
 	failure := k.failure
 	k.mu.Unlock()
@@ -872,8 +898,8 @@ func (k *core) close() error {
 		k.fail(codexError("Codex app-server was closed", nil))
 		_ = k.stdin.Close()
 		pid := k.cmd.Process.Pid
-		// Once the child has exited and its group is empty nothing is signalled. The child is not reaped until the end
-		// of Close, so its group ID cannot name another group meanwhile.
+		// Once the child has exited and its group is empty no SIGTERM is sent and no grace waited. The child is not
+		// reaped until the end of Close, so its group ID cannot name another group meanwhile.
 		if !k.gone(pid) {
 			k.signalGroup(pid, syscall.SIGTERM)
 		}
@@ -884,6 +910,10 @@ func (k *core) close() error {
 			case <-time.After(reapGrace):
 				k.logger.Debug("codex app-server was not reaped within the grace; abandoning it", "pid", pid)
 			}
+		} else {
+			// The probe found the group empty, but a member may have forked and exited between its steps, leaving one
+			// it never saw. The exited child is still unreaped, so the group is still ours to end before it is reaped.
+			k.signalGroup(pid, syscall.SIGKILL)
 		}
 		// The last stderr bytes the child wrote are kept, unless a descendant still holds the pipe.
 		select {

@@ -7,7 +7,9 @@ package codexapp
 // risk signalling a stranger's processes, the package does not build: the undefined name below is the error.
 var _ = codexappBuildsOnMacOSAndLinuxOnly
 
-// Declared so the name above is the only error a build here reports.
+// Declared so a build here reports no missing helper; other errors, such as client.go's Setpgid and syscall.Kill on
+// Windows, may still come with the one above.
 func waitExit(any) bool   { return false }
+func watchable(int) error { return nil }
 func held(int) bool       { return false }
 func groupAlive(int) bool { return true }

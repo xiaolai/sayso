@@ -85,12 +85,22 @@ func (l *lineReader) wipe() {
 }
 
 // drain reads the rest of the stream into the buffer, which the caller has wiped, clearing each read, so a child
-// that keeps writing does not block on a full pipe; it returns when the stream ends.
+// that keeps writing does not block on a full pipe; it returns when the stream ends, or, as next does, after 100
+// reads in a row that return nothing.
 func (l *lineReader) drain() {
-	for l.err == nil {
+	for empty := 0; l.err == nil; {
 		n, err := l.r.Read(l.buf)
 		clear(l.buf[:n])
 		l.err = err
+		switch {
+		case err != nil:
+		case n > 0:
+			empty = 0
+		default:
+			if empty++; empty > 100 {
+				l.err = io.ErrNoProgress
+			}
+		}
 	}
 }
 
