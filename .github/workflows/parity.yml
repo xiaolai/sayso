@@ -40,10 +40,12 @@ jobs:
         run: |
           test -f results/results-go-macos-15/results-go.json
           test -f results/results-go-ubuntu-latest/results-go.json
-          test -f results/results-swift/results-swift.json
+          test -f results/results-swift-macos-15/results-swift.json
+          test -f results/results-swift-macos-26/results-swift.json
       - run: >-
           python3 -I tools/parity.py results/results-go-macos-15/results-go.json
-          results/results-go-ubuntu-latest/results-go.json results/results-swift/results-swift.json
+          results/results-go-ubuntu-latest/results-go.json results/results-swift-macos-15/results-swift.json
+          results/results-swift-macos-26/results-swift.json
   differential:
     # Both implementations on the same generated inputs (tools/differential.py). It builds both oracles itself and
     # reads no other job's results. A fixed seed plus the run number tries new cases on every run; the printed seed

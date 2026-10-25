@@ -4,7 +4,13 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: macos-15
+    # Two SDKs: macos-15's Xcode 16 has no FoundationModels and none of the macOS 26 declarations, so it builds the
+    # fallbacks; macos-26's Xcode 26 builds the code behind them. A local Xcode is newer than both.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -26,6 +32,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: results-swift
+          name: results-swift-${{ matrix.os }}
           path: ${{ runner.temp }}/results-swift.json
           if-no-files-found: error
