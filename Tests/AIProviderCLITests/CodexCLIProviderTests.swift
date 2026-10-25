@@ -143,6 +143,37 @@ struct CodexCLIProviderTests {
         #expect(login.environment["CODEX_HOME"] == stub.directory.appending(path: "codex-home").path)
     }
 
+    /// **The app's home exists before anything reads it** (2026-10-25): on a fresh install `codexHome` does not exist
+    /// yet, and a probe against a home that is not there used to fail as `.codexError` — the generic
+    /// `.framework("codex")`, never the real state a reader could act on. `check` and `login` must create it first.
+    @Test func theAppsHomeExistsBeforeTheProbeReadsIt() async throws {
+        let (stub, url) = try Self.stub()
+        let codexHome = stub.directory.appending(path: "codex-home")
+        let existedAtProbe = Locked(false)
+        let configuration = CodexCLIProvider.Configuration(
+            executable: url, codexHome: codexHome, workingDirectory: stub.directory.appending(path: "work"))
+        let provider = CodexCLIProvider(configuration: configuration) { _ in
+            existedAtProbe.withLock { $0 = FileManager.default.fileExists(atPath: codexHome.path) }
+            return CodexCLIProvider.Probe(state: .ready, bin: url.path, version: "0.163.0")
+        }
+        _ = try await provider.check()
+        #expect(existedAtProbe.withLock { $0 }, "check's probe ran before the app's home was created")
+    }
+
+    @Test func theAppsHomeExistsBeforeLoginProbesIt() async throws {
+        let (stub, url) = try Self.stub()
+        let codexHome = stub.directory.appending(path: "codex-home")
+        let existedAtProbe = Locked(false)
+        let configuration = CodexCLIProvider.Configuration(
+            executable: url, codexHome: codexHome, workingDirectory: stub.directory.appending(path: "work"))
+        let provider = CodexCLIProvider(configuration: configuration) { _ in
+            existedAtProbe.withLock { $0 = FileManager.default.fileExists(atPath: codexHome.path) }
+            return CodexCLIProvider.Probe(state: .ready, bin: url.path, version: "0.163.0")
+        }
+        _ = try await provider.login()
+        #expect(existedAtProbe.withLock { $0 }, "login's probe ran before the app's home was created")
+    }
+
     @Test func aSecretInStderrNeverEntersADescription() async throws {
         let (stub, url) = try Self.stub()
         try stub.write("stderr", "sk-SECRET-XYZ\n")

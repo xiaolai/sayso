@@ -135,10 +135,12 @@ public struct CodexCLIProvider: AIProvider {
     /// **The documented login, in the app's own home**: `codex login`, its output (the URL and code, on either stream)
     /// passed to `onLine` as it arrives, and returned whole. This library writes no credential file and reads none.
     public func login(onLine: @escaping @Sendable (String) -> Void = { _ in }) async throws(AIProviderError) -> String {
+        guard !Task.isCancelled else { throw .cancelled }
+        // **The app's home exists before anything reads it**: `codex login` writes its sign-in there.
+        try CLIProviderSupport.prepare([configuration.codexHome, configuration.workingDirectory])
         let found = await probe(true)
         guard !Task.isCancelled else { throw .cancelled }
         let executable = try Self.resolve(configuration, found)
-        try CLIProviderSupport.prepare([configuration.codexHome, configuration.workingDirectory])
         let environment = Self.environment(configuration, executable: executable)
         let run: CLIProcess.Run
         do {
@@ -157,16 +159,21 @@ public struct CodexCLIProvider: AIProvider {
 
     // MARK: - Preparation
 
-    /// **The one readiness path**, for both `check` and `answer`: the sign-in state, the version floor, the resolution
-    /// and the app's own folders. `fresh` decides whether the status comes from a client built now or the long-lived
-    /// one; every other step is the same, so the two questions cannot drift apart.
+    /// **The one readiness path**, for both `check` and `answer`: the app's own folders, the sign-in state, the
+    /// version floor and the resolution. `fresh` decides whether the status comes from a client built now or the
+    /// long-lived one; every other step is the same, so the two questions cannot drift apart.
+    ///
+    /// **The folders exist before the probe reads them** (2026-10-25): on a fresh install, `codexHome` does not
+    /// exist yet, and a probe against a home that is not there fails as `.codexError` — the generic
+    /// `.framework("codex")`, never the real `.notSignedIn` a reader can act on.
     private func ready(fresh: Bool) async throws(AIProviderError) -> (URL, Probe) {
+        guard !Task.isCancelled else { throw .cancelled }
+        try CLIProviderSupport.prepare([configuration.codexHome, configuration.workingDirectory])
         let found = await probe(fresh)
         guard !Task.isCancelled else { throw .cancelled }
         if let error = Self.mapped(found.state) { throw error }
         guard CLIVersion.atLeast(found.version, Self.minimumVersion) else { throw .versionTooOld }
         let executable = try Self.resolve(configuration, found)
-        try CLIProviderSupport.prepare([configuration.codexHome, configuration.workingDirectory])
         return (executable, found)
     }
 
