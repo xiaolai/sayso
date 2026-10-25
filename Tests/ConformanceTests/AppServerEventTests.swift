@@ -39,5 +39,22 @@ final class AppServerEventTests: XCTestCase {
             AppServerEvent(method: "a\nb\u{1B}\"\\", params: Data(), isServerRequest: false).description,
             #"AppServerEvent{notification "a\nb\x1b\"\\", 0 bytes}"#)
     }
+
+    /// The auth method is the child's too, and is escaped the same way, as Go's %q writes it.
+    func testAuthMethodIsEscaped() {
+        for m in ["a\nlevel=ERROR msg=forged", "a\u{1B}[31mred", "a\u{202E}b"] {
+            let st = AuthStatus(method: m, requiresOpenAIAuth: true, token: "")
+            var dumped = ""
+            dump(st, to: &dumped)
+            for s in [st.description, st.debugDescription] + dumped.split(separator: "\n").map(String.init) {
+                let bad = s.unicodeScalars.contains {
+                    [.control, .format, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory)
+                }
+                XCTAssertFalse(bad, "\(m.debugDescription) formats as \(s.debugDescription)")
+            }
+        }
+        XCTAssertEqual(
+            AuthStatus(method: "a\nb", requiresOpenAIAuth: true, token: "").description, #"AuthStatus{method: "a\nb"}"#)
+    }
 }
 #endif

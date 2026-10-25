@@ -184,6 +184,31 @@ final class PrivateSignInTests: XCTestCase {
         XCTAssertNotEqual(lstat(home + "/auth.json", &st), 0, "a partial auth.json was left behind")
     }
 
+    /// A sign-in time RFC 3339 cannot write (a year past 9999, or no number at all) is refused before any file is
+    /// made, rather than written as a five-digit year or trapping. The token has no expiry, so the time reaches the
+    /// stamp.
+    func testASignInTimeBeyondRFC3339IsRefused() throws {
+        // {"https://api.openai.com/auth":{"chatgpt_account_id":"acct-1"}}
+        let token = Token(
+            bearer: "eyJhbGciOiJub25lIn0."
+                + "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xIn19.c2ln",
+            expires: nil)
+        for seconds in [253_402_300_800.0, -62_167_219_201.0, .nan, .infinity] {
+            let home = try privateHome()
+            XCTAssertThrowsError(
+                try writePrivateSignIn(token, codexHome: home, now: Date(timeIntervalSince1970: seconds)), "\(seconds)"
+            ) { XCTAssertEqual(($0 as? CodexAuthError)?.state, .codexError) }
+            var st = stat()
+            XCTAssertNotEqual(lstat(home + "/auth.json", &st), 0, "\(seconds)")
+        }
+        let home = try privateHome()
+        try writePrivateSignIn(token, codexHome: home, now: Date(timeIntervalSince1970: 253_402_300_799))
+        guard case .success(let written) = PrivateSignInCase.regularContent(home + "/auth.json") else {
+            return XCTFail("no auth.json")
+        }
+        XCTAssertTrue(written.contains(#""last_refresh":"9999-12-31T23:59:59Z""#))
+    }
+
     func testAPrivateHomePathHoldingANULIsRefused() throws {
         let home = try privateHome()
         XCTAssertThrowsError(try writePrivateSignIn(Self.token, codexHome: home + "\u{0}/x", now: Self.now)) {

@@ -25,16 +25,29 @@ public let minimumCodexVersion = "0.161.0"
 /// Codex and file failures, and auth-mode for the sign-in states. Every string is scrubbed; `message` and `cause`
 /// are diagnostics, never for display.
 public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomStringConvertible, CustomReflectable {
-    // Read-only outside the package, and sanitised on every assignment inside it, so a field read or `dump(e)` never
-    // shows what the initialiser would have removed.
+    // Read-only outside the package, sanitised on every assignment inside it and scrubbed again on every read, so a
+    // field read or `dump(e)` never shows what the initialiser would have removed, nor a secret registered since.
     public internal(set) var state: CodexAuthState
     /// The reported sign-in mode (api-key, unsupported-auth), scrubbed and bounded; "" otherwise.
-    public internal(set) var mode: String { didSet { mode = cleanMode(mode) } }
+    public internal(set) var mode: String {
+        get { Secret.scrub(storedMode) }
+        set { storedMode = cleanMode(newValue) }
+    }
     /// "" when unknown.
-    public internal(set) var codexVersion: String { didSet { codexVersion = Secret.scrub(codexVersion) } }
+    public internal(set) var codexVersion: String {
+        get { Secret.scrub(storedCodexVersion) }
+        set { storedCodexVersion = Secret.scrub(newValue) }
+    }
     public internal(set) var errorClass: ErrorClass
-    public internal(set) var message: String { didSet { message = Secret.scrub(message) } }
-    public internal(set) var cause: String { didSet { cause = Secret.scrub(cause) } }
+    public internal(set) var message: String {
+        get { Secret.scrub(storedMessage) }
+        set { storedMessage = Secret.scrub(newValue) }
+    }
+    public internal(set) var cause: String {
+        get { Secret.scrub(storedCause) }
+        set { storedCause = Secret.scrub(newValue) }
+    }
+    private var storedMode, storedCodexVersion, storedMessage, storedCause: String
     /// For a refresh that failed or a call the backoff refused, when the next refresh may run; nil otherwise. The
     /// refusal's `cause` is the failure that started the wait.
     public internal(set) var retryAt: Date?
@@ -49,15 +62,15 @@ public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomString
         cause: String = ""
     ) {
         self.state = state
-        self.mode = cleanMode(mode)  // printable, scrubbed and bounded, whoever builds the error
-        self.codexVersion = Secret.scrub(codexVersion)
+        storedMode = cleanMode(mode)  // printable, scrubbed and bounded, whoever builds the error
+        storedCodexVersion = Secret.scrub(codexVersion)
         switch state {
         case .expired: errorClass = .authExpired
         case .codexError, .noCodex, .codexTooOld, .appServerAuthUnavailable: errorClass = .codexError
         default: errorClass = .authMode
         }
-        self.message = Secret.scrub(message)
-        self.cause = Secret.scrub(cause)
+        storedMessage = Secret.scrub(message)
+        storedCause = Secret.scrub(cause)
     }
 
     /// Scrubbed whole when formatted, so a field set after construction, and a secret registered since, are removed
@@ -76,9 +89,8 @@ public struct CodexAuthError: ClassifiedError, Sendable, Equatable, CustomString
         Mirror(
             self,
             children: [
-                "state": state, "mode": Secret.scrub(mode), "codexVersion": Secret.scrub(codexVersion),
-                "errorClass": errorClass, "message": Secret.scrub(message), "cause": Secret.scrub(cause),
-                "retryAt": retryAt as Any,
+                "state": state, "mode": mode, "codexVersion": codexVersion, "errorClass": errorClass,
+                "message": message, "cause": cause, "retryAt": retryAt as Any,
             ], displayStyle: .struct)
     }
 
@@ -130,12 +142,13 @@ func classifyMode(_ mode: String?) -> CodexAuthError? {
     }
 }
 
-/// A reported mode made safe to print: printable (Go's unicode.IsPrint), scrubbed, at most 64 characters. Filtering
-/// comes first: removing a character could join the pieces of a secret ("e\u{0}k_…") into one the scrubber
+/// A reported mode made safe to print: printable (Go's unicode.IsPrint), scrubbed, at most 64 characters. It is
+/// scrubbed before filtering, so a registered secret holding a character the filter removes is still found, and
+/// again after: removing a character could join the pieces of a secret ("e\u{0}k_…") into one the scrubber
 /// recognises.
 func cleanMode(_ m: String) -> String {
     var printable = String.UnicodeScalarView()
-    for s in m.unicodeScalars where isPrintable(s) { printable.append(s) }
+    for s in Secret.scrub(m).unicodeScalars where isPrintable(s) { printable.append(s) }
     return String(String(Secret.scrub(String(printable)).unicodeScalars.prefix(maxModeLength)))
 }
 

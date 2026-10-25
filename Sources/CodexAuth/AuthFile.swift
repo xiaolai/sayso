@@ -247,17 +247,23 @@ enum AuthFile {
 /// checking the signature, and the account the token names (``accountClaim(_:)``). A token that is not a JWT, or has no
 /// `exp` that is a signed 64-bit integer, has unknown expiry.
 func makeToken(_ bearer: String, source: String) -> Token {
-    Token(bearer: bearer, expires: jwtExpiry(bearer), source: source, accountID: accountClaim(bearer))
+    let claims = jwtClaims(bearer)
+    return Token(bearer: bearer, expires: claims.expires, source: source, accountID: claims.account)
+}
+
+/// ``jwtExpiry(_:)`` and ``accountClaim(_:)`` read from one decoding of the payload.
+func jwtClaims(_ token: String) -> (expires: Date?, account: String?) {
+    withJWTPayload(token) { doc in (expiryClaim(doc), accountClaim(doc)) } ?? (nil, nil)
 }
 
 /// The `exp` claim, read in place from the payload decoded into a buffer wiped before it is freed: the token is
 /// kept, but no other copy of what it holds is.
-func jwtExpiry(_ token: String) -> Date? {
-    withJWTPayload(token) { doc in
-        // A signed 64-bit integer exactly, as Go decodes it: not a fraction, an exponent or a wrapped value.
-        guard let exp = doc.member(doc.root, "exp"), let v = doc.int64(exp) else { return nil }
-        return Date(timeIntervalSince1970: TimeInterval(v))
-    }
+func jwtExpiry(_ token: String) -> Date? { withJWTPayload(token, expiryClaim) }
+
+private func expiryClaim(_ doc: WireJSON.Borrowed) -> Date? {
+    // A signed 64-bit integer exactly, as Go decodes it: not a fraction, an exponent or a wrapped value.
+    guard let exp = doc.member(doc.root, "exp"), let v = doc.int64(exp) else { return nil }
+    return Date(timeIntervalSince1970: TimeInterval(v))
 }
 
 /// The longest account ID a private sign-in names.
@@ -266,15 +272,15 @@ let maxAccountID = 256
 /// The ChatGPT account `token` names: `chatgpt_account_id` in its `https://api.openai.com/auth` claim
 /// (spec/credentials.md, AUTH-08). nil when `token` is not a JWT, or the claim is absent or not a string of 1 to 256
 /// ASCII letters, digits, `-`, `_` and `.`. Names are exact, as for `exp`.
-func accountClaim(_ token: String) -> String? {
-    withJWTPayload(token) { doc in
-        guard let auth = doc.member(doc.root, "https://api.openai.com/auth"),
-            let v = doc.member(auth, "chatgpt_account_id"),
-            let id = doc.string(v, atMost: maxAccountID), !id.isEmpty,
-            id.utf8.allSatisfy({ base64URL($0) != nil || $0 == UInt8(ascii: ".") })
-        else { return nil }
-        return id
-    }
+func accountClaim(_ token: String) -> String? { withJWTPayload(token, accountClaim) }
+
+private func accountClaim(_ doc: WireJSON.Borrowed) -> String? {
+    guard let auth = doc.member(doc.root, "https://api.openai.com/auth"),
+        let v = doc.member(auth, "chatgpt_account_id"),
+        let id = doc.string(v, atMost: maxAccountID), !id.isEmpty,
+        id.utf8.allSatisfy({ base64URL($0) != nil || $0 == UInt8(ascii: ".") })
+    else { return nil }
+    return id
 }
 
 /// Decodes `token`'s payload into a buffer wiped before it is freed and, when the payload is JSON as Codex's is read,

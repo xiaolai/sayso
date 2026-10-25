@@ -154,7 +154,7 @@ public enum CodexExecutable {
         "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
     ]
 
-    /// Prepended to the inherited `PATH`, after the executable's folder, so an npm-installed codex
+    /// Prepended to the inherited `PATH`, after the executable's folder when that is absolute and colon-free, so an npm-installed codex
     /// (`#!/usr/bin/env node`) finds its interpreter when the app was launched from the Finder.
     public static let repairPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -173,7 +173,10 @@ public enum CodexExecutable {
             if let codexHome, !codexHome.isEmpty, name.uppercased() == "CODEX_HOME" { continue }
             out[name] = value
         }
-        var path = dirname(bin) + ":" + repairPath
+        // A folder with a colon would split into other PATH entries, and a relative one is searched from the child's
+        // working folder, so such a folder is left out and only the fixed folders repair the interpreter's lookup.
+        let folder = dirname(bin)
+        var path = folder.hasPrefix("/") && !folder.contains(":") ? folder + ":" + repairPath : repairPath
         if !inherited.isEmpty { path += ":" + inherited }
         out["PATH"] = path
         if let codexHome, !codexHome.isEmpty { out["CODEX_HOME"] = codexHome }

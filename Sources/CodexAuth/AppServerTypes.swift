@@ -1,5 +1,4 @@
 #if os(macOS)
-import Darwin
 import Foundation
 import RealtimeConnection
 
@@ -84,13 +83,16 @@ public struct AuthStatus: Sendable, Equatable, CustomStringConvertible, CustomDe
         return sameMethod && a.requiresOpenAIAuth == b.requiresOpenAIAuth && a.token.utf8.elementsEqual(b.token.utf8)
     }
 
-    public var description: String { "AuthStatus{method: \(Secret.scrub(method ?? ""))}" }
+    /// The method scrubbed and escaped, as ``AppServerEvent`` shows its own: a control character in it cannot forge a
+    /// log line or reach a terminal.
+    public var description: String { "AuthStatus{method: \(AppServerEvent.quoted(Secret.scrub(method ?? "")))}" }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
         Mirror(
             self,
             children: [
-                "method": Secret.scrub(method ?? ""), "requiresOpenAIAuth": requiresOpenAIAuth, "token": Secret.redacted,
+                "method": AppServerEvent.quoted(Secret.scrub(method ?? "")), "requiresOpenAIAuth": requiresOpenAIAuth,
+                "token": Secret.redacted,
             ], displayStyle: .struct)
     }
 }

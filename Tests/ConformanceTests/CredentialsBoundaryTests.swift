@@ -92,6 +92,18 @@ final class CredentialsBoundaryTests: XCTestCase {
         XCTAssertTrue(CodexExecutable.versionLess("3000000000", "4000000000"))
     }
 
+    /// The executable's folder leads PATH only when PATH can hold it: one with a colon would split into other
+    /// entries, and a relative one would be searched from the child's working folder.
+    func testThePathRepairNamesOnlyTheExecutablesFolder() {
+        func path(_ bin: String) -> String? {
+            CodexExecutable.childEnvironment(["PATH": "/inherited"], bin: bin, codexHome: nil)["PATH"]
+        }
+        let rest = CodexExecutable.repairPath + ":/inherited"
+        XCTAssertEqual(path("/tools/bin/codex"), "/tools/bin:" + rest)
+        XCTAssertEqual(path("/tools:custom/bin/codex"), rest)
+        XCTAssertEqual(path("custom/bin/codex"), rest)
+    }
+
     private func jwt(_ exp: Int) -> String {
         func b(_ s: String) -> String {
             Data(s.utf8).base64EncodedString().replacingOccurrences(of: "+", with: "-")
@@ -134,7 +146,9 @@ final class CredentialsBoundaryTests: XCTestCase {
 
     /// A refresh reply naming another sign-in is that sign-in's state, not expired.
     func testRefreshReplyKeepsItsSignInState() async throws {
-        let creds = try Credentials(CodexAuthConfiguration(margin: 60, timeout: 1, source: .codex, environment: [:]))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let creds = try Credentials(
+            CodexAuthConfiguration(margin: 60, timeout: 1, source: .codex, environment: [:], now: { now }))
         let tok = Token(bearer: "opaque-mode-change", expires: nil)
         creds.seedForTesting(tok, refreshable: true)
         creds.refresher = { throw CodexAuthError(.apiKey, mode: "apikey", message: "now an API key") }
@@ -143,7 +157,30 @@ final class CredentialsBoundaryTests: XCTestCase {
             XCTFail("refresh succeeded")
         } catch {
             XCTAssertEqual(CodexAuthError.state(of: error), .apiKey)
+            // The backoff was spent, so the error says when the next attempt may run, as every refresh failure does.
+            XCTAssertEqual((error as? CodexAuthError)?.retryAt, now.addingTimeInterval(Credentials.backoffStart))
         }
+    }
+
+    /// auth.json, read because Codex lost getAuthStatus, holding the very token that was refused renews nothing: the
+    /// refresh fails rather than handing the refused token out again.
+    func testAFileFallbackHoldingTheRefusedTokenIsNoRefresh() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let creds = try Credentials(
+            CodexAuthConfiguration(margin: 60, timeout: 1, source: .codex, environment: [:], now: { now }))
+        let a = Token(bearer: jwt(1_800_003_600) + "a", expires: Date(timeIntervalSince1970: 1_800_003_600))
+        creds.seedForTesting(a, refreshable: true)
+        creds.refresher = { Token(bearer: a.bearer, expires: a.expires, source: "file") }
+        do {
+            let t = try await creds.refresh(after: a)
+            XCTFail("the refresh handed out \(t.bearer == a.bearer ? "the refused token" : "a token")")
+        } catch {
+            XCTAssertEqual(CodexAuthError.state(of: error), .expired)
+        }
+        do {
+            let t = try await creds.token()
+            XCTFail("token() handed out \(t.bearer == a.bearer ? "the refused token" : "a token")")
+        } catch {}
     }
 
     // MARK: - The write path, against a child that answers initialize and never reads again

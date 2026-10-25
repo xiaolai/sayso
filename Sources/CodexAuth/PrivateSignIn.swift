@@ -20,15 +20,17 @@ public func writePrivateSignIn(_ token: Token, codexHome: String, now: Date = Da
     guard jwtShaped(bearer) else {
         throw CodexAuthError(.codexError, message: "the token is not a JWT, so a private Codex cannot read it")
     }
-    guard let account = accountClaim(bearer) else {
+    let claims = jwtClaims(bearer)
+    guard let account = claims.account else {
         throw CodexAuthError(.codexError, message: "the token names no ChatGPT account")
     }
-    if let exp = jwtExpiry(bearer), exp <= now { throw CodexAuthError(.codexError, message: "the token has expired") }
+    if let exp = claims.expires, exp <= now { throw CodexAuthError(.codexError, message: "the token has expired") }
+    let stamp = try utcStamp(now)
     let dir = try openPrivateHome(codexHome)
     defer { Darwin.close(dir) }
 
     let parts = [
-        #"{"auth_mode":"chatgpt","last_refresh":""#, utcStamp(now), #"","tokens":{"id_token":""#, bearer,
+        #"{"auth_mode":"chatgpt","last_refresh":""#, stamp, #"","tokens":{"id_token":""#, bearer,
         #"","access_token":""#, bearer, #"","refresh_token":"","account_id":""#, account, #""}}"#,
     ]
     // Memory of the exact size, wiped when released, so no byte of the token written outlives the write.
@@ -61,11 +63,18 @@ func jwtShaped(_ s: String) -> Bool {
 }
 
 /// `now` in UTC as RFC 3339 whole seconds, `2027-01-15T08:00:00Z`; a fraction of a second is dropped, as Go's
-/// formatting drops it.
-private func utcStamp(_ now: Date) -> String {
-    var t = time_t(now.timeIntervalSince1970.rounded(.down))
+/// formatting drops it. An instant outside the years 0000 to 9999, which RFC 3339 cannot write, is refused.
+private func utcStamp(_ now: Date) throws -> String {
+    let seconds = now.timeIntervalSince1970.rounded(.down)
+    // 0000-01-01T00:00:00Z and 9999-12-31T23:59:59Z; NaN fails both.
+    guard seconds >= -62_167_219_200, seconds <= 253_402_300_799 else {
+        throw CodexAuthError(.codexError, message: "the sign-in time cannot be written as an RFC 3339 timestamp")
+    }
+    var t = time_t(seconds)
     var parts = tm()
-    gmtime_r(&t, &parts)
+    guard gmtime_r(&t, &parts) != nil else {
+        throw CodexAuthError(.codexError, message: "the sign-in time cannot be written as an RFC 3339 timestamp")
+    }
     return String(
         format: "%04d-%02d-%02dT%02d:%02d:%02dZ", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday, parts.tm_hour,
         parts.tm_min, parts.tm_sec)
@@ -116,8 +125,16 @@ private func writeNew(_ dir: Int32, _ data: UnsafeRawBufferPointer) throws {
             .codexError, message: "auth.json cannot be created in the private Codex home",
             cause: String(cString: strerror(errno)))
     }
+    // A removal that fails leaves token bytes behind and blocks the next attempt (EEXIST), so it is reported.
     func removed(_ message: String, _ code: Int32) -> CodexAuthError {
-        unlinkat(dir, AuthFile.fileName, 0)
+        var rc: Int32
+        repeat { rc = unlinkat(dir, AuthFile.fileName, 0) } while rc != 0 && errno == EINTR
+        guard rc == 0 else {
+            let unlinkCode = errno
+            return CodexAuthError(
+                .codexError, message: message + ", and the partial auth.json could not be removed",
+                cause: String(cString: strerror(code)) + "; removing: " + String(cString: strerror(unlinkCode)))
+        }
         return CodexAuthError(.codexError, message: message, cause: String(cString: strerror(code)))
     }
     guard fchmod(fd, 0o600) == 0 else {

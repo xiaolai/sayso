@@ -269,8 +269,13 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
         }
         do {
             let tok = try (refresher ?? { try self.refreshCodex(op) })()
+            // auth.json, read because Codex lost getAuthStatus: it cannot be refreshed again.
+            let fromFile = tok.source == "file"
             guard fresh(tok) else {
                 throw CodexAuthConfigurationError("Codex returned a token that is still within the margin")
+            }
+            if fromFile, sameBearer(tok.bearer, refused) {
+                throw CodexAuthConfigurationError("auth.json holds the refused token, and the file source cannot refresh")
             }
             backoff = 0
             retryAt = nil
@@ -279,6 +284,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             refused = nil
             cfg.log?("codexauth: refreshed the token")
             current = tok
+            if fromFile { refreshable = false }  // with the token it applies to, once that is accepted
             refreshes.increment()
             return tok
         } catch {
@@ -297,9 +303,10 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
                 "codexauth: refresh failed (state \(CodexAuthError.state(of: error).rawValue), backoff \(Int(backoff)) s, "
                     + "until \(Self.stamp(retryAt!)))")
             // The refresh reply named another sign-in: classified as in step 3 (spec/credentials.md), not expired.
-            if let e = error as? CodexAuthError,
+            if var e = error as? CodexAuthError,
                 [.notSignedIn, .apiKey, .unsupportedAuth, .providerWithoutOpenAIAuth].contains(e.state)
             {
+                e.retryAt = retryAt
                 throw e
             }
             var failed = CodexAuthError(.expired, message: "the refresh did not renew the sign-in", cause: lastFailure)
@@ -432,7 +439,7 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             throw CodexAuthError(
                 .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
         }
-        return (try Self.token(from: { full }), true)
+        return (try Self.token(from: full), true)
     }
 
     /// Runs when Codex lacks getAuthStatus: a fresh child's config/read decides whether auth.json is Codex's
@@ -473,25 +480,18 @@ public final class Credentials: CredentialSource, @unchecked Sendable, CustomStr
             where e.rpcCode == AppServerError.methodNotFound
         {
             // Codex was updated to one without getAuthStatus since the token was fetched: the same config/read rule
-            // decides, and a file token cannot be refreshed again.
+            // decides, and a file token cannot be refreshed again, which refreshLocked records once it accepts it.
             client.close()
-            let tok = try storeFallback(bin, op)
-            refreshable = false
-            return tok
+            return try storeFallback(bin, op)
         } catch {
             throw CodexAuthError(
                 .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
         }
-        return try Self.token(from: { full })
+        return try Self.token(from: full)
     }
 
     /// Checks the provider and the method again on a token reply: a change is classified like the metadata reply.
-    private static func token(from call: () throws -> AuthStatus) throws -> Token {
-        let full: AuthStatus
-        do { full = try call() } catch {
-            throw CodexAuthError(
-                .codexError, message: "Codex app-server getAuthStatus failed", cause: String(describing: error))
-        }
+    private static func token(from full: AuthStatus) throws -> Token {
         guard full.requiresOpenAIAuth else {
             throw CodexAuthError(.providerWithoutOpenAIAuth, message: "the provider in force needs no OpenAI sign-in")
         }

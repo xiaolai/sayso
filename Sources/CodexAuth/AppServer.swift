@@ -80,8 +80,11 @@ public final class AppServerClient: @unchecked Sendable {
 
     /// The child's process ID.
     public var pid: pid_t { core.pid }
-    /// The initialize `userAgent`, scrubbed; "" when absent.
-    public private(set) var userAgent = ""
+    /// The initialize `userAgent`, scrubbed; "" when absent. Locked: the event thread, which a handler may read it
+    /// from, runs before the handshake that sets it has finished.
+    public var userAgent: String { agentLock.withLock { agent } }
+    private let agentLock = NSLock()
+    private var agent = ""
 
     /// The child and its readers. The reader threads hold the core, never the client, so releasing an unclosed
     /// client runs its deinit, which ends the child.
@@ -144,7 +147,8 @@ public final class AppServerClient: @unchecked Sendable {
             guard let object = jsonObject(hello), let agent = jsonOptionalString(object["userAgent"]) else {
                 throw AppServerError("Codex app-server sent an unexpected initialize result")
             }
-            c.userAgent = Secret.scrub(agent ?? "")
+            let scrubbed = Secret.scrub(agent ?? "")
+            c.agentLock.withLock { c.agent = scrubbed }
             try c.core.notify(["method": "initialized"])
         } catch var e as AppServerError {
             e.exitStatus = c.core.closeAfterFailedStart()
@@ -237,9 +241,8 @@ final class AppServerCore: @unchecked Sendable {
     private var pending: [Int: Pending] = [:]
     private var failure: AppServerError?
     private var stopReaders = false
-    /// Set when close starts; `closed` follows once the queued refusals are written, and then stops every writer.
+    /// Set when close starts; once the queued refusals are written, close fails the client, which stops every writer.
     private var closeStarted = false
-    private var closed = false
     private var stdinOpen = true  // guarded by writeGate
     private var stderrBytes: [UInt8] = []
     /// Every message waiting to be written, requests and answers to server requests alike, in the order they were
@@ -375,34 +378,43 @@ final class AppServerCore: @unchecked Sendable {
             Self.closeAll(inPipe + outPipe)
             throw AppServerError("Codex app-server could not be started")
         }
-        for fd in inPipe + outPipe + errPipe { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
-        _ = fcntl(inPipe[1], F_SETNOSIGPIPE, 1)
+        let all = inPipe + outPipe + errPipe
+        func notStarted() -> AppServerError {
+            Self.closeAll(all)
+            return AppServerError("Codex app-server could not be started")
+        }
+        // Each is required: without O_NONBLOCK a write to a child that stops reading blocks past every deadline, and
+        // without F_SETNOSIGPIPE a child that exits raises SIGPIPE in the host.
+        guard all.allSatisfy({ fcntl($0, F_SETFD, FD_CLOEXEC) != -1 }), fcntl(inPipe[1], F_SETNOSIGPIPE, 1) != -1
+        else { throw notStarted() }
         // Our end only: a write that cannot proceed waits in poll, against the call's deadline.
-        _ = fcntl(inPipe[1], F_SETFL, fcntl(inPipe[1], F_GETFL) | O_NONBLOCK)
+        let flags = fcntl(inPipe[1], F_GETFL)
+        guard flags != -1, fcntl(inPipe[1], F_SETFL, flags | O_NONBLOCK) != -1 else { throw notStarted() }
 
         var actions: posix_spawn_file_actions_t?
         var attr: posix_spawnattr_t?
-        posix_spawn_file_actions_init(&actions)
-        posix_spawnattr_init(&attr)
-        defer {
-            posix_spawn_file_actions_destroy(&actions)
-            posix_spawnattr_destroy(&attr)
-        }
-        posix_spawn_file_actions_adddup2(&actions, inPipe[0], 0)
-        posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
-        posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2)
-        if let directory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
+        guard posix_spawn_file_actions_init(&actions) == 0 else { throw notStarted() }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        guard posix_spawnattr_init(&attr) == 0 else { throw notStarted() }
+        defer { posix_spawnattr_destroy(&attr) }
         // Its own process group, so close can signal every process the child starts; only fds 0-2 are inherited.
         var defaults = sigset_t()
         sigfillset(&defaults)
         var mask = sigset_t()
         sigemptyset(&mask)
-        posix_spawnattr_setsigdefault(&attr, &defaults)
-        posix_spawnattr_setsigmask(&attr, &mask)
-        posix_spawnattr_setpgroup(&attr, 0)
-        posix_spawnattr_setflags(
-            &attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF
-                | POSIX_SPAWN_SETSIGMASK))
+        let configured = [
+            posix_spawn_file_actions_adddup2(&actions, inPipe[0], 0),
+            posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1),
+            posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2),
+            directory.map { posix_spawn_file_actions_addchdir_np(&actions, $0) } ?? 0,
+            posix_spawnattr_setsigdefault(&attr, &defaults),
+            posix_spawnattr_setsigmask(&attr, &mask),
+            posix_spawnattr_setpgroup(&attr, 0),
+            posix_spawnattr_setflags(
+                &attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF
+                    | POSIX_SPAWN_SETSIGMASK)),
+        ].allSatisfy { $0 == 0 }
+        guard configured else { throw notStarted() }
 
         let argv = [bin] + AppServerClient.arguments
         let envp = env.map { "\($0.key)=\($0.value)" }
@@ -511,7 +523,13 @@ final class AppServerCore: @unchecked Sendable {
             closeDone.signal()
             return
         }
-        defer { closeDone.signal() }
+        // The log lines are delivered once close has finished: a log callback that closes the client would otherwise
+        // wait above for this close, which waits for it.
+        var notes: [String] = []
+        defer {
+            closeDone.signal()
+            for note in notes { log?(note) }
+        }
         eventWake.signal()  // the event thread sees closeStarted and ends
         // The messages queued before close, answers to server requests included, are written first, for at most
         // closeFlush: a request the child sent before close is answered rather than dropped with the queue.
@@ -527,8 +545,7 @@ final class AppServerCore: @unchecked Sendable {
         // The close is the failure from here on, as in Go: a write it cuts short, an answer to a server request
         // included, reports the close, not the child.
         fail(AppServerError("Codex app-server was closed"))
-        lock.withLock { closed = true }
-        // A writer waiting on a full pipe, or for its turn, sees `closed` within one poll interval and lets go.
+        // A writer waiting on a full pipe, or for its turn, sees the failure within one poll interval and lets go.
         writeGate.wait()
         if stdinOpen {
             Darwin.close(stdinFD)
@@ -537,11 +554,11 @@ final class AppServerCore: @unchecked Sendable {
         writeGate.signal()
         // Once the child has exited and its group is empty nothing is signalled. The child is not reaped until the end
         // of close, so its group ID cannot name another group meanwhile.
-        if !gone() { signalGroup(SIGTERM) }
+        if !gone() { signalGroup(SIGTERM, &notes) }
         if !waitGroup(until: .now() + AppServerClient.killGrace) {
-            signalGroup(SIGKILL)  // the group was alive a moment ago, so its ID is still ours
+            signalGroup(SIGKILL, &notes)  // the group was alive a moment ago, so its ID is still ours
             if !reaped(by: .now() + AppServerClient.reapGrace) {
-                log?("codex app-server was not reaped within the grace; abandoning it (pid \(pid))")
+                notes.append("codex app-server was not reaped within the grace; abandoning it (pid \(pid))")
             }
         }
         // The last stderr bytes the child wrote are kept, unless a descendant still holds the pipe.
@@ -566,7 +583,7 @@ final class AppServerCore: @unchecked Sendable {
                 while waitpid(child, &status, 0) == -1 && errno == EINTR {}
             }
         }
-        if n > 0 { log?("codex app-server wrote to stderr (\(n) bytes)") }
+        if n > 0 { notes.append("codex app-server wrote to stderr (\(n) bytes)") }
     }
 
     var hasExited: Bool { reaped(by: .now()) }
@@ -628,10 +645,10 @@ final class AppServerCore: @unchecked Sendable {
 
     /// Sends `sig` to the child's process group while the child is our unreaped child, whose ID, and so the group ID,
     /// cannot name another group. A child the kernel reaped itself is not signalled: its ID may already be another
-    /// process's.
-    private func signalGroup(_ sig: Int32) {
+    /// process's. A log line goes to `notes`, which close delivers once it has finished.
+    private func signalGroup(_ sig: Int32, _ notes: inout [String]) {
         guard Self.waitid(pid, WEXITED | WNOWAIT | WNOHANG) else {
-            log?("codex app-server was reaped by the system; its group is not signalled (pid \(pid))")
+            notes.append("codex app-server was reaped by the system; its group is not signalled (pid \(pid))")
             return
         }
         if let testSignal = lock.withLock({ testSignal }) { return testSignal(sig) }
@@ -746,7 +763,7 @@ final class AppServerCore: @unchecked Sendable {
     private func write(_ data: Data, deadline: DispatchTime) throws {
         let refused = AppServerError("Codex app-server is not accepting requests")
         let timedOut = AppServerError("Codex app-server did not accept a request within \(timeout) s")
-        func stopped() -> AppServerError? { lock.withLock { failure ?? (closed ? refused : nil) } }
+        func stopped() -> AppServerError? { lock.withLock { failure } }
         while writeGate.wait(timeout: min(deadline, .now() + .milliseconds(50))) == .timedOut {
             if let e = stopped() { throw e }
             if DispatchTime.now() >= deadline { throw timedOut }

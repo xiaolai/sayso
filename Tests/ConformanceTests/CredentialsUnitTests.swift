@@ -43,6 +43,25 @@ final class CredentialsUnitTests: XCTestCase {
         XCTAssertEqual(cleanMode(String(repeating: "é", count: 70) + "\u{7}"), String(repeating: "é", count: 64))
     }
 
+    /// A registered secret holding a character the filter removes is still found: scrubbing runs on the mode as
+    /// reported, not only on what filtering leaves.
+    func testCleanModeScrubsBeforeFiltering() {
+        Secret.register("opaque\u{200B}credential-23")
+        XCTAssertFalse(cleanMode("x opaque\u{200B}credential-23").contains("credential-23"))
+    }
+
+    /// A field read directly is scrubbed when read, as the description is: a secret registered after the error was
+    /// built is removed from it too.
+    func testErrorFieldsAreScrubbedWhenRead() {
+        let e = CodexAuthError(
+            .unsupportedAuth, mode: "late-mode-21", codexVersion: "late-version-21", message: "late-message-21",
+            cause: "late-cause-21")
+        for s in ["late-mode-21", "late-version-21", "late-message-21", "late-cause-21"] { Secret.register(s) }
+        for field in [e.mode, e.codexVersion, e.message, e.cause] {
+            XCTAssertFalse(field.contains("-21"), "\(field) was read unscrubbed")
+        }
+    }
+
     func testConfigurationRejectsInfiniteBounds() {
         XCTAssertThrowsError(try Credentials(CodexAuthConfiguration(margin: .infinity, timeout: 1)))
         XCTAssertThrowsError(try Credentials(CodexAuthConfiguration(margin: 60, timeout: .infinity)))

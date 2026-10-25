@@ -1,5 +1,4 @@
 #if os(macOS)
-import Darwin
 import Foundation
 import RealtimeConnection
 
@@ -7,11 +6,10 @@ import RealtimeConnection
 /// depth and number bounds, and strict. JSONSerialization also accepts UTF-16 and UTF-32, whose text always holds
 /// NUL bytes, and skips a leading UTF-8 byte-order mark; Go accepts neither, and no JSON text holds a raw NUL. The
 /// strict grammar also refuses duplicate keys and invalid UTF-8, which JSONSerialization and Go's encoding/json each
-/// settle their own way; Codex's serde refuses both. No check copies any of `raw`.
+/// settle their own way; Codex's serde refuses both. The strict grammar refuses a NUL and a byte-order mark too: it
+/// is no whitespace or value start, and no string holds a raw control byte. No check copies any of `raw`.
 func plainJSON(_ raw: UnsafeRawBufferPointer) -> WireJSON.Borrowed? {
-    guard !raw.contains(0), !(raw.count >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF),
-        withinBounds(raw, maxCodexJSONDepth)
-    else { return nil }
+    guard withinBounds(raw, maxCodexJSONDepth) else { return nil }
     return WireJSON.Borrowed(raw)
 }
 
