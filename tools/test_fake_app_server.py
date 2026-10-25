@@ -96,6 +96,39 @@ class Fake(unittest.TestCase):
                 seen.append(json.loads(p.stdout.splitlines()[0])["result"]["n"])
         self.assertEqual(seen, [1, 2, 2])
 
+    def test_concurrent_starts_take_distinct_steps(self):
+        n = 12
+        scenario = {"methods": {"m": [{"result": {"n": i}} for i in range(n)]}}
+        with tempfile.TemporaryDirectory() as d:
+            sc, rec = pathlib.Path(d, "s.json"), pathlib.Path(d, "r.jsonl")
+            sc.write_text(json.dumps(scenario))
+            env = dict(os.environ, SAYSO_FAKE_SCENARIO=str(sc), SAYSO_FAKE_RECORD=str(rec))
+            procs = [subprocess.Popen([sys.executable, "-I", str(FAKE)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      text=True, env=env) for _ in range(n)]
+            for p in procs:  # every start is up and waiting before any request arrives
+                p.stdin.write(json.dumps({"id": 1, "method": "m"}) + "\n")
+            for p in procs:
+                p.stdin.close()
+            seen = sorted(json.loads(p.stdout.readline())["result"]["n"] for p in procs)
+            for p in procs:
+                p.wait(timeout=20)
+                p.stdout.close()
+        self.assertEqual(seen, list(range(n)))
+
+    def test_by_params_needs_the_key_and_its_json_type(self):
+        scenario = {"byParams": {"m": [{"when": {"x": None}, "steps": [{"result": "null"}]},
+                                       {"when": {"y": True}, "steps": [{"result": "true"}]},
+                                       {"when": {"z": [0]}, "steps": [{"result": "list"}]}]}}
+        _, out, _, _ = converse(scenario, [{"id": 1, "method": "m", "params": {}}, {"id": 2, "method": "m", "params": {"y": 1}},
+                                           {"id": 3, "method": "m", "params": {"z": [False]}},
+                                           {"id": 4, "method": "m", "params": {"x": None, "y": True, "z": [0]}}])
+        self.assertEqual([o.get("result", o.get("error", {}).get("code")) for o in out], [-32601, -32601, -32601, "null"])
+
+    def test_by_params_scripts_initialize(self):
+        scenario = {"byParams": {"initialize": [{"when": {}, "steps": [{"error": {"code": -5, "message": "no"}}]}]}}
+        _, out, _, _ = converse(scenario, [{"id": 1, "method": "initialize", "params": {}}])
+        self.assertEqual(out[0]["error"]["code"], -5)
+
     def test_steps_advance_without_a_record(self):
         with tempfile.TemporaryDirectory() as d:
             sc = pathlib.Path(d, "s.json")

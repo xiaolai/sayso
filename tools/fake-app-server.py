@@ -36,12 +36,14 @@ Scenario keys (all optional):
                        replaced by the fake's working directory. {"rawLine": "text"} sends the text as one line, byte
                        for byte. A method with no steps answers -32601.
   byParams             {method: [{"when": {param: value}, "steps": [...]}]}: the first entry whose `when` matches the
-                       call's params, by equality of each named key, is used instead of `methods`; each entry
-                       counts its own calls, across starts like `methods`
+                       call's params, each named key present with an equal JSON value (true is not 1), is used
+                       instead of `methods`; each entry counts its own calls, across starts like `methods`
 
 {"$jwt": {...claims}} anywhere in a reply is replaced by an unsigned JWT (spec/fixtures.md).
 """
 import base64
+import contextlib
+import fcntl
 import json
 import os
 import signal
@@ -84,22 +86,55 @@ def record(entry: dict) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
-def recorded_requests() -> list:
-    """Every request in the record so far, across starts; this start's requests when there is no record."""
+@contextlib.contextmanager
+def record_locked():
+    """Holds the record against every other start that shares it; no lock is needed without a record."""
     path = os.environ.get("SAYSO_FAKE_RECORD")
     if not path:
-        return MEMORY
-    if not os.path.exists(path):
-        return []
-    with open(path, encoding="utf-8") as f:
-        return [e["req"] for e in map(json.loads, f) if "req" in e]
+        yield
+        return
+    with open(path, "a", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield  # closing f releases the lock
+
+
+def requests_since(offset: int):
+    """The requests recorded since offset, across starts (this start's when there is no record), and the new offset."""
+    path = os.environ.get("SAYSO_FAKE_RECORD")
+    if not path:
+        return MEMORY[offset:], len(MEMORY)
+    with open(path, "rb") as f:
+        f.seek(offset)
+        data = f.read()
+    data = data[:data.rfind(b"\n") + 1]  # a line another start is still writing is read next time
+    return [e["req"] for e in map(json.loads, data.splitlines()) if "req" in e], offset + len(data)
+
+
+def decode(line: str):
+    """The message on line, or None once it is recorded as malformed."""
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        record({"malformedRequest": line.strip()})
+        return None
+
+
+def same(a, b) -> bool:
+    """JSON equality: true is not 1, nor false 0, at any depth."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return isinstance(b, list) and len(a) == len(b) and all(map(same, a, b))
+    return a == b
 
 
 def step_key(msg: dict, methods: dict, by_params: dict):
     """The steps a request is answered from, and the key its calls are counted under."""
     method, params = msg["method"], msg.get("params") or {}
     for i, entry in enumerate(by_params.get(method, [])):
-        if all(params.get(k) == v for k, v in entry["when"].items()):
+        if all(k in params and same(params[k], v) for k, v in entry["when"].items()):
             return entry["steps"], f"{method}#{i}"
     return methods.get(method), method
 
@@ -170,32 +205,37 @@ def main() -> int:
     methods = scenario.get("methods", {})
     by_params = scenario.get("byParams", {})
     pending_server_request = scenario.get("serverRequest")
+    calls, offset = {}, 0  # calls per step key, counted from the record up to offset
 
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-        try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
-            record({"malformedRequest": line})
+        msg = decode(line)
+        if msg is None:
             continue
-        record({"req": msg})
-        if "id" not in msg or "method" not in msg:
-            continue  # a notification, or the client's answer to a server request
-        method = msg["method"]
-        if method == "initialize" and "initialize" not in methods:
+        # Recording and counting under one lock, so two starts cannot both count the other's call and take one step.
+        with record_locked():
+            record({"req": msg})
+            if "id" not in msg or "method" not in msg:
+                continue  # a notification, or the client's answer to a server request
+            method = msg["method"]
+            steps, key = step_key(msg, methods, by_params)
+            new, offset = requests_since(offset)
+        for r in new:
+            if "id" in r and "method" in r:
+                k = step_key(r, methods, by_params)[1]
+                calls[k] = calls.get(k, 0) + 1
+        if method == "initialize" and steps is None:
             version = scenario.get("version", "0.162.1")
             agent = "codex_cli_rs" if version is None else f"codex_cli_rs/{version} (Fake 1.0; test)"
             send({"id": msg["id"], "result": {"userAgent": agent}})
             continue
-        steps, key = step_key(msg, methods, by_params)
         if not steps:
             send({"id": msg["id"], "error": {"code": -32601, "message": f"Method not found: {method}"}})
             continue
-        # This request is already recorded, so the earlier calls are the matches before the last one.
-        n = sum(1 for r in recorded_requests() if "id" in r and "method" in r and step_key(r, methods, by_params)[1] == key) - 1
-        step = steps[min(n, len(steps) - 1)]
+        # This request is already counted, so the earlier calls are the ones before it.
+        step = steps[min(calls[key] - 1, len(steps) - 1)]
         if step.get("delayMs"):
             time.sleep(step["delayMs"] / 1000)
         notify(step.get("notify", []))
@@ -203,10 +243,9 @@ def main() -> int:
             waited = sys.stdin.readline()
             if not waited:
                 return 0  # the client closed our input first
-            try:
-                record({"req": json.loads(waited)})
-            except json.JSONDecodeError:
-                record({"malformedRequest": waited.strip()})
+            waited = decode(waited)
+            if waited is not None:
+                record({"req": waited})
         if method == "getAuthStatus" and pending_server_request:
             send(pending_server_request)
             pending_server_request = None

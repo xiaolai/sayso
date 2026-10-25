@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the Go and Swift implementations on the same generated inputs and fail on any disagreement.
 
-Usage: tools/differential.py [--seed N] [--count N] [--ops OP,...] [--keep DIR]
+Usage: tools/differential.py [--seed N] [--count N] [--ops OP,...] [--keep DIR] [--timeout S]
 
 The cases are fixture inputs mutated at one position (an insertion, deletion or replacement drawn from character
 classes where Unicode and JSON libraries part ways), JSON documents mutated by value, and random strings from the
@@ -11,7 +11,7 @@ Tests/ConformanceTests/OracleTests.swift. A case whose observations differ is a 
 it with a sentence of the spec; for each operation the shortest diverging input is printed as a candidate fixture.
 
 Exit status: 0 when every case agrees, 1 on a divergence, 2 when the harness fails (an oracle that does not build,
-crashes or misses a case).
+crashes, misses a case or runs past --timeout).
 """
 import argparse
 import base64
@@ -21,6 +21,7 @@ import os
 import pathlib
 import random
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -32,6 +33,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "fixtures"
 DEFAULT_SEED = 20261016
 DEFAULT_COUNT = 2000  # 26,000 cases: 10 to 30 s on an M-series Mac once both are built
+DEFAULT_TIMEOUT = 1800  # seconds per oracle command, a first build included
 
 # Each operation, and the Go package whose TestOracle answers it. Swift answers every one.
 OPS = {
@@ -839,14 +841,23 @@ def read_outputs(path, cases, name):
     want = {c["id"]: c["op"] for c in cases}
     got = {}
     if path.exists():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as e:
+            raise HarnessError(f"{name}: {path} is not UTF-8 ({e})") from None
         # "\n" alone ends a line: splitlines would also split at U+0085 or U+2028, which a JSON string may hold raw.
-        for line in path.read_text(encoding="utf-8").split("\n"):
+        for n, line in enumerate(text.split("\n"), 1):
             if not line:
                 continue
-            r = json.loads(line)
+            try:
+                r = json.loads(line)
+            except ValueError as e:
+                raise HarnessError(f"{name}: line {n} of {path} is not JSON ({e}): {line[:200]}") from None
+            if not isinstance(r, dict) or "output" not in r:
+                raise HarnessError(f"{name}: line {n} of {path} is no answer object with an output: {line[:200]}")
             if r.get("id") not in want or r["id"] in got or r.get("op") != want[r["id"]]:
                 raise HarnessError(f"{name}: unexpected answer {line[:200]}")
-            got[r["id"]] = r.get("output")
+            got[r["id"]] = r["output"]
     missing = [c for c in cases if c["id"] not in got]
     if missing:
         raise HarnessError(f"{name}: no answer from case {missing[0]['id']} on ({len(missing)} missing); its input: "
@@ -858,18 +869,41 @@ def tail(path, lines=40):
     return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]) if path.exists() else ""
 
 
-def run_oracles(work, cases):
-    """Both implementations' outputs, id → output each. Swift runs alongside the Go packages."""
+def kill_group(proc):
+    """Ends proc and everything it started in its own session, and reaps proc."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # it ended on its own meanwhile
+    proc.wait()
+
+
+def finish(proc, deadline, name):
+    """proc's exit status; at the deadline (time.monotonic()) its session is killed and the run is a harness failure."""
+    try:
+        return proc.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        raise HarnessError(f"{name} ran past its --timeout deadline") from None
+    finally:
+        if proc.poll() is None:
+            kill_group(proc)
+
+
+def run_oracles(work, cases, timeout=DEFAULT_TIMEOUT):
+    """Both implementations' outputs, id → output each. Swift runs alongside the Go packages; each oracle command
+    has timeout seconds from its start."""
     for tool in ("go", "swift"):
         if shutil.which(tool) is None:
             raise HarnessError(f"{tool} is not on PATH")
     swift_in, swift_out, swift_log = work / "swift-in.jsonl", work / "swift-out.jsonl", work / "swift.log"
     write_cases(swift_in, cases)
+    swift_out.unlink(missing_ok=True)  # a kept folder's last answers must not stand in for this run's
     env = dict(os.environ, SAYSO_ORACLE_IN=str(swift_in), SAYSO_ORACLE_OUT=str(swift_out))
     env.pop("SAYSO_RESULTS", None)  # an oracle run is no fixture run
     with open(swift_log, "w") as log:
         swift = subprocess.Popen(["swift", "test", "--filter", "OracleTests/testOracle"], cwd=ROOT, env=env,
-                                 stdout=log, stderr=subprocess.STDOUT)
+                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    swift_deadline = time.monotonic() + timeout
     go = {}
     failures = []
     try:
@@ -877,22 +911,28 @@ def run_oracles(work, cases):
             mine = [c for c in cases if OPS[c["op"]] == pkg]
             gin, gout, glog = work / f"go-{pkg}-in.jsonl", work / f"go-{pkg}-out.jsonl", work / f"go-{pkg}.log"
             write_cases(gin, mine)
+            gout.unlink(missing_ok=True)
             genv = dict(env, SAYSO_ORACLE_IN=str(gin), SAYSO_ORACLE_OUT=str(gout))
             with open(glog, "w") as log:
-                code = subprocess.run(["go", "test", "-count=1", "-run", "^TestOracle$", "./" + pkg], cwd=ROOT / "go",
-                                      env=genv, stdout=log, stderr=subprocess.STDOUT).returncode
+                proc = subprocess.Popen(["go", "test", "-count=1", "-run", "^TestOracle$", "./" + pkg],
+                                        cwd=ROOT / "go", env=genv, stdout=log, stderr=subprocess.STDOUT,
+                                        start_new_session=True)
             try:
+                code = finish(proc, time.monotonic() + timeout, f"go ./{pkg}")
                 go.update(read_outputs(gout, mine, f"go ./{pkg}"))
             except HarnessError as e:
                 failures.append(f"{e}\n{tail(glog)}")
                 continue
             if code != 0:
                 failures.append(f"go ./{pkg} exited {code}\n{tail(glog)}")
-        code = swift.wait()
+        try:
+            code = finish(swift, swift_deadline, "swift test")
+        except HarnessError as e:
+            failures.append(f"{e}\n{tail(swift_log)}")
+            raise HarnessError("\n\n".join(failures)) from None
     finally:
         if swift.poll() is None:
-            swift.kill()
-            swift.wait()
+            kill_group(swift)
     try:
         swift_got = read_outputs(swift_out, cases, "swift")
         if code != 0:
@@ -929,20 +969,23 @@ def main(argv):
     p.add_argument("--count", type=int, default=DEFAULT_COUNT, help="cases per operation")
     p.add_argument("--ops", default=",".join(OPS), help="comma-separated operations")
     p.add_argument("--keep", help="keep the cases, outputs and logs in this folder")
+    p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
+                   help="seconds each oracle command may run, its build included")
     a = p.parse_args(argv)
-    ops = [o for o in a.ops.split(",") if o]
+    ops = list(dict.fromkeys(o for o in a.ops.split(",") if o))  # a repeated operation runs once
     unknown = [o for o in ops if o not in OPS]
-    if unknown or not ops or a.count < 1:
-        p.error(f"--count must be positive and --ops a list of {', '.join(OPS)}")
+    if unknown or not ops or a.count < 1 or not a.timeout > 0:
+        p.error(f"--count and --timeout must be positive and --ops a list of {', '.join(OPS)}")
     # The cases depend on the seed, the fixtures and, through READINGS, Python's Unicode tables.
     print(f"differential: seed {a.seed}, {a.count} cases per operation, python {sys.version.split()[0]} "
           f"(Unicode {unicodedata.unidata_version})", flush=True)
     start = time.monotonic()
     cases = generate(a.seed, a.count, ops)
-    work = pathlib.Path(a.keep) if a.keep else pathlib.Path(tempfile.mkdtemp(prefix="sayso-differential-"))
+    # Absolute, because Go runs in ROOT/go and Swift in ROOT, not in the caller's folder.
+    work = pathlib.Path(a.keep).resolve() if a.keep else pathlib.Path(tempfile.mkdtemp(prefix="sayso-differential-"))
     work.mkdir(parents=True, exist_ok=True)
     try:
-        go, swift = run_oracles(work, cases)
+        go, swift = run_oracles(work, cases, a.timeout)
     except HarnessError as e:
         print(f"differential: harness failure: {e}", file=sys.stderr)
         print(f"differential: files kept in {work}", file=sys.stderr)

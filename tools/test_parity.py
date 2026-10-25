@@ -66,6 +66,33 @@ class Parity(unittest.TestCase):
         r["results"][MANIFEST["fixtures"][0]["id"]] = "fail"
         self.assertIn("failed", run(r).stderr)
 
+    def test_a_failure_in_an_undeclared_component_fails(self):
+        r = full("go")
+        r["components"] = [c for c in r["components"] if c != "pcm16"]
+        fid = next(f["id"] for f in MANIFEST["fixtures"] if f["component"] == "pcm16")
+        r["results"][fid] = "fail"
+        self.assertIn(f"fixture {fid} failed", run(r).stderr)
+
+    def test_a_malformed_results_file_is_reported_and_the_rest_checked(self):
+        for doc in ([], {**full("go"), "results": []}, {**full("go"), "components": "pcm16"},
+                    {**full("go"), "implementation": ["go"]}):
+            r = run(doc, {**full("swift"), "results": {}})
+            self.assertEqual(r.returncode, 1, doc)
+            self.assertNotIn("Traceback", r.stderr, doc)
+            self.assertIn("r0.json", r.stderr, doc)
+            self.assertIn("swift: fixture", r.stderr, doc)
+
+    def test_an_unreadable_results_file_is_reported_and_the_rest_checked(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d, "swift.json")
+            p.write_text(json.dumps({**full("swift"), "results": {}}), encoding="utf-8")
+            r = subprocess.run([sys.executable, "-I", str(ROOT / "tools" / "parity.py"), str(pathlib.Path(d, "absent.json")),
+                                str(p)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("absent.json", r.stderr)
+        self.assertIn("swift: fixture", r.stderr)
+
     def test_exempt_only_for_true_said_guard_with_missing_capability(self):
         cases = {c["id"]: c for c in json.loads((ROOT / "fixtures" / "said-guard.json").read_text(encoding="utf-8"))}
         exemptable = next(f["id"] for f in MANIFEST["fixtures"] if f["requires"] and cases[f["id"]]["expect"] is True)

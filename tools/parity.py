@@ -57,29 +57,37 @@ def main(paths):
     for p in paths:
         try:
             r = json.loads(pathlib.Path(p).read_text(encoding="utf-8"), object_pairs_hook=duplicate_keys)
-        except ValueError as e:
+        except (OSError, ValueError) as e:
             problems.append(f"{p}: {e}")
             continue
-        impl = r.get("implementation")
+        if not isinstance(r, dict):
+            problems.append(f"{p}: not a JSON object")
+            continue
+        impl, results = r.get("implementation"), r.get("results", {})
+        components, capabilities = r.get("components", []), r.get("capabilities", [])
+        if not (isinstance(impl, str) and isinstance(results, dict)
+                and all(isinstance(x, list) and all(isinstance(s, str) for s in x) for x in (components, capabilities))):
+            problems.append(f"{p}: implementation must be a string, components and capabilities lists of strings, "
+                            "and results an object")
+            continue
         need = policy["implementations"].get(impl)
         if need is None:
             problems.append(f"{p}: unknown implementation {impl!r}")
             continue
-        components, capabilities = set(r.get("components", [])), set(r.get("capabilities", []))
+        components, capabilities = set(components), set(capabilities)
         for c in set(need["components"]) - components:
             problems.append(f"{impl}: must implement component {c}")
         for c in set(need["capabilities"]) - capabilities:
             problems.append(f"{impl}: must declare capability {c}")
-        results = r.get("results", {})
         for fid in results:
             if fid not in by_id:
                 problems.append(f"{impl}: unknown fixture id {fid}")
         for fid, f in by_id.items():
-            if f["component"] not in components:
-                continue
             outcome = results.get(fid)
             if outcome is None:
-                problems.append(f"{impl}: fixture {fid} was not run")
+                # Only a declared component must run every fixture; any outcome given is checked all the same.
+                if f["component"] in components:
+                    problems.append(f"{impl}: fixture {fid} was not run")
             elif outcome == "fail":
                 problems.append(f"{impl}: fixture {fid} failed")
             elif outcome == "exempt":

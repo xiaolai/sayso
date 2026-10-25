@@ -26,6 +26,8 @@ CREDENTIAL_EXPECT = {
     # private sign-in cases (setup.privateSignIn)
     "signIn", "fileMode", "entries", "elsewhere",
 }
+REQUEST_EXPECT = {"method", "params", "notification"}
+EVENT_EXPECT = {"method", "serverRequest", "noParams", "params", "paramsRaw"}
 AUTH_FILE = {"kind", "json", "raw", "hex", "rawRepeat", "padTo"}
 ERROR_EXPECT = {"class", "fatal", "code", "type", "param", "notInDescription"}
 
@@ -44,11 +46,16 @@ SCHEMA = {
         "setup.retry.rawRepeat": {"text", "count"},
         "setup.client": {"handler", "dir", "experimentalAPI", "calls"},
         "setup.client.calls[]": {"method", "params", "typed"},
+        # The scenario's controls (top of tools/fake-app-server.py); the payloads beneath them are the protocol's.
+        "setup.server": {"version", "exitBeforeInitialize", "killBeforeInitialize", "stderr", "serverRequest",
+                         "descendant", "ignoreTerm", "holdAfterEOF", "groupDescendant", "methods", "byParams"},
         "expect": CREDENTIAL_EXPECT,
-        "expect.requests[]": {"method", "params", "notification"},
-        "expect.events[]": {"method", "serverRequest", "noParams", "params", "paramsRaw"},
+        "expect.requests[]": REQUEST_EXPECT,
+        "expect.events[]": EVENT_EXPECT,
         "steps[]": {"at", "op", "stale", "expect", "note"},
         "steps[].expect": CREDENTIAL_EXPECT,
+        "steps[].expect.requests[]": REQUEST_EXPECT,
+        "steps[].expect.events[]": EVENT_EXPECT,
     },
     "mint": {
         "": {"setup", "expect"},
@@ -93,22 +100,36 @@ SCHEMA = {
 }
 
 
-def objects(case, path):
-    """The objects at path in case (see SCHEMA); a member that is absent or not an object yields none."""
-    found = [case]
+# The objects a null stands in for, because every harness reads it as absent: a case with no scenario for the fake.
+NULLABLE = {"setup.server"}
+
+
+def objects(case, path, mistyped=None):
+    """The objects at path in case (see SCHEMA); an absent member yields none. A member present but not an object,
+    or not a list of objects for "a[]", yields none too and is added to mistyped as "path: not ..."."""
+    found, walked = [case], []
     for part in path.split(".") if path else []:
         listed = part.endswith("[]")
         name = part[:-2] if listed else part
-        values = [o.get(name) for o in found]
+        walked.append(part)
+        nullable = ".".join(walked) in NULLABLE
+        values = [o[name] for o in found if name in o and not (nullable and o[name] is None)]
         if listed:
             found = [x for v in values if isinstance(v, list) for x in v if isinstance(x, dict)]
+            wrong = any(not isinstance(v, list) or not all(isinstance(x, dict) for x in v) for v in values)
+            problem = f"{'.'.join(walked)}: not a list of objects"
         else:
             found = [v for v in values if isinstance(v, dict)]
+            wrong = len(found) < len(values)
+            problem = f"{'.'.join(walked)}: not an object"
+        if wrong and mistyped is not None and problem not in mistyped:
+            mistyped.append(problem)
     return found
 
 
 def unknown_members(case):
-    """Each member of case outside its component's schema, as "path: key"; a selector value with no schema too."""
+    """Each member of case outside its component's schema, as "path: key"; a selector value with no schema, and a
+    member of the wrong type (see objects), too."""
     schema = SCHEMA.get(case.get("component"), {})
     allowed = {"": set()}
     if "by" in schema:
@@ -122,11 +143,11 @@ def unknown_members(case):
     else:
         allowed.update(schema)
     allowed[""] = allowed[""] | HEAD
-    problems = []
+    problems, mistyped = [], []
     for path, keys in sorted(allowed.items()):
-        for obj in objects(case, path):
+        for obj in objects(case, path, mistyped):
             problems += [f"{path or 'case'}: {key}" for key in sorted(obj) if key not in keys]
-    return problems
+    return mistyped + problems
 
 
 def load(path):
@@ -150,7 +171,8 @@ def scan():
             fid = case["id"]
             unknown = unknown_members(case)
             if unknown:
-                sys.exit(f"{path.relative_to(FIXTURES)}: fixture {fid} has members spec/fixtures.md does not define: "
+                sys.exit(f"{path.relative_to(FIXTURES)}: fixture {fid} has members spec/fixtures.md does not define, "
+                         "or of the wrong type: "
                          + ", ".join(unknown))
             if fid in seen:
                 sys.exit(f"duplicate fixture id {fid}")
@@ -161,6 +183,8 @@ def scan():
 
 
 def main():
+    if sys.argv[1:] not in ([], ["--check"]):
+        sys.exit("usage: tools/manifest.py [--check]")
     fresh = json.dumps(scan(), ensure_ascii=False, indent=1) + "\n"
     target = FIXTURES / "MANIFEST.json"
     if sys.argv[1:] == ["--check"]:

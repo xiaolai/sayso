@@ -199,6 +199,12 @@ class Outputs(unittest.TestCase):
             with self.assertRaisesRegex(d.HarnessError, "unexpected answer"):
                 d.read_outputs(self.path, self.cases, "t")
 
+    def test_a_malformed_or_incomplete_answer_fails(self):
+        for text in ('{"id": "echo-0", "op"\n', '["echo-0"]\n', '"echo-0"\n', '{"id": "echo-0", "op": "echo"}\n'):
+            self.path.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(d.HarnessError, "t: line 1"):
+                d.read_outputs(self.path, self.cases, "t")
+
 
 class Wiring(unittest.TestCase):
     def test_every_operation_is_routed_generated_and_answered(self):
@@ -211,13 +217,19 @@ class Wiring(unittest.TestCase):
 
 
 # A stand-in for the go and swift commands: it answers every case of SAYSO_ORACLE_IN with the case's input, or, by
-# FAKE_<TOOL>, answers nothing, stops after the first case, exits 1 after answering, or answers one case differently.
+# FAKE_<TOOL>, answers nothing, stops after the first case, exits 1 after answering, answers one case differently,
+# exits 0 without touching its output file, or hangs.
 # It refuses to run with SAYSO_RESULTS set, which would make an oracle run overwrite a suite's results.
 FAKE = """import json, os, sys
 if "SAYSO_RESULTS" in os.environ:
     sys.exit(3)
 mode = os.environ.get("FAKE_" + os.path.basename(sys.argv[0]).upper(), "ok")
-lines = [l for l in open(os.environ["SAYSO_ORACLE_IN"], encoding="ascii").read().split("\\n") if l]
+if mode == "absent":
+    sys.exit(0)
+if mode == "hang":
+    import time
+    time.sleep(60)
+lines =[l for l in open(os.environ["SAYSO_ORACLE_IN"], encoding="ascii").read().split("\\n") if l]
 with open(os.environ["SAYSO_ORACLE_OUT"], "w", encoding="utf-8") as out:
     for i, line in enumerate(lines):
         c = json.loads(line)
@@ -242,11 +254,36 @@ class Runner(unittest.TestCase):
     def tearDownClass(cls):
         cls.bin.cleanup()
 
-    def run_tool(self, *args, **modes):
+    def run_tool(self, *args, cwd=None, **modes):
         env = dict(os.environ, PATH=self.bin.name + os.pathsep + os.environ.get("PATH", ""),
                    **{f"FAKE_{k.upper()}": v for k, v in modes.items()})
         return subprocess.run([sys.executable, "-I", str(ROOT / "tools" / "differential.py"), "--count", "3",
-                               "--ops", "echo,said.matches,jwt.exp", *args], env=env, capture_output=True, text=True)
+                               "--ops", "echo,said.matches,jwt.exp", *args], env=env, capture_output=True, text=True,
+                              cwd=cwd, timeout=60)
+
+    def test_a_kept_folder_gives_no_stale_answers(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.assertEqual(self.run_tool("--keep", t).returncode, 0)
+            for modes in ({"swift": "absent"}, {"go": "absent"}):
+                r = self.run_tool("--keep", t, **modes)
+                self.assertEqual(r.returncode, 2, f"{modes}: {r.stdout}{r.stderr}")
+
+    def test_a_relative_kept_folder_reaches_both_oracles(self):
+        with tempfile.TemporaryDirectory() as t:
+            r = self.run_tool("--keep", "kept", cwd=t)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue(pathlib.Path(t, "kept", "swift-out.jsonl").exists())
+
+    def test_a_hung_oracle_is_a_harness_failure(self):
+        for modes in ({"swift": "hang"}, {"go": "hang"}):
+            r = self.run_tool("--timeout", "1", **modes)
+            self.assertEqual(r.returncode, 2, f"{modes}: {r.stdout}{r.stderr}")
+            self.assertIn("deadline", r.stderr, modes)
+
+    def test_a_repeated_operation_runs_once(self):
+        r = self.run_tool("--ops", "echo,echo")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("3 cases, 0 diverged", r.stdout)
 
     def test_agreement_passes_and_prints_the_seed(self):
         r = self.run_tool("--seed", "42")
@@ -277,7 +314,7 @@ class Runner(unittest.TestCase):
         self.assertEqual((go, swift), ({"echo-0": {"text": "a"}}, {"echo-0": {"text": "a"}}))
 
     def test_bad_arguments_are_refused_before_any_run(self):
-        for args in (["--count", "0"], ["--ops", "nope"], ["--ops", ""]):
+        for args in (["--count", "0"], ["--ops", "nope"], ["--ops", ""], ["--timeout", "0"]):
             r = subprocess.run([sys.executable, "-I", str(ROOT / "tools" / "differential.py"), *args],
                                capture_output=True, text=True, env=dict(os.environ, PATH=""))
             self.assertEqual(r.returncode, 2, args)

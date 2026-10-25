@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import pathlib
+import subprocess
+import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -16,8 +18,9 @@ SESSION = {"id": "s", "component": "session", "kind": "close", "code": 1006, "re
 PCM = {"id": "p", "component": "pcm16", "op": "plausible", "pcm": {"samples": 1, "value": 0}, "script": "", "expect": False}
 CREDENTIALS = {"id": "c", "component": "credentials",
                "setup": {"file": {"kind": "regular", "rawRepeat": {"text": "a", "count": 1}},
-                         "client": {"calls": [{"method": "x"}]}},
-               "steps": [{"op": "token", "expect": {"state": "ready"}}]}
+                         "client": {"calls": [{"method": "x"}]}, "server": {"ignoreTerm": True}},
+               "steps": [{"op": "token", "expect": {"state": "ready", "requests": [{"method": "x"}],
+                                                    "events": [{"method": "y"}]}}]}
 
 
 def with_member(case, path, key="bogus"):
@@ -44,7 +47,8 @@ class Schema(unittest.TestCase):
             (SESSION, ["", "expect"]),
             (PCM, ["", "pcm"]),
             (CREDENTIALS, ["", "setup", "setup.file", "setup.file.rawRepeat", "setup.client", "setup.client.calls[]",
-                           "steps[]", "steps[].expect"]),
+                           "setup.server", "steps[]", "steps[].expect", "steps[].expect.requests[]",
+                           "steps[].expect.events[]"]),
         ]:
             for path in paths:
                 self.assertEqual(manifest.unknown_members(with_member(case, path)), [f"{path or 'case'}: bogus"],
@@ -56,6 +60,25 @@ class Schema(unittest.TestCase):
 
     def test_a_selector_without_a_schema_is_refused(self):
         self.assertEqual(manifest.unknown_members({**SESSION, "kind": "telepathy"}), ["kind: 'telepathy' has no schema"])
+
+    def test_a_member_of_the_wrong_type_is_refused(self):
+        self.assertEqual(manifest.unknown_members({**MINT, "expect": None}), ["expect: not an object"])
+        self.assertEqual(manifest.unknown_members({**MINT, "expect": [{"bogus": True}]}), ["expect: not an object"])
+        self.assertEqual(manifest.unknown_members({**CREDENTIALS, "steps": {"op": "token"}}), ["steps[]: not a list of objects"])
+        self.assertEqual(manifest.unknown_members({**CREDENTIALS, "steps": [1]}), ["steps[]: not a list of objects"])
+        self.assertEqual(manifest.unknown_members({**CREDENTIALS, "setup": None}), ["setup: not an object"])
+        self.assertEqual(manifest.unknown_members({**CREDENTIALS, "setup": {"server": None}}), [],
+                         "both harnesses read a null scenario as none")
+
+
+class Arguments(unittest.TestCase):
+    def test_an_unknown_argument_writes_nothing(self):
+        target = manifest.FIXTURES / "MANIFEST.json"
+        before = target.stat().st_mtime_ns
+        r = subprocess.run([sys.executable, "-I", str(ROOT / "tools" / "manifest.py"), "--chek"], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("usage", r.stderr)
+        self.assertEqual(target.stat().st_mtime_ns, before)
 
 
 if __name__ == "__main__":
