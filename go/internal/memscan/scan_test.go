@@ -6,10 +6,14 @@ import (
 	"errors"
 	"syscall"
 	"testing"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // The scan of a span reads around a page it cannot read: a needle in a later page of the same chunk is still found,
-// and the unreadable page is counted, never skipped in silence.
+// and the unreadable page is counted, never skipped in silence. The page is unmapped, not made PROT_NONE: Linux reads
+// /proc/self/mem past a page's protection, so only a hole is unreadable on both systems.
 func TestScanSpanReadsAroundAnUnreadablePage(t *testing.T) {
 	s, err := New(0)
 	if err != nil {
@@ -24,7 +28,7 @@ func TestScanSpanReadsAroundAnUnreadablePage(t *testing.T) {
 	}
 	defer func() { _ = syscall.Munmap(m) }()
 	copy(m[2*page+100:], s.Bytes(r))
-	if err := syscall.Mprotect(m[page:2*page], syscall.PROT_NONE); err != nil {
+	if err := unix.MunmapPtr(unsafe.Pointer(&m[page]), uintptr(page)); err != nil {
 		t.Fatal(err)
 	}
 	counts := make([]int, len(s.needles))
