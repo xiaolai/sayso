@@ -16,9 +16,7 @@ func svWordsWithZero(_ words: [String]) -> SvSeq { words.map { $0 == "zero" ? sv
 /// Every scalar is an ASCII digit; true for "", as in Go.
 func svAllDigits(_ s: String) -> Bool { s.unicodeScalars.allSatisfy(svDigit) }
 
-let svScales: [String: UInt64] = [
-    "thousand": 1000, "million": 1_000_000, "billion": 1_000_000_000, "trillion": 1_000_000_000_000,
-]
+let svScales: [String: UInt64] = Dictionary(uniqueKeysWithValues: NumWords.scales.map { ($0.name, $0.v) })
 
 func svIsScaleWord(_ w: String) -> Bool { svScales[w] != nil || w == "hundred" }
 
@@ -186,7 +184,8 @@ func svNumberUnits(_ text: String, _ language: String, _ spell: SpellOut?) -> [S
         digitForms.append(svGroupDigits(intPart) + fracText)  // also beyond the cardinal range
     }
     for d in digitForms {
-        unit.append(lit(sign + d + suffix))
+        let written = lit(sign + d + suffix)
+        if !unit.contains(written) { unit.append(written) }  // "42" and "1,000" are already the reading as written
         if !sign.isEmpty && base == "en" {
             unit.append(lit("minus", d + suffix))
             unit.append(lit("negative", d + suffix))
@@ -444,13 +443,16 @@ func svHanUnit(_ run: String) -> SvUnit {
         if rs.count == 2 || (rs.count > 2 && rs.contains("两")) { return unit }
         unit.append(lit(svString(rs.map { Unicode.Scalar(UInt8(0x30 + svHanDigit[$0]!)) })))
         // A lone digit is a number: its other spellings (二 and 两, 零 and 〇).
-        if rs.count == 1 { unit += svHanSeqs(UInt64(svHanDigit[rs[0]]!)) }
+        if rs.count == 1 {
+            for seq in svHanSeqs(UInt64(svHanDigit[rs[0]]!)) where !unit.contains(seq) { unit.append(seq) }
+        }
         return unit
     }
     guard let n = svParseHan(rs) else { return unit }
     unit.append(lit(String(n)))
     if n >= 1000 { unit.append(lit(svCommaDigits(n))) }
-    return unit + svHanSeqs(n)
+    for seq in svHanSeqs(n) where !unit.contains(seq) { unit.append(seq) }  // the run as written is one of them
+    return unit
 }
 
 // --- English number words in the script ---
@@ -518,7 +520,7 @@ let svOrdinalWords: [String: String] = {
         let c = NumWords.cardinal(v)
         m[NumWords.ordinal(c)[0]] = c[0]
     }
-    for s in ["hundred", "thousand", "million", "billion", "trillion"] { m[NumWords.ordinal([s])[0]] = s }
+    for s in ["hundred"] + NumWords.scales.map(\.name) { m[NumWords.ordinal([s])[0]] = s }
     m["zeroth"] = "zero"
     return m
 }()

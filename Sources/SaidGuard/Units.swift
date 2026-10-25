@@ -150,8 +150,20 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             units.append([[["oh", "o", "zero", "0"]]])
             continue
         }
+        // A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
+        // sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
+        // domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
+        var j = k + 1
+        var labels = [k]
+        let lowercase = low == r.text
+        while lowercase && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
+            labels.append(j)
+            j += 1
+        }
+        // Single-letter labels are initials ("x.y") unless a longer label follows them ("x.y.com").
+        let domain = labels.count >= 2 && !labels.allSatisfy(singleLetter)
         // A run of single letters is a spelled code, transcribed spaced or joined ("X J" = "XJ").
-        if singleLetter(k) && singleLetter(k + 1) && svSpelledGap(raws[k + 1].gap) {
+        if !domain && singleLetter(k) && singleLetter(k + 1) && svSpelledGap(raws[k + 1].gap) {
             var j = k
             var letters: [String] = []
             while j < raws.count && singleLetter(j) && (j == k || svSpelledGap(raws[j].gap)) {
@@ -167,16 +179,6 @@ func svScriptUnits(_ s: String, _ language: String) -> [SvUnit] {
             units.append(unit)
             k = j - 1
             continue
-        }
-        // A domain: "www.example.com" may be read "www dot example dot com". Lowercase only, so "Dr.Smith" and a
-        // sentence run together ("end.Next") are not domains. Recognised before number words, so "one.com" is a
-        // domain; a label may be one letter ("x.com"), and a hyphenated label is cut as the transcript cuts it.
-        var j = k + 1
-        var labels = [k]
-        let lowercase = low == r.text
-        while lowercase && j < raws.count && word(j) && raws[j].gap == "." && lower(j) == raws[j].text {
-            labels.append(j)
-            j += 1
         }
         if labels.count >= 2 {  // "one.Next" has no second lowercase label: a number word and a word
             // One unit a label and one a dot, so each choice is independent and the readings stay linear in the

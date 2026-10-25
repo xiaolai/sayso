@@ -54,8 +54,10 @@ func svBetweenNumbers(_ rs: [Unicode.Scalar], _ i: Int) -> Bool {
     } else if p >= 2 && svOrdinalSuffixAt(rs, p - 1) {
         p -= 2
     }
-    if n < rs.count && ((svMinus(rs[n]) && svSignAt(rs, n)) || (rs[n] == "+" && svOperandAt(rs, n + 1))) {
-        n += 1  // a signed operand ("5 - -2", "5 - +2")
+    if n < rs.count && svMinus(rs[n]) {
+        if let o = svSignOperand(rs, n) { n = o }  // a signed operand, its sign spaced or not ("5 - -2", "5 - - 2")
+    } else if n < rs.count && rs[n] == "+" && svOperandAt(rs, n + 1) {
+        n += 1  // "5 - +2"
     }
     return p >= 0 && (svDigit(rs[p]) || isHanNumeral(rs[p])) && svOperandAt(rs, n)
 }
@@ -162,7 +164,9 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
     var i = 0
     while i < rs.count {
         let r = rs[i]
-        let sign = svBetweenNumbers(rs, i) ? nil : svSignOperand(rs, i)
+        // Only a minus looks across the spaces around it: asked at every space, a run of them would cost its square.
+        let between = svMinus(r) && svBetweenNumbers(rs, i)
+        let sign = between ? nil : svSignOperand(rs, i)
         if svDigit(r) || sign != nil
             || (r == "." && i + 1 < rs.count && svDigit(rs[i + 1]) && (i == 0 || !svDigit(rs[i - 1])))
             || (r == "," && i + 1 < rs.count && svDigit(rs[i + 1]) && (i == 0 || isSpace(rs[i - 1])))
@@ -174,16 +178,13 @@ func svLex(_ s: String, hanNumbers: Bool) -> [SvRaw] {
                 j += 2
                 while j < rs.count && svDigit(rs[j]) { j += 1 }
             }
-            if j + 1 < rs.count && svDigit(rs[j - 1]) {
-                let suf = goLower(svString(rs[j..<j + 2]))
-                if (suf == "st" || suf == "nd" || suf == "rd" || suf == "th") && (j + 2 >= rs.count || !svLetter(rs[j + 2])) {
-                    j += 2
-                }
+            if svDigit(rs[j - 1]) && svOrdinalSuffixAt(rs, j) && (j + 2 >= rs.count || !svLetter(rs[j + 2])) {
+                j += 2
             }
             if j < rs.count && rs[j] == "%" { j += 1 }
             emit(.number, i, j, body: sign)
             i = j
-        } else if svMinus(r) && svBetweenNumbers(rs, i) {
+        } else if between {
             emit(.symbol, i, i + 1)
             i += 1
         } else if r == "−" {

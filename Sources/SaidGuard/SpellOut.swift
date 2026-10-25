@@ -22,9 +22,12 @@ final class SpellOut: @unchecked Sendable {
     private let decimalSeparator: String
     private var tables: (values: [String: Decimal], vocabulary: Set<String>)?
 
-    /// Bounds a value read from digits; larger numbers are as written only.
+    /// Bounds a value read from digits; larger numbers are as written only. ICU spells through a double, which holds
+    /// any decimal of at most fifteen significant digits exactly, so that bounds the integer and fraction digits
+    /// together: "100000000000000,000001" spells "cent billions" in French, dropping its fraction.
     private static let maxIntegerDigits = 15
     private static let maxFractionDigits = 6
+    private static let maxDigits = 15
     /// The most words a spelled number is read across.
     private static let maxPhraseWords = 8
 
@@ -71,7 +74,21 @@ final class SpellOut: @unchecked Sendable {
         // Negating zero leaves it unsigned, so "-0" would be spelled without its sign: as written only.
         guard let v = value(digits: body), !(sign == "-" && v.isZero) else { return nil }
         lock.lock()
-        let s = spell.string(from: NSDecimalNumber(decimal: sign == "-" ? -v : v))
+        var s = spell.string(from: NSDecimalNumber(decimal: sign == "-" ? -v : v))
+        var whole = Decimal()
+        var exact = v
+        NSDecimalRound(&whole, &exact, 0, .plain)
+        if sign == "-" && whole != v {
+            // ICU misspells some negative fractions (Korean -1.5 as "마이너스 이점오", minus 2.5): the positive spelling
+            // after the locale's minus, read from how it spells -1 around 1; none when it does not prefix one.
+            s = nil
+            if let positive = spell.string(from: NSDecimalNumber(decimal: v)),
+                let one = spell.string(from: 1), let minusOne = spell.string(from: -1),
+                minusOne.hasSuffix(one), minusOne.count > one.count
+            {
+                s = String(minusOne.dropLast(one.count)) + positive
+            }
+        }
         lock.unlock()
         guard let s else { return nil }
         let t = tokens(s)
@@ -98,7 +115,7 @@ final class SpellOut: @unchecked Sendable {
             }
         }
         guard intDigits > 0, intDigits <= Self.maxIntegerDigits, fracDigits <= Self.maxFractionDigits,
-            !seenDecimal || fracDigits > 0, let v = Decimal(string: canonical, locale: Locale(identifier: "en_US_POSIX"))
+            intDigits + fracDigits <= Self.maxDigits, !seenDecimal || fracDigits > 0, let v = Decimal(string: canonical, locale: Locale(identifier: "en_US_POSIX"))
         else { return nil }
         let n = NSDecimalNumber(decimal: v)
         lock.lock()

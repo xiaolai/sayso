@@ -33,9 +33,10 @@ enum NumWords {
         preconditionFailure("unreachable")
     }
 
-    /// An ASCII digit string read one digit at a time.
+    /// An ASCII digit string read one digit at a time; no words unless it holds only ASCII digits, as in Go.
     static func digits(_ ds: String) -> [String] {
-        ds.unicodeScalars.map { ones[Int($0.value) - 0x30] }
+        guard ds.unicodeScalars.allSatisfy({ (0x30...0x39).contains($0.value) }) else { return [] }
+        return ds.unicodeScalars.map { ones[Int($0.value) - 0x30] }
     }
 
     private static let ordinalIrregular = [
