@@ -26,7 +26,11 @@ final class SessionSecretTests: XCTestCase {
         XCTAssertEqual(Secret.scrub("ovlap-ovlap-ovlap"), "<redacted>")
     }
 
-    func testRepeatedPrefixIsLinear() {
+    func testRepeatedPrefixIsLinear() throws {
+        // A sanitizer slows this single-threaded scan some twentyfold, to about the bound, so under one the clock
+        // measures the sanitizer. The unsanitized runs keep the bound, which the old scan missed by orders of
+        // magnitude.
+        if MemoryScan.allocatorReplaced { throw XCTSkip("a sanitizer's slowdown, not the scan's, would be timed") }
         let s = String(repeating: "eyJ", count: 60_000)
         let start = Date()
         XCTAssertEqual(Secret.scrub(s), s)
