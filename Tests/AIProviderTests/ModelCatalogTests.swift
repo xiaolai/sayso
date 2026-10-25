@@ -134,6 +134,14 @@ struct ModelCatalogTests {
         #expect(models.map(\.contextLength) == [nil, nil, nil, 2_048, nil])
     }
 
+    /// A whole number keeps every digit: 2⁵³ + 1 is not rounded to 2⁵³, and `Int.max` itself is a window.
+    @Test func aContextWindowKeepsItsPrecision() async throws {
+        let body = #"{"data":[{"id":"a","context_length":9007199254740993},{"id":"b","context_length":9223372036854775807},{"id":"c","context_length":4096.0}]}"#
+        Stub.install { _ in (200, Data(body.utf8)) }
+        let models = try await ModelCatalog().fetch(Self.request(), session: Self.session())
+        #expect(models.map(\.contextLength) == [9_007_199_254_740_993, Int.max, 4_096])
+    }
+
     // MARK: - Typed failures
 
     @Test func aMissingKeyIsNotARequest() async {

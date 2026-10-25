@@ -24,9 +24,8 @@ case the library does not yet know:
 | `unknown` | a reason this build does not recognise, or (pre-26.4 SDKs) the only answer there is |
 
 `AppleAvailability.fixedCases` lists the five cases with no payload, for a settings row that must word each one by
-name; `.system` is excluded because its versions are the reader's, never a fixed set. `isKnownCase` is `true` for
-every case including `.system`; only a truly unrecognised framework value, mapped through `@unknown default`, is
-`.unknown`.
+name; `.system` is excluded because its versions are the reader's, never a fixed set. Only a truly unrecognised
+framework value, mapped through `@unknown default`, is `.unknown`.
 
 A caller decides for itself whether the running system is new enough for its own use of this source; that floor and
 its sentence belong to the app, not to this library.
@@ -39,9 +38,10 @@ on the model. No history crosses asks. Before a session is created:
 1. **Cancellation** (`Task.isCancelled`) is checked first; a cancelled ask never reaches the framework.
 2. **Availability** is checked again, fresh: `.unavailable(reason)` throws `.unavailable` with the mapped reason,
    before a session exists.
-3. **A token preflight** compares the question against `model.contextSize`, advisory only — it does not count the
-   answer schema or the output budget, so a count that cannot be taken, or that disagrees with the framework later,
-   is never itself a refusal. Only the framework's own context error (below) is authoritative.
+3. **A token preflight** compares the question against `model.contextSize`. A question whose own count is past the
+   window can never fit, and is refused as `.contextExceeded` before a session exists. The count leaves out the
+   answer schema and the output budget, so a question under the window proves nothing, and a count that cannot be
+   taken is never a refusal; the framework's own context error (below) decides every other case.
 
 Generation is **guided**: `session.respond(to:generating: Answer.self, options: .init(temperature: 0))`, not a
 free-form prose ask that happens to decode as JSON — guided generation was measured to fail a strict shape check far
@@ -74,7 +74,7 @@ log line carries; the sentence a reader sees is the app's own, worded from the t
 
 A build whose SDK has no `FoundationModels` (an older OS, or a target this library does not guide on) still
 compiles `AppleOnDeviceProvider<Answer>`: `availability()` returns `.unknown` and every `answer(to:)` throws
-`.unavailable(.unknown)`, so a consumer written against the fuller build needs no `#if canImport` of its own.
+`.unavailable(.unknown)` (`.cancelled` when the task is already cancelled), so a consumer written against the fuller build needs no `#if canImport` of its own.
 
 ## Parity
 

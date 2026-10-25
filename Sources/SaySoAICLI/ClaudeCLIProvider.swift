@@ -81,12 +81,13 @@ public struct ClaudeCLIProvider: AIProvider {
                 executable: executable, arguments: arguments, environment: environment,
                 workingDirectory: configuration.workingDirectory, input: question, deadline: remaining)
         } catch {
+            guard !Task.isCancelled else { throw .cancelled }
             throw CLIProviderSupport.mapped(error)
         }
-        guard run.status == 0 else { throw Self.classify(run) }
-        // **A cancelled ask is cancelled even if the child finished**: its answer must not be handed to a reader who
-        // has moved on.
+        // **A cancelled ask is cancelled even if the child finished**, before its status is read: neither its answer
+        // nor its failure is handed to a reader who has moved on.
         guard !Task.isCancelled else { throw .cancelled }
+        guard run.status == 0 else { throw Self.classify(run) }
         return try Self.text(from: run.stdout)
     }
 
@@ -163,11 +164,19 @@ public struct ClaudeCLIProvider: AIProvider {
 
     /// The model's answer text: `structured_output` when the CLI returns it, else `result`. **The envelope's own verdict
     /// comes first**: an error envelope is a refusal whatever it carries — a structured output included.
+    /// A turn that stopped at a refusal or the token ceiling is no answer, whatever `result` says. The structured output
+    /// is any JSON value the caller's schema describes, not only an object.
     static func text(from stdout: String) throws(AIProviderError) -> String {
         guard let object = Self.envelope(stdout) else { throw .badShape }
         if let refusal = Self.envelopeError(object) { throw refusal }
-        if let structured = object["structured_output"] as? [String: Any] {
-            guard let encoded = try? JSONSerialization.data(withJSONObject: structured, options: [.sortedKeys]) else {
+        switch object["stop_reason"] as? String {
+        case "refusal": throw .refused
+        case "max_tokens": throw .truncated
+        default: break
+        }
+        if let structured = object["structured_output"], !(structured is NSNull) {
+            guard let encoded = try? JSONSerialization.data(withJSONObject: structured,
+                                                            options: [.sortedKeys, .fragmentsAllowed]) else {
                 throw .badShape
             }
             return String(decoding: encoded, as: UTF8.self)
@@ -184,18 +193,24 @@ public struct ClaudeCLIProvider: AIProvider {
     }
 
     /// **The envelope's own verdict**: an error envelope is a refusal whatever it carries, classified from its own
-    /// sentence rather than from whatever else the streams happen to hold.
+    /// sentence rather than from whatever else the streams happen to hold. The sentence is the envelope's `errors`,
+    /// with `result` as a fallback.
     static func envelopeError(_ object: [String: Any]) -> AIProviderError? {
         let isError = object["is_error"] as? Bool ?? false
         let subtype = object["subtype"] as? String
         guard isError || (subtype != nil && subtype != "success") else { return nil }
-        return Self.classify(text: object["result"] as? String ?? "", status: 0)
+        let errors = (object["errors"] as? [Any])?.compactMap { $0 as? String } ?? []
+        let words = (errors + [object["result"] as? String ?? ""]).joined(separator: "\n")
+        return Self.classify(text: words, status: 0)
     }
 
-    /// A failing run's own words: **the structured verdict first**, the raw streams only when the CLI wrote no
-    /// envelope.
+    /// A failing run's own words: **the structured verdict first**; the raw streams when the CLI wrote no envelope, or
+    /// one whose words name nothing this build knows.
     static func classify(_ run: CLIProcess.Run) -> AIProviderError {
-        if let object = Self.envelope(run.stdout), let refusal = Self.envelopeError(object) { return refusal }
+        if let object = Self.envelope(run.stdout), let refusal = Self.envelopeError(object),
+           refusal != .framework("claude error") {
+            return refusal
+        }
         return Self.classify(text: run.stdout + "\n" + run.stderr, status: run.status)
     }
 

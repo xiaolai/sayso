@@ -4,7 +4,7 @@ import Testing
 
 #if canImport(FoundationModels)
 import FoundationModels
-import SaySoAIApple
+@testable import SaySoAIApple
 
 @available(macOS 26.4, iOS 26.4, *)
 @Generable
@@ -24,11 +24,18 @@ struct AppleProviderTests {
         }))
     }
 
-    @Test func availabilityIsOneKnownCase() {
+    /// Each framework answer maps to the library's case of the same meaning.
+    @Test func availabilityMapsEachFrameworkCase() {
         guard #available(macOS 26.4, iOS 26.4, *) else { return }
-        let availability = AppleOnDeviceProvider<ProbeAnswer>.availability()
-        #expect(availability.isKnownCase)
-        #expect(AppleAvailability.fixedCases.count == 5)
+        typealias P = AppleOnDeviceProvider<ProbeAnswer>
+        #expect(P.mapped(.available) == .available)
+        #expect(P.mapped(.unavailable(.deviceNotEligible)) == .deviceNotEligible)
+        #expect(P.mapped(.unavailable(.appleIntelligenceNotEnabled)) == .appleIntelligenceNotEnabled)
+        #expect(P.mapped(.unavailable(.modelNotReady)) == .modelNotReady)
+        #expect(P.mappedReason(.modelNotReady) == .modelNotReady)
+        #expect(AppleAvailability.fixedCases == [
+            .available, .deviceNotEligible, .appleIntelligenceNotEnabled, .modelNotReady, .unknown,
+        ])
     }
 
     /// When Apple's model cannot run here, the provider says exactly why and never creates a session.

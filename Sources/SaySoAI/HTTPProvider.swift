@@ -16,14 +16,17 @@ public struct HTTPProvider: AIProvider {
         public let apiKey: String?
         public let auth: AIProviderAuth
         public let tokenField: AIProviderTokenField
+        public let temperature: AIProviderTemperature
 
         public init(endpoint: URL, model: String, apiKey: String? = nil,
-                    auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst) {
+                    auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst,
+                    temperature: AIProviderTemperature = .zero) {
             self.endpoint = endpoint
             self.model = model
             self.apiKey = apiKey
             self.auth = auth
             self.tokenField = tokenField
+            self.temperature = temperature
         }
     }
 
@@ -85,14 +88,19 @@ public struct HTTPProvider: AIProvider {
     /// `max_completion_tokens`; a 400 or 422 is answered once with the older field, and only then. The retry is the
     /// status's, not the sentence's: DeepSeek answers 422 with "Invalid Parameters" and does not necessarily name the
     /// field (measured 2026-10-25). A probe uses the same path, so a server that answers questions does not fail its
-    /// own connection test.
+    /// own connection test. **Only a retry that succeeds replaces the first reply**: one that fails too, by status or
+    /// transport, would hide what the server said about the request the profile meant to send.
     private func ask(_ body: Body) async throws(AIProviderError) -> Reply {
-        var reply = try await send(body)
-        if reply.status == 400 || reply.status == 422 {
-            reply = try await send(Body(model: body.model, question: body.question, tokens: body.tokens,
-                                        tokenField: body.tokenField == .completion ? .max : .completion))
+        let reply = try await send(body)
+        guard reply.status == 400 || reply.status == 422 else { return reply }
+        do {
+            let retry = try await send(Body(model: body.model, question: body.question, tokens: body.tokens,
+                                            tokenField: body.tokenField == .completion ? .max : .completion))
+            return (200..<300).contains(retry.status) ? retry : reply
+        } catch {
+            if error == .cancelled { throw error }
+            return reply
         }
-        return reply
     }
 
     /// The field the profile prefers first; the retry covers the other.
@@ -134,14 +142,14 @@ public struct HTTPProvider: AIProvider {
         let tokens: Int
         let tokenField: TokenField
 
-        func json() throws(AIProviderError) -> Data {
-            let object: [String: Any] = [
+        func json(temperature: AIProviderTemperature) throws(AIProviderError) -> Data {
+            var object: [String: Any] = [
                 "model": model,
                 "messages": [["role": "user", "content": question]],
-                "temperature": 0,
                 "stream": false,
                 tokenField.rawValue: tokens,
             ]
+            if temperature == .zero { object["temperature"] = 0 }
             guard let data = try? JSONSerialization.data(withJSONObject: object) else { throw .badShape }
             return data
         }
@@ -152,7 +160,7 @@ public struct HTTPProvider: AIProvider {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         Wire.authorize(&request, auth: configuration.auth, key: configuration.apiKey)
-        request.httpBody = try body.json()
+        request.httpBody = try body.json(temperature: configuration.temperature)
         let delegate = RedirectGuard(origin: origin)
         do {
             let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
@@ -263,9 +271,13 @@ public struct HTTPProvider: AIProvider {
         // **The envelope is required even for a probe**: a 200 carrying `{}` proves nothing about the address or the
         // model. Only the content itself may be empty for a probe.
         guard let choices = object["choices"] as? [[String: Any]], let first = choices.first else { throw .badShape }
-        if let finish = first["finish_reason"] as? String {
-            if finish == "length", !allowLength { throw .truncated }
-            if finish == "content_filter" { throw .refused }
+        // **Only a turn the server says it finished is an answer**: a missing, null or unknown reason, or a tool-call
+        // turn, is not one, whatever content it carries.
+        switch first["finish_reason"] as? String {
+        case "stop": break
+        case "length": if !allowLength { throw .truncated }
+        case "content_filter": throw .refused
+        default: throw .badShape
         }
         guard let message = first["message"] as? [String: Any] else { throw .badShape }
         if let refusal = message["refusal"] as? String, !refusal.isEmpty { throw .refused }

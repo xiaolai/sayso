@@ -174,6 +174,47 @@ struct CodexCLIProviderTests {
         #expect(existedAtProbe.withLock { $0 }, "login's probe ran before the app's home was created")
     }
 
+    /// **The whole ask has one budget**: a probe that runs past it ends the ask as `.timeout`, and the run gets only
+    /// what the probe left.
+    @Test func theProbeSpendsTheAsksBudget() async throws {
+        let (stub, url) = try Self.stub()
+        try stub.write("response", "answer")
+        let configuration = CodexCLIProvider.Configuration(
+            executable: url, codexHome: stub.directory.appending(path: "codex-home"),
+            workingDirectory: stub.directory.appending(path: "work"), timeout: .milliseconds(500))
+        let provider = CodexCLIProvider(configuration: configuration) { _ in
+            try? await Task.sleep(for: .seconds(3))
+            return CodexCLIProvider.Probe(state: .ready, bin: url.path, version: "0.163.0")
+        }
+        let start = ContinuousClock.now
+        do {
+            _ = try await provider.answer(to: "q")
+            Issue.record("an ask past its budget answered")
+        } catch {
+            #expect(error == .timeout)
+        }
+        #expect(ContinuousClock.now - start < .seconds(2))
+        #expect(!FileManager.default.fileExists(atPath: stub.directory.appending(path: "argv.1").path))
+    }
+
+    /// **A probed executable that is gone is refused**, not replaced by whatever discovery finds: the replacement's
+    /// version was never checked.
+    @Test func aProbedExecutableThatIsGoneIsRefused() async throws {
+        let stub = try CLIStub()
+        let gone = stub.directory.appending(path: "gone-codex").path
+        let configuration = CodexCLIProvider.Configuration(
+            codexHome: stub.directory.appending(path: "codex-home"), workingDirectory: stub.directory.appending(path: "work"))
+        let provider = CodexCLIProvider(configuration: configuration) { _ in
+            CodexCLIProvider.Probe(state: .ready, bin: gone, version: "0.163.0")
+        }
+        do {
+            _ = try await provider.check()
+            Issue.record("a vanished executable was replaced")
+        } catch {
+            #expect(error == .notInstalled)
+        }
+    }
+
     @Test func aSecretInStderrNeverEntersADescription() async throws {
         let (stub, url) = try Self.stub()
         try stub.write("stderr", "sk-SECRET-XYZ\n")

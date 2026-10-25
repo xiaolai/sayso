@@ -45,12 +45,12 @@ enum Wire {
         data.reserveCapacity(min(64 << 10, cap))
         do {
             for try await byte in bytes {
-                data.append(byte)
-                if data.count > cap {
+                if data.count == cap {
                     bytes.task.cancel()
                     if truncating { return WireBody(data: data, truncated: true) }
                     throw WireFailure.tooLarge
                 }
+                data.append(byte)
             }
         } catch let failure as WireFailure {
             throw failure

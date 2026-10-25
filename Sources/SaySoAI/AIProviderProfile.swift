@@ -16,6 +16,13 @@ public enum AIProviderTokenField: Sendable, Equatable {
     case maxTokensFirst
 }
 
+/// **Whether the request carries a temperature**: `0` where the service takes it; none where its models refuse one
+/// (Anthropic's current models reject `temperature: 0`), so the server's default applies.
+public enum AIProviderTemperature: Sendable, Equatable {
+    case zero
+    case serverDefault
+}
+
 /// **What a model list can be filtered to**: some services mix chat models with embeddings, speech and images; others
 /// say in the list itself which models take text.
 public enum AIProviderModelFilter: Sendable, Equatable {
@@ -36,6 +43,7 @@ public struct AIProviderProfile: Sendable, Equatable, Identifiable {
     public let auth: AIProviderAuth
     public let keyRequired: Bool
     public let tokenField: AIProviderTokenField
+    public let temperature: AIProviderTemperature
     /// The path appended to the base for `GET`: `models` for nearly every service; nil when it lists none.
     public let modelsPath: String?
     /// Whether the list request **requires** the key (a cloud's list usually does; a local server's is unauthenticated).
@@ -51,13 +59,15 @@ public struct AIProviderProfile: Sendable, Equatable, Identifiable {
 
     public init(id: String, name: String, baseURL: URL?, auth: AIProviderAuth, keyRequired: Bool,
                 tokenField: AIProviderTokenField, modelsPath: String?, modelsNeedKey: Bool, modelsSendKey: Bool,
-                modelFilter: AIProviderModelFilter, hints: [String] = [], note: String? = nil) {
+                modelFilter: AIProviderModelFilter, hints: [String] = [], note: String? = nil,
+                temperature: AIProviderTemperature = .zero) {
         self.id = id
         self.name = name
         self.baseURL = baseURL
         self.auth = auth
         self.keyRequired = keyRequired
         self.tokenField = tokenField
+        self.temperature = temperature
         self.modelsPath = modelsPath
         self.modelsNeedKey = modelsNeedKey
         self.modelsSendKey = modelsSendKey
@@ -87,7 +97,8 @@ public struct AIProviderProfile: Sendable, Equatable, Identifiable {
                           tokenField: .completionFirst, modelsPath: "models", modelsNeedKey: true,
                           modelsSendKey: true, modelFilter: .all,
                           hints: ["claude-opus-5-5", "claude-sonnet-5-5"],
-                          note: "Anthropic's OpenAI SDK compatibility layer; the native Claude API has more features."),
+                          note: "Anthropic's OpenAI SDK compatibility layer; the native Claude API has more features.",
+                          temperature: .serverDefault),
         AIProviderProfile(id: "deepseek", name: "DeepSeek", baseURL: URL(string: "https://api.deepseek.com"),
                           auth: .bearer, keyRequired: true, tokenField: .maxTokensFirst, modelsPath: "models",
                           modelsNeedKey: true, modelsSendKey: true, modelFilter: .all,

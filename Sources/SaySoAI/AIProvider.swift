@@ -18,13 +18,24 @@ public struct AIProviderID: Sendable, Equatable {
         self.endpoint = endpoint.map(Self.scrubbed)
     }
 
-    /// **A credential carries no identity**: a URL may embed a user, a password or a fragment, and this is what
-    /// diagnostics, logs and descriptions print. The endpoint's path and query still tell two servers apart.
+    /// **A credential carries no identity**: a URL may embed a user, a password, a fragment or a credential-bearing
+    /// query item (`api_key`, `key`, `token`, `access_token` — some APIs, e.g. Gemini's `?key=`, accept a key only
+    /// this way), and this is what diagnostics, logs and descriptions print. Every other query item still tells two
+    /// servers apart.
+    private static let credentialQueryNames: Set<String> = ["key", "api_key", "apikey", "token", "access_token"]
+
     static func scrubbed(_ url: URL) -> URL {
         guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
         parts.user = nil
         parts.password = nil
         parts.fragment = nil
+        if let items = parts.queryItems {
+            parts.queryItems = items.map { item in
+                credentialQueryNames.contains(item.name.lowercased())
+                    ? URLQueryItem(name: item.name, value: "REDACTED")
+                    : item
+            }
+        }
         return parts.url ?? url
     }
 }
@@ -126,17 +137,10 @@ public enum AppleAvailability: Sendable, Equatable {
     case unknown
 
     /// **The cases without a payload**, for a row that must word each one. A `.system` value is infinitely variable
-    /// (its versions are the reader's), so it is never in a list; `isKnownCase` covers it.
+    /// (its versions are the reader's), so it is never in a list.
     public static let fixedCases: [AppleAvailability] = [
         .available, .deviceNotEligible, .appleIntelligenceNotEnabled, .modelNotReady, .unknown,
     ]
-
-    /// Whether this value is one of the reasons this build knows.
-    public var isKnownCase: Bool {
-        switch self {
-        case .available, .deviceNotEligible, .appleIntelligenceNotEnabled, .modelNotReady, .system, .unknown: true
-        }
-    }
 
     /// A stable, display-free code for logs and the provider error's identity (never a sentence).
     public var code: String {

@@ -228,6 +228,78 @@ struct HTTPProviderTests {
         await #expect(throws: AIProviderError.refused) { try await provider.answer(to: "q") }
     }
 
+    /// **Only a turn the server says it finished is an answer**: a missing, null or unknown `finish_reason`, or an
+    /// unfinished tool-call turn, is no completed answer even with content. The probe's `length` exception stays.
+    @Test func anUnfinishedTurnIsABadShape() async throws {
+        for finish in [#""tool_calls""#, "null", #""mystery""#] {
+            Stub.install { _ in
+                (200, Data(#"{"choices":[{"message":{"role":"assistant","content":"x"},"finish_reason":\#(finish)}]}"#.utf8))
+            }
+            let provider = try Self.provider()
+            await #expect(throws: AIProviderError.badShape, "finish_reason \(finish)") { try await provider.answer(to: "q") }
+        }
+        Stub.install { _ in (200, Data(#"{"choices":[{"message":{"role":"assistant","content":"x"}}]}"#.utf8)) }
+        await #expect(throws: AIProviderError.badShape) { try await Self.provider().answer(to: "q") }
+        Stub.install { _ in (200, Data(Self.answer("x", finish: "length").utf8)) }
+        _ = try await Self.provider().probe()
+    }
+
+    /// **The negotiation never hides the server's first word**: when the retry with the other field fails too, the
+    /// reader sees what the server said about the request the profile meant to send.
+    @Test func aFailedRetryKeepsTheOriginalRefusal() async throws {
+        Stub.install { request in
+            let body = (try? Self.body(of: request)) ?? [:]
+            if body["max_completion_tokens"] != nil {
+                return (400, Data(#"{"error":{"message":"The prompt is too long"}}"#.utf8))
+            }
+            return (429, Data("{}".utf8))
+        }
+        let provider = try Self.provider()
+        await #expect(throws: AIProviderError.server(status: 400, message: "The prompt is too long")) {
+            try await provider.answer(to: "q")
+        }
+        #expect(Stub.requests.count == 2)
+    }
+
+    /// **A profile whose models refuse a temperature sends none**: Anthropic's current models reject `temperature: 0`,
+    /// so its preset leaves the field out, on the first request and on the token-field retry alike.
+    @Test func aProfileWithoutTemperatureSendsNone() async throws {
+        let anthropic = try #require(AIProviderProfile.profile(id: "anthropic"))
+        #expect(anthropic.temperature == .serverDefault)
+        #expect(AIProviderProfile.profile(id: "openai")?.temperature == .zero)
+        Stub.install { request in
+            let body = (try? Self.body(of: request)) ?? [:]
+            if body["max_completion_tokens"] != nil { return (400, Data("{}".utf8)) }
+            return (200, Data(Self.answer("ok").utf8))
+        }
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        let provider = try HTTPProvider(configuration: .init(endpoint: url, model: "m", apiKey: "k",
+                                                             temperature: anthropic.temperature),
+                                        session: Self.session())
+        #expect(try await provider.answer(to: "q") == "ok")
+        let requests = Stub.requests
+        #expect(requests.count == 2)
+        for request in requests { #expect(try Self.body(of: request)["temperature"] == nil) }
+    }
+
+    /// **The ceiling is the most a read returns**: an empty body and one of exactly `cap` bytes are whole; one byte past
+    /// is cut to `cap` when truncating, and too large otherwise.
+    @Test func theCeilingIsNeverPassed() async throws {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        func read(_ size: Int, truncating: Bool) async throws -> WireBody {
+            Stub.install { _ in (200, Data(repeating: 0x61, count: size)) }
+            let (bytes, _) = try await Self.session().bytes(for: URLRequest(url: url))
+            return try await Wire.collect(bytes, cap: 4, truncating: truncating)
+        }
+        #expect(try await read(0, truncating: false) == WireBody(data: Data(), truncated: false))
+        #expect(try await read(4, truncating: false) == WireBody(data: Data("aaaa".utf8), truncated: false))
+        #expect(try await read(5, truncating: true) == WireBody(data: Data("aaaa".utf8), truncated: true))
+        await #expect(throws: WireFailure.tooLarge) { try await read(5, truncating: false) }
+        Stub.install { _ in (200, Data("a".utf8)) }
+        let (bytes, _) = try await Self.session().bytes(for: URLRequest(url: url))
+        #expect(try await Wire.collect(bytes, cap: 0, truncating: true) == WireBody(data: Data(), truncated: true))
+    }
+
     @Test func malformedJSONIsABadShape() async throws {
         Stub.install { _ in (200, Data("not json".utf8)) }
         let provider = try Self.provider()

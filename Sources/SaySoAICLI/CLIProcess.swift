@@ -189,7 +189,9 @@ struct CLIProcess {
         let attributed = posix_spawnattr_init(&attributes)
         guard attributed == 0 else { throw .spawn(attributed) }
         defer { posix_spawnattr_destroy(&attributes) }
-        code = posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
+        // **Close by default**: the child inherits only the three descriptors the file actions give it. Close-on-exec on
+        // our own ends cannot cover a concurrent run's pipes in the moment between `pipe` and `fcntl`.
+        code = posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
         guard code == 0 else { throw .spawn(code) }
         // A process group of its own, named by the child's pid: signals reach everything it starts.
         code = posix_spawnattr_setpgroup(&attributes, 0)
@@ -463,6 +465,8 @@ struct CLIProcess {
             }
         }
         for index in streams.indices where streams[index].open {
+            // **Stopped before its end of file**: what was kept is not the child's whole output.
+            failed.withLock { $0 = true }
             close(streams[index].fd)
             streams[index].open = false
         }
@@ -481,9 +485,11 @@ struct CLIProcess {
     /// `lineCap` is dropped through its newline, and the lines after it are still parsed.
     static func lines(into stream: inout Stream, _ bytes: ArraySlice<UInt8>, onLine: (String) -> Void) {
         stream.pending.append(contentsOf: bytes)
-        while let newline = stream.pending.firstIndex(of: 0x0A) {
-            let line = stream.pending[..<newline]
-            stream.pending.removeSubrange(...newline)
+        // **One pass, one removal**: lines are read by index and the consumed prefix is cut once per chunk.
+        var start = stream.pending.startIndex
+        while let newline = stream.pending[start...].firstIndex(of: 0x0A) {
+            let line = stream.pending[start..<newline]
+            start = newline + 1
             if stream.discarding {
                 stream.discarding = false
                 continue
@@ -493,6 +499,7 @@ struct CLIProcess {
             let text = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { onLine(text) }
         }
+        stream.pending.removeSubrange(..<start)
         if stream.pending.count > lineCap {
             stream.pending.removeAll(keepingCapacity: true)
             stream.discarding = true

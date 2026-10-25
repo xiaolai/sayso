@@ -127,6 +127,43 @@ struct ClaudeCLIProviderTests {
             try await Self.provider(stub, url).answer(to: "q") }
     }
 
+    /// **A success envelope that stopped short is not an answer**: a model refusal is `.refused` and a cut at the token
+    /// ceiling is `.truncated`, whatever text `result` carries.
+    @Test func aStopReasonOtherThanTheEndIsTyped() async throws {
+        for (reason, wanted) in [("refusal", AIProviderError.refused), ("max_tokens", .truncated)] {
+            let (stub, url) = try Self.stub()
+            try stub.write("response", #"{"type":"result","subtype":"success","is_error":false,"stop_reason":"\#(reason)","result":"I can't help with that."}"#)
+            await expect(wanted) { () async throws(AIProviderError) -> String in
+                try await Self.provider(stub, url).answer(to: "q") }
+        }
+    }
+
+    /// **The caller's schema may describe any JSON value**: an array or a scalar structured output is the answer, never
+    /// discarded for `result`.
+    @Test func aStructuredOutputOfAnyJSONTypeIsTheAnswer() async throws {
+        for (structured, wanted) in [(#"["a","b"]"#, #"["a","b"]"#), ("42", "42"), (#""text""#, #""text""#)] {
+            let (stub, url) = try Self.stub()
+            try stub.write("response", #"{"type":"result","subtype":"success","is_error":false,"result":"prose","structured_output":\#(structured)}"#)
+            #expect(try await Self.provider(stub, url).answer(to: "q") == wanted)
+        }
+    }
+
+    /// **An error envelope's words may be in `errors`**, not `result`: a rate limit there is a rate limit, and an envelope
+    /// that names nothing leaves the streams to classify.
+    @Test func anErrorEnvelopesErrorsArrayIsClassified() async throws {
+        let (stub, url) = try Self.stub()
+        try stub.write("response", #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 429 rate limit exceeded"]}"#)
+        await expect(.rateLimited) { () async throws(AIProviderError) -> String in
+            try await Self.provider(stub, url).answer(to: "q") }
+
+        let (other, otherURL) = try Self.stub()
+        try other.write("response", #"{"type":"result","subtype":"error","is_error":true,"errors":["something broke"]}"#)
+        try other.write("stderr", "Not signed in. Please run /login.\n")
+        try other.write("exit", "1")
+        await expect(.notSignedIn) { () async throws(AIProviderError) -> String in
+            try await Self.provider(other, otherURL).answer(to: "q") }
+    }
+
     /// The floor is the version measured to have the flags this provider passes, not an earlier guess at one.
     @Test func aVersionBelowTheMeasuredFloorIsRefused() async throws {
         let (stub, url) = try Self.stub(version: "2.1.200")
@@ -171,6 +208,34 @@ struct ClaudeCLIProviderTests {
             }
         }
         #expect(await eventuallyOffMain { isGone(pid) }, "the child outlived its cancellation (pid \(pid))")
+    }
+
+    /// **A cancellation during cleanup is still a cancellation**: the child has exited with a sign-in failure, but the
+    /// ask was cancelled while its streams were still being drained, and the caller hears `.cancelled`.
+    @Test func aCancellationAfterTheChildExitsIsCancelled() async throws {
+        let stub = try CLIStub()
+        var body = stub.recordingPreamble()
+        body += """
+        if [ "$1" = "--version" ]; then echo '2.1.304'; exit 0; fi
+        set -m
+        sleep 0.8 &
+        echo 'Not signed in. Please run /login.' >&2
+        touch "$D/exited"
+        exit 1
+        """ + "\n"
+        let url = try stub.script("claude", body: body)
+        let task = Task { try await Self.provider(stub, url).answer(to: "q") }
+        let exited = stub.directory.appending(path: "exited")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !FileManager.default.fileExists(atPath: exited.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        task.cancel()
+        switch await task.result {
+        case .success: Issue.record("a cancelled ask returned an answer")
+        case .failure(let error): #expect(error as? AIProviderError == .cancelled)
+        }
     }
 
     @Test func aSecretInStderrNeverEntersADescription() async throws {

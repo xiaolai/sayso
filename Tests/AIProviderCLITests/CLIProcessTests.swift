@@ -64,8 +64,10 @@ struct CLIProcessTests {
         #expect(failures == 0, "\(failures) runs could not start")
         // **Only pipes are counted, and a sibling suite's pipes are given a bounded moment to close** (2026-10-24: the
         // process-wide count read 12 → 47 while an HTTP suite's sockets were open). This test's leak is a pipe pair per
-        // abandoned child, held for good; a sibling's pipes are transient. The bound is unchanged.
-        let settle = ContinuousClock.now + .seconds(2)
+        // abandoned child, held for good; a sibling's pipes are transient. The bound is unchanged. The moment outlasts the
+        // longest sibling ask (a 6 s hang): 2026-10-25, the count read 13 → 57 at the end, 9 after 2.5 s, and back to
+        // the suite's idle 7 after 5 s — a leak would never come back down, so waiting cannot hide one.
+        let settle = ContinuousClock.now + .seconds(10)
         while Self.openPipes() > before + 8, ContinuousClock.now < settle {
             try? await Task.sleep(for: .milliseconds(20))
         }
@@ -135,6 +137,19 @@ struct CLIProcessTests {
                 == .notSignedIn)
     }
 
+    /// **An operational failure that names a policy or a filter is not a refusal**: only a sentence saying the model
+    /// or a filter declined the request is.
+    @Test func aBrokenFilterIsNotARefusal() {
+        for text in ["failed to initialize safety filter", "could not load usage policy file",
+                     "content policy service unavailable", "refusal handler crashed"] {
+            #expect(CLIProviderSupport.classify(text, provider: "codex", status: 1) == .framework("codex exit 1"), "\(text)")
+        }
+        for text in ["This request violates our usage policy.", "Blocked by the safety filter",
+                     "The model declined to answer"] {
+            #expect(CLIProviderSupport.classify(text, provider: "codex", status: 1) == .refused, "\(text)")
+        }
+    }
+
     /// The printed forms both CLIs use: `2.1.304` and `codex-cli 0.163.0`.
     @Test func aPrefixedVersionStringIsRead() {
         #expect(CLIVersion.atLeast("codex-cli 0.163.0", "0.163.0"))
@@ -158,6 +173,74 @@ struct CLIProcessTests {
         let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         #expect(pid > 0)
         #expect(await eventuallyOffMain { isGone(pid) }, "the descendant outlived the run (pid \(pid))")
+    }
+
+    /// **The child inherits its three standard streams and nothing else**: a descriptor this process holds without
+    /// close-on-exec — another run's pipe in the moment before its flag is set — never reaches it.
+    @Test func aChildInheritsOnlyItsStandardStreams() async throws {
+        let directory = try Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fd = open("/dev/null", O_RDONLY)
+        try #require(fd > 2)
+        defer { close(fd) }
+        let executable = try Self.script("#!/bin/sh\n[ -e /dev/fd/\(fd) ] && echo leaked || echo clean\n", in: directory)
+        let run = try await CLIProcess.run(
+            executable: executable, arguments: [], environment: ["PATH": "/usr/bin:/bin"],
+            workingDirectory: directory, input: nil, deadline: .seconds(10))
+        #expect(run.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "clean")
+    }
+
+    /// **A stream stopped before its end is not the child's whole output**: a descendant outside the run's group keeps
+    /// stdout open past the join, and the run reports the reader, never the cut text as an answer.
+    @Test func aStreamStoppedBeforeItsEndIsAReaderFailure() async throws {
+        let directory = try Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let body = "#!/bin/sh\nset -m\nsleep 5 &\necho $! > \"$(dirname \"$0\")/escaped\"\necho done\nexit 0\n"
+        let executable = try Self.script(body, in: directory)
+        await #expect(throws: CLIProcess.Failure.readerFailed) {
+            _ = try await CLIProcess.run(
+                executable: executable, arguments: [], environment: ["PATH": "/usr/bin:/bin"],
+                workingDirectory: directory, input: nil, deadline: .seconds(10))
+        }
+        let text = try String(contentsOf: directory.appending(path: "escaped"), encoding: .utf8)
+        if let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 { kill(pid, SIGKILL) }
+    }
+
+    /// **Many short lines in one chunk cost one pass**, not a shift of the rest per line.
+    @Test func manyLinesInOneChunkAreLinear() {
+        var stream = CLIProcess.Stream(-1, 0)
+        let chunk = Array(String(repeating: "x\n", count: 800_000).utf8)
+        let count = Locked(0)
+        let start = ContinuousClock.now
+        CLIProcess.lines(into: &stream, chunk[...], onLine: { _ in count.withLock { $0 += 1 } })
+        #expect(count.withLock { $0 } == 800_000)
+        #expect(stream.pending.isEmpty)
+        // Measured in a debug build: about 0.3 s in one pass; the shift per line took 4.5 s at half this count.
+        #expect(ContinuousClock.now - start < .seconds(5))
+    }
+
+    /// **The whole path to a credential folder is protected**, not only its last folder: a parent others may write to
+    /// lets them replace the folder after the check, and a symlinked ancestor is judged by where it leads.
+    @Test func aFolderUnderAnUnprotectedAncestorIsRefused() throws {
+        let directory = try Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try CLIProviderSupport.prepare([directory.appending(path: "fine/home")])
+
+        let open = directory.appending(path: "open")
+        try FileManager.default.createDirectory(at: open, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: open.path)
+        #expect(throws: AIProviderError.framework("folder")) {
+            try CLIProviderSupport.prepare([open.appending(path: "home")])
+        }
+
+        let link = directory.appending(path: "link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: open)
+        #expect(throws: AIProviderError.framework("folder")) {
+            try CLIProviderSupport.prepare([link.appending(path: "other")])
+        }
+        let fine = directory.appending(path: "finelink")
+        try FileManager.default.createSymbolicLink(at: fine, withDestinationURL: directory.appending(path: "fine"))
+        try CLIProviderSupport.prepare([fine.appending(path: "home")])
     }
 
     /// A megabyte with no newline: the pending line is dropped rather than held, and the run still ends.

@@ -61,14 +61,16 @@ public struct CodexCLIProvider: AIProvider {
     /// the state before it. Nil in the test seam.
     private let clients: ClientBox?
 
-    /// Builds sayso's client for this private home. Throws `.framework` where its configuration is refused.
-    public init(configuration: Configuration) throws(AIProviderError) {
+    /// Builds sayso's client for this private home, lazily: a configuration its client refuses is reported by `check`
+    /// and `answer` as `.framework("codex")`.
+    public init(configuration: Configuration) {
         self.configuration = configuration
         // **The probe runs in the same restricted environment the ask does**: a sign-in read with the app's whole
-        // environment would honour proxy or credential variables the ask never sees.
+        // environment would honour proxy or credential variables the ask never sees. **The CLI is the source**: this
+        // provider runs it, so a sign-in file left without one is `.noCodex`, never a ready state with no version.
         let environment = CLIProviderSupport.baseEnvironment()
         let auth = CodexAuthConfiguration(
-            margin: 60, timeout: 20, source: .auto, executable: configuration.executable?.path,
+            margin: 60, timeout: 20, source: .codex, executable: configuration.executable?.path,
             codexHome: configuration.codexHome.path, home: NSHomeDirectory(),
             confineCodexHome: configuration.codexHome.path, environment: environment, candidates: nil,
             clientName: "SaySo")
@@ -108,13 +110,17 @@ public struct CodexCLIProvider: AIProvider {
     /// **Whether this source can run, without asking a model**: the sign-in state, the version floor and the app's own
     /// home. Returns the version, which the caller may show. The status is read fresh, never from a cached token.
     public func check() async throws(AIProviderError) -> String {
-        let (_, found) = try await ready(fresh: true)
+        let (_, found) = try await ready(fresh: true, until: ContinuousClock.now + configuration.timeout)
         return found.version
     }
 
     public func answer(to question: String) async throws(AIProviderError) -> String {
         guard !Task.isCancelled else { throw .cancelled }
-        let executable = try await ready(fresh: false).0
+        let clock = ContinuousClock()
+        let deadline = clock.now + configuration.timeout
+        let executable = try await ready(fresh: false, until: deadline).0
+        // **The probe spends the same budget the ask does**: what is left after it is what the run gets.
+        let remaining = try CLIProviderSupport.remaining(until: deadline, clock: clock)
         let message = configuration.workingDirectory.appending(path: "last-message-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: message) }
         let environment = Self.environment(configuration, executable: executable)
@@ -123,12 +129,13 @@ public struct CodexCLIProvider: AIProvider {
             run = try await CLIProcess.run(
                 executable: executable, arguments: Self.arguments(configuration, message: message),
                 environment: environment, workingDirectory: configuration.workingDirectory, input: question,
-                deadline: configuration.timeout)
+                deadline: remaining)
         } catch {
+            guard !Task.isCancelled else { throw .cancelled }
             throw CLIProviderSupport.mapped(error)
         }
-        guard run.status == 0 else { throw Self.classify(run) }
         guard !Task.isCancelled else { throw .cancelled }
+        guard run.status == 0 else { throw Self.classify(run) }
         return try Self.text(at: message)
     }
 
@@ -149,11 +156,13 @@ public struct CodexCLIProvider: AIProvider {
                 workingDirectory: configuration.workingDirectory, input: nil, deadline: Self.loginTimeout,
                 onLine: onLine)
         } catch {
+            guard !Task.isCancelled else { throw .cancelled }
             throw CLIProviderSupport.mapped(error)
         }
+        // The client that watched the old state must not answer for the new one, even when the caller has moved on.
+        if run.status == 0 { clients?.replace() }
+        guard !Task.isCancelled else { throw .cancelled }
         guard run.status == 0 else { throw Self.classify(run) }
-        // The client that watched the old state must not answer for the new one.
-        clients?.replace()
         return run.stdout + run.stderr
     }
 
@@ -166,15 +175,33 @@ public struct CodexCLIProvider: AIProvider {
     /// **The folders exist before the probe reads them** (2026-10-25): on a fresh install, `codexHome` does not
     /// exist yet, and a probe against a home that is not there fails as `.codexError` — the generic
     /// `.framework("codex")`, never the real `.notSignedIn` a reader can act on.
-    private func ready(fresh: Bool) async throws(AIProviderError) -> (URL, Probe) {
+    private func ready(fresh: Bool, until deadline: ContinuousClock.Instant) async throws(AIProviderError) -> (URL, Probe) {
         guard !Task.isCancelled else { throw .cancelled }
         try CLIProviderSupport.prepare([configuration.codexHome, configuration.workingDirectory])
-        let found = await probe(fresh)
+        let found = try await Self.bounded(until: deadline) { [probe] in await probe(fresh) }
         guard !Task.isCancelled else { throw .cancelled }
         if let error = Self.mapped(found.state) { throw error }
         guard CLIVersion.atLeast(found.version, Self.minimumVersion) else { throw .versionTooOld }
         let executable = try Self.resolve(configuration, found)
         return (executable, found)
+    }
+
+    /// **The probe within the ask's deadline**: past it, the probe is cancelled (sayso's client honours cancellation)
+    /// and the ask is `.timeout`; a cancelled ask is `.cancelled`.
+    private static func bounded(until deadline: ContinuousClock.Instant,
+                                _ probe: @escaping @Sendable () async -> Probe) async throws(AIProviderError) -> Probe {
+        let found = await withTaskGroup(of: Probe?.self) { group in
+            group.addTask { await probe() }
+            group.addTask {
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        guard let found else { throw Task.isCancelled ? .cancelled : .timeout }
+        return found
     }
 
     /// The one-shot, boxed turn: no session on disk, no user config or rules, a read-only sandbox, no approvals, and the
@@ -226,8 +253,12 @@ public struct CodexCLIProvider: AIProvider {
             }
             return URL(fileURLWithPath: resolved)
         }
-        if !found.bin.isEmpty,
-           let resolved = CodexExecutable.resolve(explicit: found.bin, path: path, candidates: []) {
+        // **The probed binary or none**: its version is the one checked, and a replacement found by discovery was never
+        // probed.
+        if !found.bin.isEmpty {
+            guard let resolved = CodexExecutable.resolve(explicit: found.bin, path: path, candidates: []) else {
+                throw .notInstalled
+            }
             return URL(fileURLWithPath: resolved)
         }
         let resolved = CodexExecutable.resolve(

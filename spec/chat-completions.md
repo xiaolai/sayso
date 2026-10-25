@@ -22,7 +22,7 @@ before it is shown.
 |---|---|
 | `model` | the caller's model id (required by every cloud service; a local server may ignore it) |
 | `messages` | one entry: `{"role": "user", "content": <the composed question>}` |
-| `temperature` | `0` |
+| `temperature` | `0`, or absent when the profile's models refuse one (Anthropic's) |
 | `stream` | `false` |
 | `max_completion_tokens` **or** `max_tokens` | the answer budget (1,024 for an answer; 1 for a probe); which one goes first is the profile's preference |
 
@@ -35,7 +35,8 @@ loopback host.
 OpenAI's current models document `max_completion_tokens` and deprecate `max_tokens`; most compatible services document
 only `max_tokens`; DeepSeek accepts `max_completion_tokens` and ignores it while honouring `max_tokens` (measured
 2026-10-25). So: send the profile's preferred field first, and on **any** 400 or 422 answer **once** with the other
-field. The retry is the status's, never a sentence's — a service need not name the field it refused.
+field. The retry is the status's, never a sentence's — a service need not name the field it refused. Only a retry
+that succeeds replaces the first reply; one that fails too reports the first reply's refusal.
 
 ## Answers and refusals
 
@@ -47,6 +48,8 @@ A 2xx body is the OpenAI chat-completion envelope:
 - `content: null` is accepted for a probe only (a reasoning model's one-token turn spends the budget on reasoning); an
   answer with no content is no answer.
 - `finish_reason: "content_filter"` or a non-empty `message.refusal` is a refusal.
+- An answer needs `finish_reason: "stop"` (or `"length"` for a probe); a missing, null or other reason (`tool_calls`)
+  is a bad shape.
 
 Every non-2xx is typed, and the status decides:
 

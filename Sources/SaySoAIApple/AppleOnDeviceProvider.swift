@@ -31,9 +31,10 @@ public struct AppleOnDeviceProvider<Answer: Generable & Sendable>: AIProvider {
         if case .unavailable(let reason) = model.availability {
             throw .unavailable(Self.mappedReason(reason))
         }
-        // **The token preflight is advisory**: it compares the question with the window, not the answer schema or the
-        // output budget, and a count that cannot be taken is no reason to refuse the ask. The framework's own context
-        // error, mapped below, is the authority.
+        // **The token preflight refuses only a certain failure**: a question that alone is past the window can never
+        // fit. It counts neither the answer schema nor the output budget, so a question under the window proves
+        // nothing, and a count that cannot be taken is no reason to refuse the ask; the framework's own context error,
+        // mapped below, decides every other case.
         do {
             if try await model.tokenCount(for: question) > model.contextSize { throw AIProviderError.contextExceeded }
         } catch is CancellationError {
@@ -88,6 +89,9 @@ public struct AppleOnDeviceProvider<Answer: Generable & Sendable>: AIProvider {
     /// **A framework failure as this library's error.** Two enums say the same things: `GenerationError` from 26 and
     /// `LanguageModelError` from 27. A system before 27 throws the first and one past it the second, so both are read —
     /// a rate limit or a full window is typed on either, never flattened into a generic failure.
+    ///
+    /// `#available` is a runtime check and cannot hide a type the SDK lacks, so the second enum is also gated at
+    /// compile time: it ships in the macOS 27 SDK, whose compiler is Swift 6.4, and an earlier SDK builds without it.
     static func mapped(_ error: any Error) -> AIProviderError {
         if let generation = error as? LanguageModelSession.GenerationError {
             switch generation {
@@ -95,27 +99,27 @@ public struct AppleOnDeviceProvider<Answer: Generable & Sendable>: AIProvider {
             case .rateLimited, .concurrentRequests: return .rateLimited
             case .guardrailViolation, .refusal: return .guardrail
             case .assetsUnavailable, .unsupportedGuide, .unsupportedLanguageOrLocale, .decodingFailure:
-                return .framework(diagnostic(error))
-            @unknown default: return .framework(diagnostic(error))
+                return .framework(diagnostic)
+            @unknown default: return .framework(diagnostic)
             }
         }
+        #if compiler(>=6.4)
         if #available(macOS 27, iOS 27, *), let model = error as? LanguageModelError {
             switch model {
             case .contextSizeExceeded: return .contextExceeded
             case .rateLimited: return .rateLimited
             case .guardrailViolation, .refusal: return .guardrail
-            default: return .framework(diagnostic(error))
+            default: return .framework(diagnostic)
             }
         }
-        return .framework(diagnostic(error))
+        #endif
+        return .framework(diagnostic)
     }
 
     /// **A fixed diagnostic, never the framework's sentence or even its type name**: the text may quote the reader's
     /// question, and cutting the question out catches only an exact copy; a type name is runtime data too. The error's
     /// `code` is what a log line carries.
-    static func diagnostic(_ error: any Error) -> String {
-        "generation"
-    }
+    static var diagnostic: String { "generation" }
 }
 
 #else
@@ -136,6 +140,7 @@ public struct AppleOnDeviceProvider<Answer: Sendable>: AIProvider {
     }
 
     public func answer(to question: String) async throws(AIProviderError) -> String {
+        guard !Task.isCancelled else { throw .cancelled }
         throw .unavailable(.unknown)
     }
 }

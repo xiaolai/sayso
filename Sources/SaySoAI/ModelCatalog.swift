@@ -178,19 +178,19 @@ public struct ModelCatalog: Sendable {
     }
 
     /// A context window: a positive whole number. JSON booleans arrive as `NSNumber` too, and `true` is not a window.
+    /// The bridge to `Int` is exact, never through `Double`: it refuses a fraction or a value past `Int`, and keeps every
+    /// digit of one that fits.
     static func positiveInt(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, type(of: number) != Self.booleanType else { return nil }
-        let double = number.doubleValue
-        // **Strictly below `Int.max`**: `Double(Int.max)` rounds up to 2⁶³, a value `Int(_:)` traps on.
-        guard double >= 1, double < Double(Int.max), double.rounded() == double else { return nil }
-        return Int(double)
+        guard let number = value as? NSNumber, type(of: number) != Self.booleanType,
+              let int = number as? Int, int >= 1 else { return nil }
+        return int
     }
 
     private static let booleanType = type(of: NSNumber(value: true))
 }
 
 extension ModelCatalog.Request: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    public var description: String { "ModelCatalog.Request(\(profile.id), \(baseURL.absoluteString))" }
+    public var description: String { "ModelCatalog.Request(\(profile.id), \(AIProviderID.scrubbed(baseURL).absoluteString))" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:]) }
 }

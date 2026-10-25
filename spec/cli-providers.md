@@ -41,8 +41,10 @@ as integers; a missing or non-numeric component is `0`.
 
 Before any ask, every app-owned folder a provider needs (its config/home directory, its working directory) is
 created private (`0700`) if missing, then checked: not a symlink, owned by this user, and not group- or
-world-writable. A folder that fails the check is `.framework("folder")`, never silently chmod'd — a folder the app
-did not make is not one it repairs.
+world-writable. The path to it is checked before creation and after: every folder on the way, symlinks followed,
+is root's or this user's and writable by nobody else (a sticky folder such as `/tmp` excepted), and every symlink on
+the way is root's or this user's. A folder that fails the check is `.framework("folder")`, never silently chmod'd —
+a folder the app did not make is not one it repairs.
 
 ## The budget
 
@@ -51,8 +53,8 @@ version check or sign-in probe spends is what the ask has left; once nothing is 
 120 s, Codex's 180 s; Codex's `login()` has its own 300 s deadline, since it waits on the reader's browser.
 
 A cancelled ask throws `.cancelled` at every check point — before the child starts, after preparation, and after the
-child exits but before its answer is returned, so an answer that arrives after the caller stopped caring is never
-handed back.
+child exits but before its status or answer is read, so neither an answer nor a failure that arrives after the caller
+stopped caring is handed back.
 
 ## Classifying a failure
 
@@ -62,9 +64,11 @@ or the structured envelope's `result`), against three narrow marker lists, check
 1. **Sign-in** ("not signed in", "please run /login", "please log in", "authentication required", "invalid api
    key", "unauthorized", plus `codex login` for Codex) → `.notSignedIn`.
 2. **Throttled** ("rate limit", "usage limit", "quota exceeded", "too many requests") → `.rateLimited`.
-3. **Refused** ("model refused", "refused to answer", "refusal", "model declined", "declined to answer", "content
-   policy", "usage policy", "safety filter") → `.refused`. "connection refused" and "refused to connect" are
-   transport words, not model words, and are deliberately excluded.
+3. **Refused** ("model refused", "refused to answer", "model declined", "declined to answer", "violates our/the
+   usage policy", "violates our/the content policy", "blocked by the safety filter", "blocked by the content
+   filter") → `.refused`. "connection refused" and "refused to connect" are transport words, not model words, and
+   are deliberately excluded; a policy or a filter named alone ("failed to initialize safety filter") is a broken
+   CLI, not a refusal.
 
 Nothing else is claimed as one of these: a failure that matches none is `.framework("<provider> exit <status>")`, or
 `.framework("<provider> error")` for an in-envelope error with no process exit (status `0`).
@@ -77,10 +81,12 @@ on stdin. `--bare` is deliberately never used: it would skip the reader's own OA
 provider.
 
 The caller supplies `answerSchema`: a JSON Schema handed to `--json-schema`, read back from the envelope's
-`structured_output` (re-encoded with sorted keys) or, failing that, its `result` string. This library does not
-interpret the answer; the schema and its meaning are the caller's. An envelope with `is_error: true` or a `subtype`
-other than `"success"` is a refusal, classified from the envelope's own `result`, whatever else it carries
-(`structured_output` included) — the structured field is never read past a refusing envelope.
+`structured_output` (any JSON value, re-encoded with sorted keys) or, failing that, its `result` string. This
+library does not interpret the answer; the schema and its meaning are the caller's. An envelope with `is_error: true`
+or a `subtype` other than `"success"` is a refusal, classified from the envelope's own `errors` (with `result` as a
+fallback), whatever else it carries (`structured_output` included) — the structured field is never read past a
+refusing envelope. When those words name nothing, a failing exit is classified from the streams instead. A success
+envelope whose `stop_reason` is `"refusal"` is `.refused`, and `"max_tokens"` is `.truncated`.
 
 Claude Code owns its own credential, written to the Keychain under the service name it derives from
 `CLAUDE_CONFIG_DIR`; this library only sets that variable to an app-owned folder and never reads `~/.claude` or any
@@ -96,7 +102,9 @@ commands) so the only thing text in the prompt could ask the model to do is answ
 
 The sign-in is read through `CodexAuth` (see [`spec/credentials.md`](credentials.md)), probed in the same restricted
 environment the ask runs in — a probe using the host app's full environment could honour a proxy or credential
-variable the ask never sees. `CodexAuth`'s states map onto this contract's errors: `noCodex` → `.notInstalled`,
+variable the ask never sees. Codex is the probe's only source (a sign-in file left without the CLI is `noCodex`), the
+probe runs within the ask's deadline and the run gets only what it left, and the binary run is the one probed: a
+probed binary that is gone is `.notInstalled`, never replaced by discovery. `CodexAuth`'s states map onto this contract's errors: `noCodex` → `.notInstalled`,
 `codexTooOld` → `.versionTooOld`, `notSignedIn`/`noSignInFile`/`expired` → `.notSignedIn`,
 `apiKey`/`unsupportedAuth`/`appServerAuthUnavailable`/`providerWithoutOpenAIAuth` → `.unsupportedAuth`, `codexError` →
 `.framework("codex")`. `check()` always probes a freshly built client (a sign-out moments ago must not read as ready
