@@ -320,6 +320,16 @@ struct HTTPProviderTests {
         }
     }
 
+    /// **The endpoint itself may carry a credential**: userinfo or a fragment in the reader's own URL, not just the
+    /// separate `apiKey` field above. A description must scrub those too, the way `AIProviderID` already does.
+    @Test func aCredentialEmbeddedInTheEndpointIsScrubbedFromDescriptions() throws {
+        let embedded = try #require(URL(string: "https://reader:sk-SECRET-456@api.example.com/v1#sk-SECRET-456"))
+        let configuration = HTTPProvider.Configuration(endpoint: embedded, model: "m")
+        for text in [String(describing: configuration), String(reflecting: configuration)] {
+            #expect(!text.contains("sk-SECRET-456"), "the configuration printed the embedded credential: \(text)")
+        }
+    }
+
     /// **Redaction comes before shortening**: whitespace that collapses would otherwise pull a key cut by a 600-byte
     /// prefix into the visible 300 characters. With the old order this test sees "sk-SECRET-".
     @Test func aKeyOnTheBodiesCutIsRedactedWhole() {

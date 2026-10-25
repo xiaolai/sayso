@@ -314,7 +314,9 @@ extension HTTPProvider: CustomStringConvertible, CustomDebugStringConvertible, C
 }
 
 extension HTTPProvider.Configuration: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    public var description: String { "HTTPProvider.Configuration(\(endpoint.absoluteString), model: \(model))" }
+    public var description: String {
+        "HTTPProvider.Configuration(\(AIProviderID.scrubbed(endpoint).absoluteString), model: \(model))"
+    }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:]) }
 }

@@ -15,15 +15,17 @@ public struct AIProviderID: Sendable, Equatable {
 
     public init(kind: AIProviderKind, endpoint: URL? = nil) {
         self.kind = kind
-        // **An identity carries no credential**: a URL may embed a user, a password or a fragment, and the identity is
-        // what diagnostics and logs print. The endpoint's path and query still tell two servers apart.
-        self.endpoint = endpoint.flatMap { url in
-            guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
-            parts.user = nil
-            parts.password = nil
-            parts.fragment = nil
-            return parts.url ?? url
-        }
+        self.endpoint = endpoint.map(Self.scrubbed)
+    }
+
+    /// **A credential carries no identity**: a URL may embed a user, a password or a fragment, and this is what
+    /// diagnostics, logs and descriptions print. The endpoint's path and query still tell two servers apart.
+    static func scrubbed(_ url: URL) -> URL {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.user = nil
+        parts.password = nil
+        parts.fragment = nil
+        return parts.url ?? url
     }
 }
 
