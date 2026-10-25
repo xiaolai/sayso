@@ -165,7 +165,7 @@ public final class RealtimeSession: Sendable {
         if inbox.isClosing { throw Closed() }  // closed while this write waited
         let task = self.task
         do {
-            try await Self.admitted { try await task.send(.string(text)) } end: {
+            try await Self.admitted { try await task.sendMessage(.string(text)) } end: {
                 task.cancel(with: .goingAway, reason: nil)
             }
         } catch {
@@ -264,7 +264,7 @@ public final class RealtimeSession: Sendable {
         while await inbox.waitForSpace() {
             let message: URLSessionWebSocketTask.Message
             do {
-                message = try await task.receive()
+                message = try await task.receiveMessage()
             } catch {
                 inbox.finish(readError(task, inbox, error))
                 return
@@ -410,6 +410,27 @@ final class WriteGate: @unchecked Sendable {
         }
         lock.unlock()
         for w in pending { w.resume(throwing: RealtimeSession.Closed()) }
+    }
+}
+
+/// The completion-handler transport calls, each behind a continuation of our own. The async `send` and `receive` are
+/// wrappers the compiler generates for the importing module, and Swift 6.1's are reported racing with their own
+/// completion handler under the thread sanitizer; a checked continuation's hand-off is one it sees. Neither form
+/// answers task cancellation: ``RealtimeSession/send(_:)`` and ``RealtimeSession/close()`` cancel the task, which ends
+/// a pending call with an error.
+extension URLSessionWebSocketTask {
+    func sendMessage(_ message: Message) async throws {
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            send(message) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+    }
+
+    func receiveMessage() async throws -> Message {
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Message, Error>) in
+            receive { c.resume(with: $0) }
+        }
     }
 }
 
