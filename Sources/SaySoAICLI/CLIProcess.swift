@@ -176,12 +176,18 @@ struct CLIProcess {
         let directory = workingDirectory.path
         directory.withCString { path in
             // The standard spelling starts at macOS 26; `_np` reaches back to 10.15 and is deprecated at 26. This
-            // package builds for macOS 14, so the older one carries every system before 26.
+            // package builds for macOS 14, so the older one carries every system before 26. `#available` is a runtime
+            // check and cannot hide a function the SDK lacks: the standard one ships in the macOS 26 SDK, whose
+            // compiler is Swift 6.2, and an earlier SDK builds with `_np` alone.
+            #if compiler(>=6.2)
             if #available(macOS 26, *) {
                 code = posix_spawn_file_actions_addchdir(&actions, path)
             } else {
                 code = posix_spawn_file_actions_addchdir_np(&actions, path)
             }
+            #else
+            code = posix_spawn_file_actions_addchdir_np(&actions, path)
+            #endif
         }
         guard code == 0 else { throw .spawn(code) }
 

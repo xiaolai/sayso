@@ -57,6 +57,7 @@ struct AppleProviderTests {
 }
 
 #else
+import SaySoAIApple
 
 /// **A platform whose SDK has no FoundationModels**: the fallback provider exists, and says the model is unavailable.
 struct AppleProviderTests {
