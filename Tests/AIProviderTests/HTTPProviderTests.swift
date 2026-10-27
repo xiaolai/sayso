@@ -506,6 +506,32 @@ struct HTTPProviderTests {
         #expect(try await Wire.collect(bytes, cap: 0, truncating: true) == WireBody(data: Data(), truncated: true))
     }
 
+    /// **The configured cap is the largest answer accepted**: a reply of exactly `cap` bytes is read, one byte more is
+    /// not an answer.
+    @Test func theConfiguredResponseCapBoundsAnAnswer() async throws {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        #expect(HTTPProvider.Configuration(endpoint: url, model: "m").responseCap == 1 << 20)
+        let reply = Self.answer("ok")
+        Stub.install { _ in (200, Data(reply.utf8)) }
+        for (cap, fits) in [(reply.utf8.count, true), (reply.utf8.count - 1, false)] {
+            let provider = try HTTPProvider(configuration: .init(endpoint: url, model: "m", responseCap: cap),
+                                            session: Self.session())
+            if fits {
+                #expect(try await provider.answer(to: "q") == "ok")
+            } else {
+                await #expect(throws: AIProviderError.badShape) { try await provider.answer(to: "q") }
+            }
+        }
+    }
+
+    #if compiler(>=6.2)
+    @Test func aResponseCapOfNothingIsRefusedAtConstruction() async {
+        await #expect(processExitsWith: .failure) {
+            _ = HTTPProvider.Configuration(endpoint: URL(fileURLWithPath: "/"), model: "m", responseCap: 0)
+        }
+    }
+    #endif
+
     @Test func malformedJSONIsABadShape() async throws {
         Stub.install { _ in (200, Data("not json".utf8)) }
         let provider = try Self.provider()

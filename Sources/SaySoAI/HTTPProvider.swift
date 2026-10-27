@@ -19,10 +19,15 @@ public struct HTTPProvider: AIProvider {
         public let temperature: AIProviderTemperature
         /// The most tokens one answer may take, or none named.
         public let answerBudget: AnswerBudget
+        /// The largest answer body accepted, in bytes; at least one, or construction traps. A refusal's body keeps the
+        /// fixed `HTTPProvider.errorBodyCap`.
+        public let responseCap: Int
 
         public init(endpoint: URL, model: String, apiKey: String? = nil,
                     auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst,
-                    temperature: AIProviderTemperature = .zero, answerBudget: AnswerBudget = .standard) {
+                    temperature: AIProviderTemperature = .zero, answerBudget: AnswerBudget = .standard,
+                    responseCap: Int = HTTPProvider.responseCap) {
+            precondition(responseCap > 0, "a response cap must be at least one byte")
             self.endpoint = endpoint
             self.model = model
             self.apiKey = apiKey
@@ -30,6 +35,7 @@ public struct HTTPProvider: AIProvider {
             self.tokenField = tokenField
             self.temperature = temperature
             self.answerBudget = answerBudget
+            self.responseCap = responseCap
         }
     }
 
@@ -71,7 +77,8 @@ public struct HTTPProvider: AIProvider {
     public static let probeTokens = 1
     /// Per-request and whole-request ceilings; a hung endpoint fails as `.timeout`, never as a hang.
     public static let requestTimeout: TimeInterval = 60
-    /// The largest answer body accepted; an answer is far smaller, and anything past this is refused as a bad shape.
+    /// The default largest answer body accepted; an answer is far smaller, and anything past the configured cap is
+    /// refused as a bad shape.
     public static let responseCap = 1 << 20
     /// How much of a **refusal's** body is read for its sentence. A hostile server cannot turn a 401 into a bad shape by
     /// sending megabytes with it.
@@ -210,7 +217,7 @@ public struct HTTPProvider: AIProvider {
             // timeout it was, and the deadline is truthful.)
             let status = http.statusCode
             if (200..<300).contains(status) {
-                let body = try await Wire.collect(bytes, cap: Self.responseCap)
+                let body = try await Wire.collect(bytes, cap: configuration.responseCap)
                 return Reply(status: status, data: body.data, truncated: body.truncated)
             }
             if Self.needsNoBody(status) {
