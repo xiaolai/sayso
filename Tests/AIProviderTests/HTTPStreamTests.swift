@@ -204,8 +204,9 @@ struct HTTPStreamTests {
     }
 
     /// **Reading events holds no memory per event**: a stream that outruns its reader never lets the read loop pause,
-    /// so whatever parsing an event leaves for a later cleanup piles up. Unbounded, 800,000 events held about 50 MB
-    /// here; the ceiling is far under that and far over what one event leaves.
+    /// so whatever parsing an event leaves for a later cleanup piles up. What it leaves is about the event's own size,
+    /// so large events make each one count: unbounded, 4,000 events of 16 KB held about 64 MB here; the ceiling is far
+    /// under that and far over what one event leaves.
     @Test(.timeLimit(.minutes(1))) func readingEventsHoldsNoMemoryPerEvent() throws {
         // The process's physical footprint: malloc's own statistics read zero under the thread sanitizer's allocator.
         func inUse() -> Int {
@@ -231,14 +232,14 @@ struct HTTPStreamTests {
         try #require(seen >= size / 2, "the footprint did not show a 16 MB mapping: \(seen) bytes")
 
         var answer = StreamedAnswer(status: 200, cap: 1 << 20, key: nil)
-        let event = Data(Self.json(["choices": []]).utf8)
+        let event = Data(Self.json(["choices": [], "pad": String(repeating: "x", count: 16_000)]).utf8)
         let start = inUse()
         var peak = start
-        for count in 1...800_000 {
+        for count in 1...4_000 {
             _ = try answer.take(event)
-            if count % 10_000 == 0 { peak = max(peak, inUse()) }
+            if count % 100 == 0 { peak = max(peak, inUse()) }
         }
-        #expect(peak - start < 16 << 20, "800,000 events held \(peak - start) bytes")
+        #expect(peak - start < 16 << 20, "4,000 events held \(peak - start) bytes")
     }
 
     /// **The answer is capped as it grows**: its UTF-8 bytes up to the cap are an answer, one more is not.
