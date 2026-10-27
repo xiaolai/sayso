@@ -62,7 +62,8 @@ public struct HTTPProvider: AIProvider {
         /// answer may take.
         public let idle: Duration
         /// The most one HTTP request may take from start to finish; `nil` means no ceiling, so `idle` and the caller's
-        /// cancellation are the only bounds. The token-field retry is a request of its own and starts a fresh one.
+        /// cancellation are the only bounds, and a server that keeps sending bytes (keep-alive comments, say) holds the
+        /// call until the caller cancels. The token-field retry is a request of its own and starts a fresh one.
         public let ceiling: Duration?
 
         /// `idle` of `HTTPProvider.requestTimeout`, `ceiling` of `HTTPProvider.resourceTimeout`.
@@ -114,7 +115,8 @@ public struct HTTPProvider: AIProvider {
     public static let answerTokens = 1_024
     /// The probe's budget: one token is enough to prove the endpoint, the model and the key.
     public static let probeTokens = 1
-    /// Per-request and whole-request ceilings; a hung endpoint fails as `.timeout`, never as a hang.
+    /// The default idle limit, in seconds: `Timeouts.standard`'s `idle`. A hung endpoint fails as `.timeout`, never as
+    /// a hang.
     public static let requestTimeout: TimeInterval = 60
     /// The default largest answer body accepted; an answer is far smaller, and anything past the configured cap is
     /// refused as a bad shape.
@@ -122,6 +124,7 @@ public struct HTTPProvider: AIProvider {
     /// How much of a **refusal's** body is read for its sentence. A hostile server cannot turn a 401 into a bad shape by
     /// sending megabytes with it.
     public static let errorBodyCap = 64 << 10
+    /// The default ceiling on one request, in seconds: `Timeouts.standard`'s `ceiling`.
     public static let resourceTimeout: TimeInterval = 90
 
     /// What `probe()` reports: the endpoint answered, and how long it took.

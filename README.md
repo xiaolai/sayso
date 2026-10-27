@@ -6,7 +6,8 @@ Swift against one shared set of fixtures where the contract is the wire.
 
 Status: early. The contract and its fixtures cover the five components both implementations share. Of the AI
 providers, the OpenAI-compatible client is Swift-only until its fixtures and Go client land (see
-[Parity](spec/chat-completions.md#parity)); the CLI and Apple on-device providers are Swift-only by design.
+[Parity](spec/chat-completions.md#parity)), and its opt-in streamed delivery has been tested against a stand-in server
+only, not a live one; the CLI and Apple on-device providers are Swift-only by design.
 
 | Component | Spec | Go | Swift |
 |---|---|---|---|
