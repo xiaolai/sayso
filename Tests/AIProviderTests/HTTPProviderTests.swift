@@ -37,8 +37,10 @@ struct HTTPProviderTests {
 
         override func startLoading() {
             Self.state.withLock { $0.requests.append(request) }
-            let response = Self.state.withLock { state -> (Int, Data)? in
-                if let responder = state.responder { return responder(request) }
+            // **The responder runs outside the lock**: one that sleeps (the cancellation test's) must not hold `state`,
+            // or the test's own `Stub.requests` poll waits it out and the cancel lands after the answer is delivered.
+            let responder = Self.state.withLock { $0.responder }
+            let response = responder.map { $0(request) } ?? Self.state.withLock { state -> (Int, Data)? in
                 if state.responses.isEmpty { return nil }
                 let body = state.responses.removeFirst()
                 return (200, Data(body.utf8))
