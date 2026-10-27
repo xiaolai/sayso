@@ -180,12 +180,25 @@ events sent with no pause, the process grew about 92 MB before the per-event rel
 as the stand-in's stream read with no provider at all. How much a real connection buffers is unmeasured.
 
 **Known cost.** The stream is read a byte at a time, and every byte refreshes the idle watchdog's clock under a lock.
-Streaming a 1 MiB answer through the test stand-in took about 300 ms in a release build, about 140 ms of it that
-per-byte clock read and lock. A real answer is a small fraction of that size, so this is noted, not optimised.
+Streaming a 1 MiB answer (1,024 events of 1 KiB, 1.17 MB on the wire) through the test stand-in in a release build
+took a median of 170 ms over seven runs (115 to 347 ms), and 60 ms (47 to 76 ms) with the per-byte clock update
+removed, so roughly 110 ms of it is that clock read and lock (measured 2026-10-27 on a 10-core Mac heavily loaded by
+other work, so the spread is wide). A real answer is a small fraction of that size, so this is noted, not optimised.
 
-**Not yet checked against a live server.** Every streamed test runs against a `URLProtocol` stand-in. How each
-profiled service actually streams (a single LF between events, `finish_reason` only before `[DONE]`, or none at all,
-any of which would make every answer a bad shape), and how many bytes of envelope it sends per token, is unmeasured.
+**Not yet checked against a live server.** Every test of the limits and of streamed delivery runs against a
+`URLProtocol` stand-in; no live server has been asked with any of them. How each profiled service actually streams (a
+single LF between events, `finish_reason` only before `[DONE]`, or none at all, any of which would make every answer a
+bad shape), how many bytes of envelope it sends per token, and what it does with no token field, is unmeasured. The
+code has also not been built with Xcode 16 and Swift 6.1.2, the oldest toolchain the CI runs (its macOS 15 leg), only
+with a newer local one.
+
+## Migrating from 0.5.3
+
+0.6.0 breaks source compatibility with 0.5.3: `Configuration`'s `answerTokens: Int`, the initializer's argument and
+the property alike, is gone. Pass `answerBudget: .tokens(n)` for a count written in code, `AnswerBudget(tokens:)` for
+one read from settings (it is `nil` when not positive), or `.endpointDefault` to send no token field; read the count
+back as `answerBudget.tokenLimit`. The static `HTTPProvider.answerTokens` stays. A 0.5.2 caller, which had no budget to
+pass, compiles unchanged.
 
 ## The model list
 
