@@ -208,13 +208,17 @@ struct HTTPStreamTests {
             }
             return result == KERN_SUCCESS ? Int(info.phys_footprint) : 0
         }
-        // The instrument must see an allocation before its silence means anything.
+        // The instrument must see memory being used before its silence means anything. Fresh pages from `mmap`, not
+        // malloc, which may hand back freed pages already counted; half of them is enough, as other tests running
+        // meanwhile may free some of theirs.
+        let size = 16 << 20
         let before = inUse()
-        let probe = UnsafeMutableRawPointer.allocate(byteCount: 8 << 20, alignment: 16)
-        probe.initializeMemory(as: UInt8.self, repeating: 1, count: 8 << 20)
+        let probe = try #require(mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0))
+        try #require(probe != MAP_FAILED)
+        probe.initializeMemory(as: UInt8.self, repeating: 1, count: size)
         let seen = inUse() - before
-        probe.deallocate()
-        try #require(seen >= 8 << 20, "the footprint did not show an 8 MB allocation: \(seen) bytes")
+        munmap(probe, size)
+        try #require(seen >= size / 2, "the footprint did not show a 16 MB mapping: \(seen) bytes")
 
         var answer = StreamedAnswer(status: 200, cap: 1 << 20, key: nil)
         let event = Data(Self.json(["choices": []]).utf8)
