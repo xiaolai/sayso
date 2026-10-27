@@ -79,7 +79,7 @@ final class CredentialsRound3Tests: XCTestCase {
 
     /// Parameters nested deeper than Codex's JSON may be are refused before the encoder, which cannot be caught.
     func testParametersNestedTooDeepAreRefused() throws {
-        let (script, cleanup) = try fakeCodex("time.sleep(30)\n")
+        let (script, cleanup) = try fakeCodex("time.sleep(600)\n")
         defer { cleanup() }
         let c = try AppServerClient.start(
             AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
@@ -90,8 +90,8 @@ final class CredentialsRound3Tests: XCTestCase {
         XCTAssertThrowsError(try c.call("x", params: ["p": deep])) {
             XCTAssertEqual(($0 as? AppServerError)?.errorClass, .internal, "\($0)")
         }
-        // Refused before it is sent; a request that was sent would wait the timeout for the silent child, so the bound
-        // is half of it.
+        // Refused before it is sent; a request that was sent would wait out the timeout, the child sleeping far longer
+        // so its exit cannot end the call first. The bound is half the timeout.
         XCTAssertLessThan(Date().timeIntervalSince(t0), 30, "the request was sent")
     }
 

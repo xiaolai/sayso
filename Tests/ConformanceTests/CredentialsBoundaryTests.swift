@@ -194,7 +194,7 @@ final class CredentialsBoundaryTests: XCTestCase {
             answersInitialize
             ? "m = json.loads(sys.stdin.readline())\nprint(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n"
             : ""
-        let body = "#!\(python)\nimport sys, json, time\nopen(sys.argv[0] + '.ready', 'w').close()\n\(reply)time.sleep(30)\n"
+        let body = "#!\(python)\nimport sys, json, time\nopen(sys.argv[0] + '.ready', 'w').close()\n\(reply)time.sleep(600)\n"
         FileManager.default.createFile(atPath: script, contents: Data(body.utf8))
         chmod(script, 0o755)
         return (script, { try? FileManager.default.removeItem(atPath: dir) })
@@ -227,7 +227,8 @@ final class CredentialsBoundaryTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(t0), cfg.timeout / 2, "a call after a cut-off write waited instead of failing")
         c.close()
 
-        // A blocked write that ignored the cancel would wait out this timeout; the bound is half of it.
+        // A blocked write that ignored the cancel would wait out this timeout: the child sleeps far longer, so its exit
+        // cannot end the write first. The bound is half the timeout.
         let d = try AppServerClient.start(.init(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         defer { d.close() }
         let done = DispatchSemaphore(value: 0)
