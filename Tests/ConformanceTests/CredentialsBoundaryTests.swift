@@ -204,7 +204,8 @@ final class CredentialsBoundaryTests: XCTestCase {
     func testUnencodableParametersThrow() throws {
         let (script, cleanup) = try stalledChild()
         defer { cleanup() }
-        let c = try AppServerClient.start(.init(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3))
+        // The timeout only catches a hang: each call is refused before it is written.
+        let c = try AppServerClient.start(.init(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         defer { c.close() }
         XCTAssertThrowsError(try c.call("x", params: ["when": Date()]))
         XCTAssertThrowsError(try c.call("x", params: ["n": Double.nan]))

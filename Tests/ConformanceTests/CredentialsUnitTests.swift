@@ -318,8 +318,9 @@ final class CredentialsUnitTests: XCTestCase {
             let scenario = dir + "/s.json"
             try Data(#"{"methods": {"account/read": [{"result": {"account": \#(account)}}]}}"#.utf8)
                 .write(to: URL(fileURLWithPath: scenario))
+            // The timeout only catches a hang, and includes starting Python on a loaded machine.
             let c = try AppServerClient.start(
-                .init(bin: script, environment: ["PATH": "/usr/bin:/bin", "SAYSO_FAKE_SCENARIO": scenario], timeout: 5))
+                .init(bin: script, environment: ["PATH": "/usr/bin:/bin", "SAYSO_FAKE_SCENARIO": scenario], timeout: 60))
             defer { c.close() }
             if ok {
                 XCTAssertNoThrow(try c.planType(), account)

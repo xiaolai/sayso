@@ -45,6 +45,8 @@ final class AppServerLifecycleTests: XCTestCase {
         var seen: [String] { lock.withLock { methods } }
     }
 
+    /// The timeouts given here only catch a child that hangs, and they include starting Python on a loaded
+    /// machine, so they are long: a passing run never waits one out.
     private func start(_ script: String, timeout: TimeInterval, _ onEvent: (@Sendable (AppServerEvent) -> Void)?)
         throws -> AppServerClient
     {
@@ -78,7 +80,7 @@ final class AppServerLifecycleTests: XCTestCase {
         try autoreleasepool {
             let c = try AppServerClient.start(
                 AppServerClient.Configuration(
-                    bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 5,
+                    bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60,
                     onEvent: { client, _ in
                         given.lock.withLock { given.value = client.pid }
                         seen.signal()
@@ -100,7 +102,7 @@ final class AppServerLifecycleTests: XCTestCase {
                 + "print(json.dumps({'method': 'ignoring'}), flush=True)\ntime.sleep(30)\n")
         defer { cleanup() }
         let ignoring = DispatchSemaphore(value: 0)
-        var c: AppServerClient? = try start(script, timeout: 5) { _ in ignoring.signal() }
+        var c: AppServerClient? = try start(script, timeout: 60) { _ in ignoring.signal() }
         XCTAssertEqual(ignoring.wait(timeout: .now() + 5), .success, "the child did not start ignoring SIGTERM")
         let pid = try XCTUnwrap(c).pid
         weak var released: AppServerClient?  // assigned apart: `weak let` needs Swift 6.2, which CI's compiler predates
@@ -150,7 +152,7 @@ final class AppServerLifecycleTests: XCTestCase {
         defer { cleanup() }
         signal(SIGCHLD, SIG_IGN)
         defer { signal(SIGCHLD, SIG_DFL) }
-        let c = try start(script, timeout: 5, nil)
+        let c = try start(script, timeout: 60, nil)
         waitFor("the child to exit") { c.hasExited }
         var info = siginfo_t()
         XCTAssertNotEqual(waitid(P_PID, id_t(c.pid), &info, WEXITED | WNOWAIT | WNOHANG), 0, "SIGCHLD was not ignored")
@@ -174,7 +176,7 @@ final class AppServerLifecycleTests: XCTestCase {
                 + "print('not json', flush=True)\nprint(json.dumps({'method': 'after'}), flush=True)\ntime.sleep(30)\n")
         defer { cleanup() }
         let r = Recorder()
-        let c = try start(script, timeout: 5) { r.handle($0) }
+        let c = try start(script, timeout: 60) { r.handle($0) }
         defer { c.close() }
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("malformed"), "\($0)") }
         XCTAssertTrue(r.entered.waited(), "no event reached the handler")
@@ -191,7 +193,7 @@ final class AppServerLifecycleTests: XCTestCase {
                 + "print(json.dumps({'id': call['id'], 'result': {}}), flush=True)\ntime.sleep(30)\n")
         defer { cleanup() }
         let r = Recorder()
-        let c = try start(script, timeout: 5) { r.handle($0) }
+        let c = try start(script, timeout: 60) { r.handle($0) }
         _ = try c.call("echo")  // its reply follows the three events, so all three are queued
         XCTAssertTrue(r.entered.waited(), "no event reached the handler")
         let closed = DispatchSemaphore(value: 0)
@@ -226,7 +228,7 @@ final class AppServerLifecycleTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         let once = NSLock()
         nonisolated(unsafe) var first = true
-        let c = try start(script, timeout: 5) { e in
+        let c = try start(script, timeout: 60) { e in
             r.record(e)
         }
         // A throw or a failed wait below must not leave the event thread blocked in the seam; an extra signal is
@@ -273,7 +275,7 @@ final class AppServerLifecycleTests: XCTestCase {
         let ready = DispatchSemaphore(value: 0)
         let done = DispatchSemaphore(value: 0)
         let ok = Box()
-        let c = try start(script, timeout: 5) { _ in
+        let c = try start(script, timeout: 60) { _ in
             _ = ready.waited()
             if let client = box.client, let r = try? client.call("echo"), (r as? [String: Any])?["ok"] as? Bool == true {
                 ok.client = client

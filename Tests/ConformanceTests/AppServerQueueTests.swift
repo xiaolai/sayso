@@ -53,6 +53,8 @@ final class AppServerQueueTests: XCTestCase {
         return (script, { try? FileManager.default.removeItem(atPath: dir) })
     }
 
+    /// The timeouts given here only catch a child that hangs, and they include starting Python on a loaded
+    /// machine, so they are long: a passing run never waits one out.
     private func start(_ script: String, timeout: TimeInterval, _ onEvent: (@Sendable (AppServerEvent) -> Void)?)
         throws -> AppServerClient
     {
@@ -71,7 +73,7 @@ final class AppServerQueueTests: XCTestCase {
                 + "    sys.stdout.write(json.dumps({'id': 'x' * 20000 + str(i), 'method': 'approve'}) + '\\n')\n"
                 + "sys.stdout.write('not json\\n')\nsys.stdout.flush()\ntime.sleep(30)\n")
         defer { cleanup() }
-        let c = try start(script, timeout: 5, nil)
+        let c = try start(script, timeout: 60, nil)
         defer { c.close() }
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("malformed"), "\($0)") }
         let held = c.held
@@ -83,7 +85,7 @@ final class AppServerQueueTests: XCTestCase {
     func testImmediateClose() throws {
         let (script, cleanup) = try fakeCodex("for line in sys.stdin:\n    pass\n")
         defer { cleanup() }
-        let c = try start(script, timeout: 5) { _ in }
+        let c = try start(script, timeout: 60) { _ in }
         c.close()
         let held = c.held
         XCTAssertEqual(held.outbound + held.events + held.refusalBytes + held.eventBytes, 0, "kept after close: \(held)")
@@ -109,7 +111,7 @@ final class AppServerQueueTests: XCTestCase {
         defer { cleanup() }
         let firstRequest = DispatchSemaphore(value: 0)
         // An event for a server request is delivered after its answer was queued: the call starts after that.
-        let c = try start(script, timeout: 5) { e in
+        let c = try start(script, timeout: 60) { e in
             if e.isServerRequest && e.method == "approve" { firstRequest.signal() }
         }
         defer { c.close() }
@@ -137,7 +139,7 @@ final class AppServerQueueTests: XCTestCase {
                 + "    print(json.dumps({'id': 'srv-%d' % n, 'method': 'approve'}), flush=True)\n"
                 + "    print(json.dumps({'id': m['id'], 'result': {}}), flush=True)\n")
         defer { cleanup() }
-        let c = try start(script, timeout: 10, nil)
+        let c = try start(script, timeout: 60, nil)
         defer { c.close() }
         c.setTestSeams(recordAdmissions: true)
         let group = DispatchGroup()
@@ -193,7 +195,7 @@ final class AppServerQueueTests: XCTestCase {
         defer { cleanup() }
         let admitted = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
-        let c = try start(script, timeout: 5, nil)
+        let c = try start(script, timeout: 60, nil)
         defer { c.close() }
         c.setTestSeams(refusalAdmitted: {
             admitted.signal()

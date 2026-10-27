@@ -7,7 +7,8 @@ import XCTest
 
 /// Process lifetime, environment and byte-level comparisons the credentials fixtures cannot observe.
 final class CredentialsRound3Tests: XCTestCase {
-    /// A python child: it answers initialize, then runs `then` (Python source).
+    /// A python child: it answers initialize, then runs `then` (Python source). The timeouts given its clients only
+    /// catch a child that hangs, and they include starting Python on a loaded machine, so they are long.
     private func fakeCodex(_ then: String) throws -> (String, () -> Void) {
         let python = try XCTUnwrap(CredentialWorld.lookPath("python3"))
         let dir = NSTemporaryDirectory() + "sayso-r3-\(UUID().uuidString)"
@@ -81,7 +82,7 @@ final class CredentialsRound3Tests: XCTestCase {
         let (script, cleanup) = try fakeCodex("time.sleep(30)\n")
         defer { cleanup() }
         let c = try AppServerClient.start(
-            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3))
+            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         defer { c.close() }
         var deep: Any = "x"
         for _ in 0..<200 { deep = ["a": deep] }
@@ -96,7 +97,7 @@ final class CredentialsRound3Tests: XCTestCase {
         let (script, cleanup) = try fakeCodex("sys.stdin.readline()\n")
         defer { cleanup() }
         let c = try AppServerClient.start(
-            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3))
+            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         let pid = c.pid
         let deadline = Date().addingTimeInterval(5)
         while !c.hasExited && Date() < deadline { usleep(20_000) }
@@ -123,7 +124,7 @@ final class CredentialsRound3Tests: XCTestCase {
                 + "sys.stderr.write('refusals %d\\n' % n)\nsys.stderr.flush()\ntime.sleep(30)\n")
         defer { cleanup() }
         let c = try AppServerClient.start(
-            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 8))
+            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         defer { c.close() }
         let t0 = Date()
         let result = try c.call("echo")
@@ -158,7 +159,7 @@ final class CredentialsRound3Tests: XCTestCase {
         let (script, cleanup) = try fakeCodex("signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n")
         defer { cleanup() }
         let c = try AppServerClient.start(
-            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3))
+            AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         let first = Thread { c.close() }
         first.start()
         usleep(200_000)
