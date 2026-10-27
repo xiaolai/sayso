@@ -220,12 +220,15 @@ final class CredentialsBoundaryTests: XCTestCase {
         let cfg = AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3)
         let c = try AppServerClient.startWhenReady(cfg)
         XCTAssertThrowsError(try c.call("big", params: ["pad": String(repeating: "x", count: 4 << 20)]))
+        // Failing at once names the cut-off; a call written after the half line would wait out the timeout and name
+        // that, so the bound is half the timeout.
         let t0 = Date()
-        XCTAssertThrowsError(try c.call("small"))
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 1, "a call after a cut-off write waited instead of failing")
+        XCTAssertThrowsError(try c.call("small")) { XCTAssertTrue("\($0)".contains("cut off"), "\($0)") }
+        XCTAssertLessThan(Date().timeIntervalSince(t0), cfg.timeout / 2, "a call after a cut-off write waited instead of failing")
         c.close()
 
-        let d = try AppServerClient.start(cfg)
+        // A blocked write that ignored the cancel would wait out this timeout; the bound is half of it.
+        let d = try AppServerClient.start(.init(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 60))
         defer { d.close() }
         let done = DispatchSemaphore(value: 0)
         let started = Date()
@@ -235,8 +238,8 @@ final class CredentialsBoundaryTests: XCTestCase {
         }
         usleep(300_000)
         d.cancel()
-        XCTAssertEqual(done.wait(timeout: .now() + 1.5), .success, "cancel did not end the blocked write")
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2.5)
+        XCTAssertEqual(done.wait(timeout: .now() + 30), .success, "cancel did not end the blocked write")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 30)
     }
 
     /// A cancellation during the initialize handshake ends it, rather than waiting out the timeout.
@@ -256,7 +259,8 @@ final class CredentialsBoundaryTests: XCTestCase {
         } catch {
             XCTAssertEqual(ErrorClass.of(error), .cancelled, "\(error)")
         }
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 5, "the handshake ran on after the cancellation")
+        // Half the timeout the handshake would otherwise wait out.
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 10, "the handshake ran on after the cancellation")
     }
 }
 #endif

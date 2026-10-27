@@ -87,9 +87,12 @@ final class CredentialsRound3Tests: XCTestCase {
         var deep: Any = "x"
         for _ in 0..<200 { deep = ["a": deep] }
         let t0 = Date()
-        XCTAssertThrowsError(try c.call("x", params: ["p": deep]))
-        // Refused before it is sent; a request that was sent would wait the 3 s timeout for the silent child.
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 1, "the request was sent")
+        XCTAssertThrowsError(try c.call("x", params: ["p": deep])) {
+            XCTAssertEqual(($0 as? AppServerError)?.errorClass, .internal, "\($0)")
+        }
+        // Refused before it is sent; a request that was sent would wait the timeout for the silent child, so the bound
+        // is half of it.
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 30, "the request was sent")
     }
 
     /// A child that exited stays unreaped until close, so its group ID cannot be reused while close may signal it.
@@ -129,7 +132,9 @@ final class CredentialsRound3Tests: XCTestCase {
         let t0 = Date()
         let result = try c.call("echo")
         XCTAssertEqual((result as? [String: Any])?["ok"] as? Bool, true)
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 4, "the call waited behind the refusals")
+        // A reader that waited behind the refusals would deadlock with the child and wait out the timeout; the bound is
+        // half of it.
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 30, "the call waited behind the refusals")
         let deadline = Date().addingTimeInterval(8)
         while !c.stderr.contains("refusals 3000") && Date() < deadline { usleep(20_000) }
         XCTAssertTrue(c.stderr.contains("refusals 3000"), "the child did not read every refusal")

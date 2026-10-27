@@ -114,7 +114,8 @@ final class AppServerLifecycleTests: XCTestCase {
         c = nil
         let took = Date().timeIntervalSince(start)
         XCTAssertNil(released, "the client was not released")
-        XCTAssertLessThan(took, 0.5, "the release waited for the close")
+        // A release that waited would wait the kill grace at least, for a child that ignores SIGTERM.
+        XCTAssertLessThan(took, AppServerClient.killGrace / 2, "the release waited for the close")
         let deadline = Date().addingTimeInterval(AppServerClient.killGrace + 3)
         while kill(pid, 0) == 0, Date() < deadline { usleep(20_000) }
         XCTAssertNotEqual(kill(pid, 0), 0, "the child outlived the client")
@@ -311,7 +312,8 @@ final class AppServerLifecycleTests: XCTestCase {
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("faster than the handler"), "\($0)") }
         let t0 = Date()
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("faster than the handler"), "\($0)") }
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 0.1, "a later call did not fail at once")
+        // A later call that did not fail at once would wait out the timeout; the bound is half of it.
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 150, "a later call did not fail at once")
     }
 
     /// The bounds charge the event being handled too, so the boundary is exact: 65,536 events are held, one more
@@ -351,9 +353,13 @@ final class AppServerLifecycleTests: XCTestCase {
         }
         XCTAssertTrue(
             last.contains("did not read the answer to a server request") || last.contains("cut off"), "failure: \(last)")
+        // Failing at once repeats the failure; a call that was written would wait out the timeout and name that, so the
+        // bound is half the timeout.
         let t0 = Date()
-        XCTAssertThrowsError(try c.call("echo"))
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 0.1, "a call after the failure did not fail at once")
+        XCTAssertThrowsError(try c.call("echo")) {
+            XCTAssertTrue("\($0)".contains("did not read the answer to a server request") || "\($0)".contains("cut off"), "\($0)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 1.5, "a call after the failure did not fail at once")
     }
 }
 

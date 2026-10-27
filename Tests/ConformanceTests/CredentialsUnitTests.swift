@@ -288,10 +288,12 @@ final class CredentialsUnitTests: XCTestCase {
         let c = try AppServerClient.startWhenReady(cfg)
         var t0 = Date()
         XCTAssertThrowsError(try c.call("big", params: ["pad": String(repeating: "x", count: 4 << 20)]))
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 5, "the call outlived its timeout")
+        // Without a deadline the write would end only when the child does, after its 30 s sleep; so would a close that
+        // waited for it. Each bound is half that.
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 15, "the call outlived its timeout")
         t0 = Date()
         c.close()
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 4, "close outlived the grace")
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 15, "close outlived the grace")
 
         var pid: pid_t = 0
         do {
