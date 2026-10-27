@@ -24,7 +24,7 @@ before it is shown.
 | `messages` | one entry: `{"role": "user", "content": <the composed question>}` |
 | `temperature` | `0`, or absent when the profile's models refuse one (Anthropic's) |
 | `stream` | `false` |
-| `max_completion_tokens` **or** `max_tokens` | the answer budget (1,024 for an answer; 1 for a probe); which one goes first is the profile's preference |
+| `max_completion_tokens` **or** `max_tokens` | the token budget (an answer's is configurable and defaults to 1,024; a probe's is 1); which one goes first is the profile's preference |
 
 Auth goes on the request according to the profile: `Authorization: Bearer <key>` for most services, a named header
 (`api-key`) for Azure-style endpoints, or nothing for a local server. A key is never sent over plain `http` except to a

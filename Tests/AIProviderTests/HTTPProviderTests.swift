@@ -147,6 +147,65 @@ struct HTTPProviderTests {
         #expect((try Self.body(of: requests[1]))["max_tokens"] as? Int == HTTPProvider.answerTokens)
     }
 
+    // MARK: - The answer budget
+
+    static func provider(answerTokens: Int, tokenField: AIProviderTokenField = .completionFirst) throws -> HTTPProvider {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        return try HTTPProvider(configuration: .init(endpoint: url, model: "gpt-test", tokenField: tokenField,
+                                                     answerTokens: answerTokens),
+                                session: session())
+    }
+
+    @Test func theDefaultBudgetIsUnchanged() async throws {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        #expect(HTTPProvider.answerTokens == 1_024)
+        #expect(HTTPProvider.Configuration(endpoint: url, model: "m").answerTokens == 1_024)
+        Stub.install { _ in (200, Data(Self.answer("ok").utf8)) }
+        _ = try await Self.provider().answer(to: "q")
+        #expect((try Self.body(of: try #require(Stub.requests.first)))["max_completion_tokens"] as? Int == 1_024)
+    }
+
+    /// **The configured budget survives the token-field negotiation**, whichever field the profile prefers first.
+    @Test func theConfiguredBudgetTravelsInEitherTokenField() async throws {
+        for (preference, first, second) in [(AIProviderTokenField.completionFirst, "max_completion_tokens", "max_tokens"),
+                                            (.maxTokensFirst, "max_tokens", "max_completion_tokens")] {
+            Stub.install { request in
+                let body = (try? Self.body(of: request)) ?? [:]
+                if body[first] != nil { return (422, Data(#"{"error":{"message":"Invalid Parameters"}}"#.utf8)) }
+                return (200, Data(Self.answer("retried").utf8))
+            }
+            let text = try await Self.provider(answerTokens: 4_096, tokenField: preference).answer(to: "q")
+            #expect(text == "retried")
+            let requests = Stub.requests
+            #expect(requests.count == 2)
+            #expect((try Self.body(of: requests[0]))[first] as? Int == 4_096)
+            #expect((try Self.body(of: requests[1]))[second] as? Int == 4_096)
+        }
+    }
+
+    @Test func aCutAnswerIsTruncatedWhateverTheBudget() async throws {
+        Stub.install { _ in (200, Data(Self.answer("half an ans", finish: "length").utf8)) }
+        await #expect(throws: AIProviderError.truncated) { try await Self.provider(answerTokens: 4_096).answer(to: "q") }
+    }
+
+    @Test func theProbeSpendsOneTokenWhateverTheAnswerBudget() async throws {
+        Stub.install { _ in (200, Data(Self.answer("ok", finish: "length").utf8)) }
+        _ = try await Self.provider(answerTokens: 4_096).probe()
+        #expect((try Self.body(of: try #require(Stub.requests.first)))["max_completion_tokens"] as? Int == 1)
+    }
+
+    #if compiler(>=6.2)
+    /// **A budget of no tokens is the caller's bug**, refused where it is written, not at the first ask.
+    @Test func aNonPositiveBudgetIsRefusedAtConstruction() async {
+        await #expect(processExitsWith: .failure) {
+            _ = HTTPProvider.Configuration(endpoint: URL(fileURLWithPath: "/"), model: "m", answerTokens: 0)
+        }
+        await #expect(processExitsWith: .failure) {
+            _ = HTTPProvider.Configuration(endpoint: URL(fileURLWithPath: "/"), model: "m", answerTokens: -1)
+        }
+    }
+    #endif
+
     // MARK: - Typed failures
 
     @Test func statusCodesMapToTypedFailures() async throws {

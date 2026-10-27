@@ -17,21 +17,25 @@ public struct HTTPProvider: AIProvider {
         public let auth: AIProviderAuth
         public let tokenField: AIProviderTokenField
         public let temperature: AIProviderTemperature
+        /// The most tokens one answer may take; at least one, or construction traps.
+        public let answerTokens: Int
 
         public init(endpoint: URL, model: String, apiKey: String? = nil,
                     auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst,
-                    temperature: AIProviderTemperature = .zero) {
+                    temperature: AIProviderTemperature = .zero, answerTokens: Int = HTTPProvider.answerTokens) {
+            precondition(answerTokens > 0, "an answer budget must be at least one token")
             self.endpoint = endpoint
             self.model = model
             self.apiKey = apiKey
             self.auth = auth
             self.tokenField = tokenField
             self.temperature = temperature
+            self.answerTokens = answerTokens
         }
     }
 
-    /// The most tokens one answer may take: a quoted sense and one sentence fit well inside it; a larger budget only
-    /// invites a truncated, unusable reply.
+    /// The default answer budget. A budget bounds one answer's cost; a reasoning model spends part of it on reasoning
+    /// before it writes anything, so a small budget can truncate a good answer.
     public static let answerTokens = 1_024
     /// The probe's budget: one token is enough to prove the endpoint, the model and the key.
     public static let probeTokens = 1
@@ -77,7 +81,7 @@ public struct HTTPProvider: AIProvider {
     }
 
     public func answer(to question: String) async throws(AIProviderError) -> String {
-        let body = Body(model: configuration.model, question: question, tokens: Self.answerTokens,
+        let body = Body(model: configuration.model, question: question, tokens: configuration.answerTokens,
                         tokenField: Self.firstField(configuration.tokenField))
         let reply = try await ask(body)
         try Self.statusError(reply.status, body: reply.data, truncated: reply.truncated, key: configuration.apiKey)
