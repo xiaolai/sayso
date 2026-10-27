@@ -171,19 +171,23 @@ even on a refused turn.
 **Bounds.** The stream as a whole has no byte cap: every token comes wrapped in a chunk envelope, so a raw cap would
 refuse long legitimate answers; the timeouts bound it in time instead. Each line (a comment's included), one event's
 joined data, and the assembled answer (the UTF-8 bytes of its content) are each capped at the reply cap, and passing
-any of them is a bad shape at the byte, or chunk, that passes it. Reasoning deltas are parsed and dropped, and each
-event's parsing is released with the event, so what the provider holds stays within about four times the reply cap
-however long the stream runs: the line being read, one event's data and its copy being parsed, and the answer. This
-does not count bytes URLSession has received but the provider has not yet read: a server that sends faster than they
-are read is buffered there, outside the provider's control. Measured through the test stand-in at 800,000 small
-events sent with no pause, the process grew about 92 MB before the per-event release and about 41 MB after it, the same
-as the stand-in's stream read with no provider at all. How much a real connection buffers is unmeasured.
+any of them is a bad shape at the byte, or chunk, that passes it. Reasoning deltas are parsed and dropped.
+
+What is bounded is bytes: the line being read, one event's joined data and its copy being parsed, and the answer, each
+at most the reply cap. Two things are not:
+
+- **The objects one event parses into.** JSONSerialization builds Foundation objects many times the event's size:
+  one event at the 1 MiB cap made of small values (numbers, empty arrays or objects, short strings) held 1 to 14 MB
+  while it was parsed (debug build, footprint sampled around one `take`, 2026-10-27). They are released with the
+  event, inside a pool of its own, so they do not add up across events however long the stream runs.
+- **What URLSession buffers.** Bytes it has received but the provider has not yet read are held there, outside the
+  provider's control, so a server that sends faster than they are read grows that buffer. In the tests the stand-in
+  hands URLSession every event as a piece of its own, and that buffer is most of what a long stream costs. How much a
+  real connection buffers is unmeasured.
 
 **Known cost.** The stream is read a byte at a time, and every byte refreshes the idle watchdog's clock under a lock.
-Streaming a 1 MiB answer (1,024 events of 1 KiB, 1.17 MB on the wire) through the test stand-in in a release build
-took a median of 170 ms over seven runs (115 to 347 ms), and 60 ms (47 to 76 ms) with the per-byte clock update
-removed, so roughly 110 ms of it is that clock read and lock (measured 2026-10-27 on a 10-core Mac heavily loaded by
-other work, so the spread is wide). A real answer is a small fraction of that size, so this is noted, not optimised.
+What that costs has not been measured on a quiet machine. A real answer is far under the 1 MiB cap, so this is noted,
+not optimised.
 
 **Not yet checked against a live server.** Every test of the limits and of streamed delivery runs against a
 `URLProtocol` stand-in; no live server has been asked with any of them. How each profiled service actually streams (a
