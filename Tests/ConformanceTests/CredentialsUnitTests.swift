@@ -188,13 +188,15 @@ final class CredentialsUnitTests: XCTestCase {
         let tok = Token(bearer: "opaque-wait", expires: nil)
         creds.seedForTesting(tok, refreshable: true)
         let started = Counter()
+        let release = DispatchSemaphore(value: 0)
         creds.refresher = {
             started.increment()
-            Thread.sleep(forTimeInterval: 1)
+            _ = release.wait(timeout: .now() + 30)
             return Token(bearer: "opaque-wait-2", expires: nil)
         }
-        let first = Task { try await creds.refresh(after: tok) }  // holds the queue for 1 s
-        try await Task.sleep(nanoseconds: 100_000_000)
+        let first = Task { try await creds.refresh(after: tok) }  // holds the queue until released, at most 30 s
+        let until = Date().addingTimeInterval(30)
+        while started.value == 0, Date() < until { try await Task.sleep(nanoseconds: 10_000_000) }
         let second = Task { try await creds.token() }
         try await Task.sleep(nanoseconds: 50_000_000)
         let t0 = Date()
@@ -204,7 +206,9 @@ final class CredentialsUnitTests: XCTestCase {
             XCTFail("a cancelled waiter succeeded")
         } catch is CancellationError {
         } catch { XCTFail("waiter: \(error)") }
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 0.5, "the cancelled waiter waited for the queue")
+        // A waiter that waited for the queue would wait the 30 s hold; the bound is half of it.
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 15, "the cancelled waiter waited for the queue")
+        release.signal()
         _ = try await first.value
         XCTAssertEqual(started.value, 1)
     }
