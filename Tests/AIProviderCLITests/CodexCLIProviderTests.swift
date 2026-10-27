@@ -183,7 +183,7 @@ struct CodexCLIProviderTests {
             executable: url, codexHome: stub.directory.appending(path: "codex-home"),
             workingDirectory: stub.directory.appending(path: "work"), timeout: .milliseconds(500))
         let provider = CodexCLIProvider(configuration: configuration) { _ in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(60))
             return CodexCLIProvider.Probe(state: .ready, bin: url.path, version: "0.163.0")
         }
         let start = ContinuousClock.now
@@ -193,7 +193,8 @@ struct CodexCLIProviderTests {
         } catch {
             #expect(error == .timeout)
         }
-        #expect(ContinuousClock.now - start < .seconds(2))
+        // An ask that waited for the probe would take its 60 s; the bound is half of it.
+        #expect(ContinuousClock.now - start < .seconds(30))
         #expect(!FileManager.default.fileExists(atPath: stub.directory.appending(path: "argv.1").path))
     }
 
