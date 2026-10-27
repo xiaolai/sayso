@@ -757,6 +757,20 @@ struct HTTPProviderTests {
         }
     }
 
+    /// **A refusal's body keeps the fixed error cap, whatever the answer's cap**: a reply cap smaller than the refusal
+    /// must not cut the server's sentence, however the answer would have travelled.
+    @Test func aRefusalIsReadUnderTheErrorCapNotTheReplyCap() async throws {
+        let words = String(repeating: "Insufficient Balance ", count: 12).trimmingCharacters(in: .whitespaces)
+        let body = #"{"error":{"message":"\#(words)"}}"#
+        #expect(body.utf8.count > 64 && body.utf8.count < HTTPProvider.errorBodyCap)
+        for delivery in [HTTPProvider.Delivery.whole, .streamed] {
+            Stub.install { _ in (402, Data(body.utf8)) }
+            await #expect(throws: AIProviderError.server(status: 402, message: words), "\(delivery)") {
+                try await Self.provider(delivery: delivery, responseCap: 64).answer(to: "q")
+            }
+        }
+    }
+
     #if compiler(>=6.2)
     @Test func aResponseCapOfNothingIsRefusedAtConstruction() async {
         await #expect(processExitsWith: .failure) {
