@@ -284,7 +284,9 @@ final class AppServerQueueTests: XCTestCase {
     }
 
     /// After an overflow, the events held before it are delivered once the handler is released, before close; the
-    /// event that overflowed and everything after it are not.
+    /// event that overflowed and everything after it are not. The timeouts and the handler's block are long, so a debug
+    /// build on a loaded machine can read and deliver 65,546 events before either ends: the bound, not the speed, is
+    /// under test.
     func testEventsHeldAtAnOverflowAreDelivered() throws {
         let maxEvents = 65_536
         let (script, cleanup) = try fakeCodex(
@@ -300,17 +302,17 @@ final class AppServerQueueTests: XCTestCase {
             let all = DispatchSemaphore(value: 0)
         }
         let seen = Seen()
-        let c = try start(script, timeout: 60) { e in
+        let c = try start(script, timeout: 300) { e in
             let n = seen.lock.withLock { () -> Int in
                 seen.methods.append(e.method)
                 return seen.methods.count
             }
-            if n == 1 { _ = seen.release.waited() }
+            if n == 1 { _ = seen.release.waited(600) }
             if n == maxEvents { seen.all.signal() }
         }
         XCTAssertThrowsError(try c.call("echo")) { XCTAssertTrue("\($0)".contains("faster than the handler"), "\($0)") }
         seen.release.signal()  // before close: the held events drain
-        XCTAssertEqual(seen.all.wait(timeout: .now() + 60), .success, "the held events were not delivered")
+        XCTAssertEqual(seen.all.wait(timeout: .now() + 300), .success, "the held events were not delivered")
         c.close()
         // close does not wait for a handler already running: the record is final only once the event thread ends.
         XCTAssertTrue(c.waitForEventLoop(timeout: 5), "the event thread did not end")

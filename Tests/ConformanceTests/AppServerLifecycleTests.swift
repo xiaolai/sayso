@@ -22,7 +22,9 @@ final class AppServerLifecycleTests: XCTestCase {
         return (script, { try? FileManager.default.removeItem(atPath: dir) })
     }
 
-    /// Records the methods its handler sees; the handler of the first event blocks until `release` is signalled.
+    /// Records the methods its handler sees; the handler of the first event blocks until `release` is signalled. The
+    /// block's own bound is longer than any timeout here: a read of many events slowed by a loaded machine must not
+    /// outlast it and let the queue drain before the bounds are reached.
     private final class Recorder: @unchecked Sendable {
         private let lock = NSLock()
         private var methods: [String] = []
@@ -36,7 +38,7 @@ final class AppServerLifecycleTests: XCTestCase {
             }
             if first {
                 entered.signal()
-                _ = release.waited()
+                _ = release.waited(600)
             }
         }
 
@@ -292,7 +294,8 @@ final class AppServerLifecycleTests: XCTestCase {
 
     /// Events beyond the count bound fail the client with the overflow, even when each is empty, and a reply the
     /// child writes after them is not handed out. Later calls fail at once. The timeout leaves a debug build on a
-    /// loaded machine time to read 70,000 lines: the bound, not the speed, is under test.
+    /// loaded machine time to read 70,000 lines (over 60 s at 30 times oversubscribed): the bound, not the speed, is
+    /// under test.
     func testEmptyEventsTripTheBounds() throws {
         let (script, cleanup) = try fakeCodex(
             "call = json.loads(sys.stdin.readline())\nsys.stdout.write((json.dumps({'method': ''}) + '\\n') * 70000)\n"
@@ -300,7 +303,7 @@ final class AppServerLifecycleTests: XCTestCase {
                 + "sys.stdout.flush()\ntime.sleep(30)\n")
         defer { cleanup() }
         let r = Recorder()
-        let c = try start(script, timeout: 60) { r.handle($0) }
+        let c = try start(script, timeout: 300) { r.handle($0) }
         defer {
             c.close()
             r.release.signal()
@@ -312,7 +315,7 @@ final class AppServerLifecycleTests: XCTestCase {
     }
 
     /// The bounds charge the event being handled too, so the boundary is exact: 65,536 events are held, one more
-    /// fails the client.
+    /// fails the client. The timeout is long for the reason the test above gives.
     func testEventCountBoundIsExact() throws {
         for (n, fails) in [(65_536, false), (65_537, true)] {
             let (script, cleanup) = try fakeCodex(
@@ -321,7 +324,7 @@ final class AppServerLifecycleTests: XCTestCase {
                     + "sys.stdout.flush()\ntime.sleep(30)\n")
             defer { cleanup() }
             let r = Recorder()
-            let c = try start(script, timeout: 60) { r.handle($0) }
+            let c = try start(script, timeout: 300) { r.handle($0) }
             let failed = (try? c.call("echo")) == nil
             XCTAssertEqual(failed, fails, "\(n) events")
             c.close()
