@@ -9,58 +9,145 @@ import Testing
 struct HTTPProviderTests {
     // MARK: - The stand-in
 
-    final class Stub: URLProtocol {
+    /// `@unchecked Sendable`: the script runs on a thread of its own, and everything it shares with URLSession's
+    /// calls is behind a lock.
+    final class Stub: URLProtocol, @unchecked Sendable {
+        /// **A reply told over time**: the status and headers first, then each step in order. A body that arrives in
+        /// pieces, a silence, a failure mid-body or a server that never finishes.
+        struct Script: Sendable {
+            enum Step: Sendable {
+                case chunk(Data)
+                case delay(Duration)
+                case failure(URLError.Code)
+                /// Sends nothing more until the transfer is stopped.
+                case hang
+            }
+
+            var status = 200
+            var headers = ["Content-Type": "application/json"]
+            var steps: [Step]
+        }
+
         struct State {
-            var responder: (@Sendable (URLRequest) -> (Int, Data))?
+            var responder: (@Sendable (URLRequest) -> Script)?
             var responses: [String] = []
             var requests: [URLRequest] = []
+            /// What the stub sent and the test noted, in the order it happened.
+            var log: [String] = []
+            /// Bumped by every install, so a script left running by an earlier test cannot write into this one's log.
+            var generation = 0
         }
 
         static let state = Locked(State())
 
+        static func install(script responder: @escaping @Sendable (URLRequest) -> Script) {
+            state.withLock { $0 = State(responder: responder, generation: $0.generation + 1) }
+        }
+
+        static func install(script: Script) {
+            install(script: { _ in script })
+        }
+
         static func install(_ responder: @escaping @Sendable (URLRequest) -> (Int, Data)) {
-            state.withLock { $0 = State(responder: responder) }
+            install(script: { request in
+                let (status, data) = responder(request)
+                return Script(status: status, steps: [.chunk(data)])
+            })
         }
 
         static func install(_ responses: [String]) {
             state.withLock {
-                var state = State()
+                var state = State(generation: $0.generation + 1)
                 state.responses = responses
                 $0 = state
             }
         }
 
         static var requests: [URLRequest] { state.withLock { $0.requests } }
+        static var log: [String] { state.withLock { $0.log } }
+
+        static func note(_ entry: String) {
+            state.withLock { $0.log.append(entry) }
+        }
+
+        private let stopped = Locked(false)
 
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         override func startLoading() {
-            Self.state.withLock { $0.requests.append(request) }
-            // **The responder runs outside the lock**: one that sleeps (the cancellation test's) must not hold `state`,
-            // or the test's own `Stub.requests` poll waits it out and the cancel lands after the answer is delivered.
+            let generation = Self.state.withLock { state in
+                state.requests.append(request)
+                return state.generation
+            }
+            // **The script runs on a thread of its own**: URLSession calls `startLoading` and `stopLoading` on one
+            // thread, so a script that sleeps or hangs there would keep the stop from ever arriving. The responder also
+            // runs outside the lock: one that sleeps must not hold `state` against the test's own polls.
+            Thread { [self] in run(generation: generation) }.start()
+        }
+
+        override func stopLoading() {
+            stopped.withLock { $0 = true }
+        }
+
+        private func run(generation: Int) {
             let responder = Self.state.withLock { $0.responder }
-            let response = responder.map { $0(request) } ?? Self.state.withLock { state -> (Int, Data)? in
+            let script = responder.map { $0(request) } ?? Self.state.withLock { state -> Script? in
                 if state.responses.isEmpty { return nil }
                 let body = state.responses.removeFirst()
-                return (200, Data(body.utf8))
+                return Script(steps: [.chunk(Data(body.utf8))])
             }
-            guard let (status, data) = response else {
+            guard let script else {
                 client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
                 return
             }
             guard let url = request.url,
-                  let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
-                                             headerFields: ["Content-Type": "application/json"]) else {
+                  let http = HTTPURLResponse(url: url, statusCode: script.status, httpVersion: "HTTP/1.1",
+                                             headerFields: script.headers) else {
                 client?.urlProtocol(self, didFailWithError: URLError(.badURL))
                 return
             }
+            guard !isStopped else { return }
             client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
+            var sent = 0
+            for step in script.steps {
+                switch step {
+                case .chunk(let data):
+                    guard !isStopped else { return }
+                    record("sent \(sent)", generation: generation)
+                    sent += 1
+                    client?.urlProtocol(self, didLoad: data)
+                case .delay(let duration):
+                    if wait(for: duration) { return }
+                case .failure(let code):
+                    guard !isStopped else { return }
+                    client?.urlProtocol(self, didFailWithError: URLError(code))
+                    return
+                case .hang:
+                    // Bounded, so a test that forgets to cancel leaks a thread for a minute, not for the process.
+                    if wait(for: .seconds(60)) { record("released", generation: generation) }
+                    return
+                }
+            }
+            guard !isStopped else { return }
             client?.urlProtocolDidFinishLoading(self)
         }
 
-        override func stopLoading() {}
+        private var isStopped: Bool { stopped.withLock { $0 } }
+
+        /// Sleeps in short slices; `true` when the transfer was stopped meanwhile.
+        private func wait(for duration: Duration) -> Bool {
+            let deadline = ContinuousClock.now + duration
+            while ContinuousClock.now < deadline {
+                if isStopped { return true }
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            return isStopped
+        }
+
+        private func record(_ entry: String, generation: Int) {
+            Self.state.withLock { if $0.generation == generation { $0.log.append(entry) } }
+        }
     }
 
     static func session() -> URLSession {
@@ -101,6 +188,40 @@ struct HTTPProviderTests {
                                                   "finish_reason": finish]]]
         guard let data = try? JSONSerialization.data(withJSONObject: object) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    // MARK: - The stand-in streams
+
+    /// **A chunk reaches the consumer when it is sent, not when the body ends**: every timing test rests on this. The
+    /// consumer notes the first byte while the stub is still waiting to send the second chunk.
+    @Test(.timeLimit(.minutes(1))) func theStubDeliversEachChunkAsItIsSent() async throws {
+        Stub.install(script: .init(steps: [.chunk(Data("a".utf8)), .delay(.milliseconds(500)), .chunk(Data("b".utf8))]))
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        let (bytes, _) = try await Self.session().bytes(for: URLRequest(url: url))
+        var received = Data()
+        for try await byte in bytes {
+            if received.isEmpty { Stub.note("received") }
+            received.append(byte)
+        }
+        #expect(received == Data("ab".utf8))
+        #expect(Stub.log == ["sent 0", "received", "sent 1"])
+    }
+
+    /// **A cancelled consumer stops the stub**: `stopLoading` is reached and ends a hang, so a timing test leaves no
+    /// transfer running behind it.
+    @Test(.timeLimit(.minutes(1))) func cancellingTheConsumerReachesTheStub() async throws {
+        Stub.install(script: .init(steps: [.chunk(Data("a".utf8)), .hang]))
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        let task = Task {
+            let (bytes, _) = try await Self.session().bytes(for: URLRequest(url: url))
+            for try await _ in bytes { Stub.note("received") }
+        }
+        for _ in 0..<500 where !Stub.log.contains("received") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(Stub.log.contains("received"), "the first chunk never arrived, so there is nothing to cancel")
+        task.cancel()
+        _ = await task.result
+        for _ in 0..<500 where !Stub.log.contains("released") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(Stub.log == ["sent 0", "received", "released"])
     }
 
     // MARK: - The request and the answer
