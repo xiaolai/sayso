@@ -92,7 +92,8 @@ Each configuration sets three limits on one request; a caller that sets none get
 
 An idle limit or ceiling that passes is a timeout. A caller's cancellation is a cancellation, even when it lands at the
 same moment as a limit. Non-positive limits cannot be built: the idle limit, a present ceiling and the reply cap each
-trap at construction when not positive.
+trap at construction when not positive. The idle limit and a present ceiling also trap past 100 years of 365 days,
+because the watchdog's deadline is counted in 64-bit nanoseconds; a request with no ceiling at all passes none.
 
 **The provider enforces these limits itself, on whatever session it runs.** Each request races a watchdog that sleeps
 until the earlier of the last byte plus idle and the start plus the ceiling, and cancels the transfer when it wakes

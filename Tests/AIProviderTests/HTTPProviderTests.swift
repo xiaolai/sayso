@@ -423,7 +423,27 @@ struct HTTPProviderTests {
         await #expect(processExitsWith: .failure) { _ = HTTPProvider.Timeouts(idle: .zero, ceiling: nil) }
         await #expect(processExitsWith: .failure) { _ = HTTPProvider.Timeouts(idle: .seconds(1), ceiling: .zero) }
     }
+
+    /// **A limit too long to sleep until is refused where it is written**, not by a crash at the first request: the
+    /// watchdog's deadline must fit in a 64-bit count of nanoseconds.
+    @Test func aTimeoutPastAHundredYearsIsRefusedAtConstruction() async {
+        await #expect(processExitsWith: .failure) { _ = HTTPProvider.Timeouts(idle: .seconds(Int64.max), ceiling: nil) }
+        await #expect(processExitsWith: .failure) {
+            _ = HTTPProvider.Timeouts(idle: .seconds(1), ceiling: .seconds(Int64.max))
+        }
+        await #expect(processExitsWith: .failure) {
+            _ = HTTPProvider.Timeouts(idle: .seconds(100 * 365 * 86_400) + .nanoseconds(1), ceiling: nil)
+        }
+    }
     #endif
+
+    /// The longest limits that can be built still answer.
+    @Test(.timeLimit(.minutes(1))) func aHundredYearTimeoutAnswers() async throws {
+        Stub.install { _ in (200, Data(Self.answer("ok").utf8)) }
+        let longest = Duration.seconds(100 * 365 * 86_400)
+        #expect(try await Self.provider(timeouts: .init(idle: longest, ceiling: longest)).answer(to: "q") == "ok")
+        #expect(try await Self.provider(timeouts: .init(idle: longest, ceiling: nil)).answer(to: "q") == "ok")
+    }
 
     // MARK: - Streamed delivery
 

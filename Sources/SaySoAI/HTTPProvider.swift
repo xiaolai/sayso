@@ -70,10 +70,13 @@ public struct HTTPProvider: AIProvider {
         public static let standard = Timeouts(idle: .seconds(HTTPProvider.requestTimeout),
                                               ceiling: .seconds(HTTPProvider.resourceTimeout))
 
-        /// Traps when `idle` is not positive, or when `ceiling` is present and not positive.
+        /// Traps when `idle` is not positive, or when `ceiling` is present and not positive. Each is at most 100 years
+        /// of 365 days, or construction traps too: the watchdog sleeps until a deadline counted in 64-bit nanoseconds.
         public init(idle: Duration, ceiling: Duration?) {
+            let longest = Duration.seconds(100 * 365 * 86_400)
             precondition(idle > .zero, "an idle timeout must be positive")
             precondition(ceiling.map { $0 > .zero } ?? true, "a timeout ceiling must be positive")
+            precondition(idle <= longest && ceiling.map { $0 <= longest } ?? true, "a timeout must be at most 100 years")
             self.idle = idle
             self.ceiling = ceiling
         }
