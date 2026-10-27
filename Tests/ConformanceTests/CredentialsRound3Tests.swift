@@ -135,7 +135,8 @@ final class CredentialsRound3Tests: XCTestCase {
         // A reader that waited behind the refusals would deadlock with the child and wait out the timeout; the bound is
         // half of it.
         XCTAssertLessThan(Date().timeIntervalSince(t0), 30, "the call waited behind the refusals")
-        let deadline = Date().addingTimeInterval(8)
+        // The bound only ends a wait that failed, so it is long enough for a starved machine.
+        let deadline = Date().addingTimeInterval(60)
         while !c.stderr.contains("refusals 3000") && Date() < deadline { usleep(20_000) }
         XCTAssertTrue(c.stderr.contains("refusals 3000"), "the child did not read every refusal")
     }

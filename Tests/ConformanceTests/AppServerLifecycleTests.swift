@@ -59,8 +59,9 @@ final class AppServerLifecycleTests: XCTestCase {
                 onEvent: onEvent.map { handle in { @Sendable _, e in handle(e) } }))
     }
 
+    /// Polls until `cond` holds. The bound only ends a wait that failed, so it is long enough for a starved machine.
     private func waitFor(_ what: String, _ cond: () -> Bool) {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(60)
         while !cond() {
             if Date() > deadline { return XCTFail("timed out waiting for \(what)") }
             usleep(2000)
