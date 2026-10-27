@@ -19,6 +19,7 @@ public struct HTTPProvider: AIProvider {
         public let temperature: AIProviderTemperature
         /// The most tokens one answer may take, or none named.
         public let answerBudget: AnswerBudget
+        public let timeouts: Timeouts
         /// The largest answer body accepted, in bytes; at least one, or construction traps. A refusal's body keeps the
         /// fixed `HTTPProvider.errorBodyCap`.
         public let responseCap: Int
@@ -26,7 +27,7 @@ public struct HTTPProvider: AIProvider {
         public init(endpoint: URL, model: String, apiKey: String? = nil,
                     auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst,
                     temperature: AIProviderTemperature = .zero, answerBudget: AnswerBudget = .standard,
-                    responseCap: Int = HTTPProvider.responseCap) {
+                    timeouts: Timeouts = .standard, responseCap: Int = HTTPProvider.responseCap) {
             precondition(responseCap > 0, "a response cap must be at least one byte")
             self.endpoint = endpoint
             self.model = model
@@ -35,7 +36,31 @@ public struct HTTPProvider: AIProvider {
             self.tokenField = tokenField
             self.temperature = temperature
             self.answerBudget = answerBudget
+            self.timeouts = timeouts
             self.responseCap = responseCap
+        }
+    }
+
+    /// **Per-request limits.** Every request enforces them, whichever session it runs on.
+    public struct Timeouts: Sendable, Equatable, Hashable {
+        /// The longest wait for the next byte from the server: connecting, waiting for the headers, and between any two
+        /// bytes of the body. A non-streamed answer sends nothing until it is done, so this is about the longest an
+        /// answer may take.
+        public let idle: Duration
+        /// The most one HTTP request may take from start to finish; `nil` means no ceiling, so `idle` and the caller's
+        /// cancellation are the only bounds. The token-field retry is a request of its own and starts a fresh one.
+        public let ceiling: Duration?
+
+        /// `idle` of `HTTPProvider.requestTimeout`, `ceiling` of `HTTPProvider.resourceTimeout`.
+        public static let standard = Timeouts(idle: .seconds(HTTPProvider.requestTimeout),
+                                              ceiling: .seconds(HTTPProvider.resourceTimeout))
+
+        /// Traps when `idle` is not positive, or when `ceiling` is present and not positive.
+        public init(idle: Duration, ceiling: Duration?) {
+            precondition(idle > .zero, "an idle timeout must be positive")
+            precondition(ceiling.map { $0 > .zero } ?? true, "a timeout ceiling must be positive")
+            self.idle = idle
+            self.ceiling = ceiling
         }
     }
 
@@ -98,9 +123,9 @@ public struct HTTPProvider: AIProvider {
 
     /// Fails with `.insecureEndpoint` for an `http` address that is not loopback, before anything is sent.
     ///
-    /// **An injected `session` owns its own timeouts**: the ceilings above are set only on the session this initializer
-    /// creates. A caller that passes one (a test stand-in, a shared session) chose its limits, and this type does not
-    /// silently re-time it.
+    /// **The configuration's timeouts hold on an injected `session` too**: every request enforces them itself. A caller
+    /// that passes one (a test stand-in, a shared session) keeps that session's own limits as well, and the shorter
+    /// one wins. The session this initializer creates mirrors the configured timeouts as a backstop.
     public init(configuration: Configuration, session: URLSession? = nil) throws(AIProviderError) {
         guard let origin = Origin(configuration.endpoint) else { throw .insecureEndpoint }
         guard origin.isAcceptable else { throw .insecureEndpoint }
@@ -111,8 +136,9 @@ public struct HTTPProvider: AIProvider {
             self.session = session
         } else {
             let config = URLSessionConfiguration.ephemeral
-            config.timeoutIntervalForRequest = Self.requestTimeout
-            config.timeoutIntervalForResource = Self.resourceTimeout
+            config.timeoutIntervalForRequest = configuration.timeouts.idle / .seconds(1)
+            // URLSession's own default resource timeout, seven days, stands for "no ceiling".
+            config.timeoutIntervalForResource = configuration.timeouts.ceiling.map { $0 / .seconds(1) } ?? 7 * 24 * 3_600
             self.session = URLSession(configuration: config)
         }
     }
@@ -198,15 +224,62 @@ public struct HTTPProvider: AIProvider {
         }
     }
 
+    /// The watchdog's signal that a limit passed: private, so no other failure can be mistaken for it.
+    private struct Expired: Error {}
+
+    /// **The configuration's timeouts hold on every session**: the transfer races a watchdog, and the first to finish
+    /// cancels the other. URLSession's own limits apply only to the session it was given, and cannot say "no ceiling".
+    /// A caller's cancel is `.cancelled` whichever child noticed it first; only the watchdog's expiry is `.timeout`.
     private func send(_ body: Body) async throws(AIProviderError) -> Reply {
         var request = URLRequest(url: configuration.endpoint.appending(path: "chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         Wire.authorize(&request, auth: configuration.auth, key: configuration.apiKey)
         request.httpBody = try body.json(temperature: configuration.temperature)
+        let start = ContinuousClock.now
+        let lastByte = Locked(start)
+        do {
+            return try await withThrowingTaskGroup(of: Reply.self) { group in
+                group.addTask { [request] in try await transfer(request, lastByte: lastByte) }
+                group.addTask {
+                    try await Self.expiry(of: lastByte, start: start, timeouts: configuration.timeouts)
+                    throw Expired()
+                }
+                defer { group.cancelAll() }
+                guard let reply = try await group.next() else { throw AIProviderError.unreachable }
+                return reply
+            }
+        } catch {
+            if Task.isCancelled { throw .cancelled }
+            switch error {
+            case is Expired: throw .timeout
+            case let error as AIProviderError: throw error
+            case is CancellationError: throw .cancelled
+            default: throw .unreachable
+            }
+        }
+    }
+
+    /// Returns once `idle` has passed since the last byte, or `ceiling` since `start`; throws only when cancelled.
+    private static func expiry(of lastByte: Locked<ContinuousClock.Instant>, start: ContinuousClock.Instant,
+                               timeouts: Timeouts) async throws {
+        let ceiling = timeouts.ceiling.map { start + $0 }
+        while true {
+            var deadline = lastByte.withLock { $0 } + timeouts.idle
+            if let ceiling { deadline = min(deadline, ceiling) }
+            if ContinuousClock.now >= deadline { return }
+            try await Task.sleep(until: deadline, clock: .continuous)
+        }
+    }
+
+    /// One request and the body its status calls for; every byte received, headers included, is noted in `lastByte`.
+    private func transfer(_ request: URLRequest,
+                          lastByte: Locked<ContinuousClock.Instant>) async throws(AIProviderError) -> Reply {
         let delegate = RedirectGuard(origin: origin)
+        let touch = { lastByte.withLock { $0 = .now } }
         do {
             let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
+            touch()
             guard let http = response as? HTTPURLResponse else { throw AIProviderError.badShape }
             if delegate.refused { throw AIProviderError.redirectRefused }
             guard origin == Origin(http.url ?? configuration.endpoint) else { throw AIProviderError.redirectRefused }
@@ -217,7 +290,7 @@ public struct HTTPProvider: AIProvider {
             // timeout it was, and the deadline is truthful.)
             let status = http.statusCode
             if (200..<300).contains(status) {
-                let body = try await Wire.collect(bytes, cap: configuration.responseCap)
+                let body = try await Wire.collect(bytes, cap: configuration.responseCap, onByte: touch)
                 return Reply(status: status, data: body.data, truncated: body.truncated)
             }
             if Self.needsNoBody(status) {
@@ -226,7 +299,7 @@ public struct HTTPProvider: AIProvider {
             }
             // **A broken body keeps the status**: the server did answer, with a status this library reads; its
             // sentence is lost, its verdict is not. A cancellation is the caller's and is never swallowed.
-            guard let body = await Wire.collectForMessage(bytes, cap: Self.errorBodyCap) else {
+            guard let body = await Wire.collectForMessage(bytes, cap: Self.errorBodyCap, onByte: touch) else {
                 throw AIProviderError.cancelled
             }
             return Reply(status: status, data: body.data, truncated: body.truncated)

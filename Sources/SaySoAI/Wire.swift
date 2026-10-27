@@ -38,13 +38,15 @@ enum Wire {
     /// **Read a body with a ceiling.** `data(for:)` buffers whatever the server sends; a hostile or broken server could
     /// exhaust the app's memory. This streams, and one byte past `cap` cancels this transfer and only this one — never
     /// the session, which may be serving the caller's other work. `truncating` keeps what fits and cancels the rest
-    /// (a refusal's sentence is worth at most a few hundred bytes); otherwise the overflow is `tooLarge`.
-    static func collect(_ bytes: URLSession.AsyncBytes, cap: Int,
-                        truncating: Bool = false) async throws(WireFailure) -> WireBody {
+    /// (a refusal's sentence is worth at most a few hundred bytes); otherwise the overflow is `tooLarge`. `onByte` runs
+    /// for every byte received, for a caller that times the silence between them.
+    static func collect(_ bytes: URLSession.AsyncBytes, cap: Int, truncating: Bool = false,
+                        onByte: () -> Void = {}) async throws(WireFailure) -> WireBody {
         var data = Data()
         data.reserveCapacity(min(64 << 10, cap))
         do {
             for try await byte in bytes {
+                onByte()
                 if data.count == cap {
                     bytes.task.cancel()
                     if truncating { return WireBody(data: data, truncated: true) }
@@ -66,9 +68,9 @@ enum Wire {
 
     /// **A refusal's body, best-effort**: its status is already known, so a broken or oversized body loses its sentence,
     /// not the verdict — and `nil` is the one failure that must not be absorbed: the caller's cancellation.
-    static func collectForMessage(_ bytes: URLSession.AsyncBytes, cap: Int) async -> WireBody? {
+    static func collectForMessage(_ bytes: URLSession.AsyncBytes, cap: Int, onByte: () -> Void = {}) async -> WireBody? {
         do {
-            return try await collect(bytes, cap: cap, truncating: true)
+            return try await collect(bytes, cap: cap, truncating: true, onByte: onByte)
         } catch WireFailure.cancelled {
             return nil
         } catch WireFailure.transport(let code) where code == .cancelled {

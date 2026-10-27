@@ -351,6 +351,80 @@ struct HTTPProviderTests {
     }
     #endif
 
+    // MARK: - The timeouts
+
+    static func provider(timeouts: HTTPProvider.Timeouts) throws -> HTTPProvider {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        return try HTTPProvider(configuration: .init(endpoint: url, model: "gpt-test", timeouts: timeouts),
+                                session: session())
+    }
+
+    /// One byte per chunk, `step` apart.
+    static func trickle(_ text: String, every step: Duration) -> [Stub.Script.Step] {
+        Data(text.utf8).flatMap { byte -> [Stub.Script.Step] in [.chunk(Data([byte])), .delay(step)] }
+    }
+
+    @Test func theStandardTimeoutsAreUnchanged() throws {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        #expect(HTTPProvider.Timeouts.standard == HTTPProvider.Timeouts(idle: .seconds(60), ceiling: .seconds(90)))
+        #expect(HTTPProvider.Configuration(endpoint: url, model: "m").timeouts == .standard)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aSilentBodyIsATimeout() async throws {
+        Stub.install(script: .init(steps: [.chunk(Data("{".utf8)), .hang]))
+        await #expect(throws: AIProviderError.timeout) {
+            try await Self.provider(timeouts: .init(idle: .milliseconds(300), ceiling: nil)).answer(to: "q")
+        }
+    }
+
+    /// **An injected session is held to the configuration's timeouts too**: a server that never sends its headers
+    /// fails at the configured idle limit, not at the session's own 60 seconds.
+    @Test(.timeLimit(.minutes(1))) func anInjectedSessionKeepsTheConfiguredIdleLimit() async throws {
+        Stub.install(script: { _ in
+            Thread.sleep(forTimeInterval: 3)
+            return .init(steps: [.chunk(Data(Self.answer("late").utf8))])
+        })
+        await #expect(throws: AIProviderError.timeout) {
+            try await Self.provider(timeouts: .init(idle: .milliseconds(300), ceiling: nil)).answer(to: "q")
+        }
+    }
+
+    /// **Every byte resets the idle limit**: a body that takes longer than `idle` to arrive, but is never silent for
+    /// that long, is an answer.
+    @Test(.timeLimit(.minutes(1))) func aTrickleWithinTheIdleLimitIsAnswered() async throws {
+        Stub.install(script: .init(steps: Self.trickle(Self.answer("ok"), every: .milliseconds(20))))
+        let provider = try Self.provider(timeouts: .init(idle: .seconds(1), ceiling: nil))
+        let start = ContinuousClock.now
+        #expect(try await provider.answer(to: "q") == "ok")
+        #expect(ContinuousClock.now - start > .seconds(1), "the trickle ended within one idle period, so it proves nothing")
+    }
+
+    /// **The ceiling bounds a trickle the idle limit never catches.**
+    @Test(.timeLimit(.minutes(1))) func aTricklePastTheCeilingIsATimeout() async throws {
+        Stub.install(script: .init(steps: Self.trickle(Self.answer("ok"), every: .milliseconds(20))))
+        await #expect(throws: AIProviderError.timeout) {
+            try await Self.provider(timeouts: .init(idle: .seconds(1), ceiling: .milliseconds(500))).answer(to: "q")
+        }
+    }
+
+    /// **The caller's cancel is never a timeout**, however the watchdog and the transfer end.
+    @Test(.timeLimit(.minutes(1))) func aCancelDuringAHangIsCancelledNeverATimeout() async throws {
+        Stub.install(script: .init(steps: [.chunk(Data("{".utf8)), .hang]))
+        let provider = try Self.provider(timeouts: .standard)
+        let task = Task { try await provider.answer(to: "q") }
+        for _ in 0..<500 where !Stub.log.contains("sent 0") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(Stub.log.contains("sent 0"), "the reply never started, so there is nothing to cancel")
+        task.cancel()
+        await #expect(throws: AIProviderError.cancelled) { try await task.value }
+    }
+
+    #if compiler(>=6.2)
+    @Test func aNonPositiveTimeoutIsRefusedAtConstruction() async {
+        await #expect(processExitsWith: .failure) { _ = HTTPProvider.Timeouts(idle: .zero, ceiling: nil) }
+        await #expect(processExitsWith: .failure) { _ = HTTPProvider.Timeouts(idle: .seconds(1), ceiling: .zero) }
+    }
+    #endif
+
     // MARK: - Typed failures
 
     @Test func statusCodesMapToTypedFailures() async throws {
