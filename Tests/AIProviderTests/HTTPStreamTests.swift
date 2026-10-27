@@ -131,6 +131,16 @@ struct HTTPStreamTests {
         #expect(try Self.assemble(events) == "ab")
     }
 
+    /// **Only the integer 0, or no `index` at all, is the answer's choice**: an index that only looks like 0 once
+    /// converted (a string, a boolean, a fraction, null) is another choice, so its content and finish are ignored.
+    @Test func anIndexThatIsNotTheIntegerZeroIsAnotherChoice() throws {
+        // Written as JSON text: serializing a Swift `0.0` would write `0`.
+        let others = [#""1""#, #""0""#, "false", "true", "0.5", "0.0", "null"]
+        let events = others.map { #"{"choices":[{"index":\#($0),"delta":{"content":"OTHER"},"finish_reason":"stop"}]}"# }
+            + [Self.chunk(["content": "a"], index: nil), Self.chunk(["content": "b"], finish: "stop")]
+        #expect(try Self.assemble(events) == "ab")
+    }
+
     /// **The first finish reason ends the answer**: whatever comes after it is never read into it.
     @Test func theFirstFinishReasonEndsTheAnswer() throws {
         var answer = StreamedAnswer(status: 200, cap: 1 << 20, key: nil)

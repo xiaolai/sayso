@@ -44,7 +44,7 @@ struct StreamedAnswer: Sendable {
         }
         guard let choices = object["choices"] else { return false }
         guard let choices = choices as? [[String: Any]] else { throw .badShape }
-        for choice in choices where choice["index"] as? Int ?? 0 == 0 {
+        for choice in choices where Self.isFirst(choice) {
             if let delta = choice["delta"] as? [String: Any] {
                 if let text = delta["content"] as? String {
                     guard content.utf8.count + text.utf8.count <= cap else { throw .badShape }
@@ -61,6 +61,15 @@ struct StreamedAnswer: Sendable {
             }
         }
         return false
+    }
+
+    /// Choice `0`: no `index`, or one that is the JSON integer 0. Bridging would read `"1"` as no index, and `false`
+    /// as 0, so a string, a boolean, a fraction or null is another choice.
+    private static func isFirst(_ choice: [String: Any]) -> Bool {
+        guard let index = choice["index"] else { return true }
+        guard let number = index as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              !CFNumberIsFloatType(number) else { return false }
+        return number as? Int == 0
     }
 
     /// The answer, once the stream has ended; `allowEmpty` and `allowLength` are the probe's, as for a whole reply.

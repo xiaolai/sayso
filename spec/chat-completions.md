@@ -140,7 +140,7 @@ anything else is a bad shape.
 | a top-level `error`, object or string | a server refusal with the reply's HTTP status (normally 200) and the server's words, worded as for a refusal's body: scrubbed of the key and capped at 300 characters |
 | no `choices`, or `choices: []` (a usage-only chunk) | ignored |
 | `choices` that is not an array of objects | a bad shape |
-| a choice whose `index` is not 0 | ignored (no request asks for more than one); a missing `index` counts as 0 |
+| a choice whose `index` is not the JSON integer 0 | ignored (no request asks for more than one); a missing `index` counts as 0, but one that is a string (`"0"`, `"1"`), a boolean, a fraction or null is another choice |
 | `delta.content`, a string | appended to the answer |
 | `delta.content` null or missing | nothing |
 | `delta.content` of any other type | a bad shape |
