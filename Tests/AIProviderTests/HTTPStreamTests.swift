@@ -193,6 +193,40 @@ struct HTTPStreamTests {
         }
     }
 
+    /// **Reading events holds no memory per event**: a stream that outruns its reader never lets the read loop pause,
+    /// so whatever parsing an event leaves for a later cleanup piles up. Unbounded, 800,000 events held about 50 MB
+    /// here; the ceiling is far under that and far over what one event leaves.
+    @Test(.timeLimit(.minutes(1))) func readingEventsHoldsNoMemoryPerEvent() throws {
+        // The process's physical footprint: malloc's own statistics read zero under the thread sanitizer's allocator.
+        func inUse() -> Int {
+            var info = task_vm_info_data_t()
+            var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+            let result = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                    task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+                }
+            }
+            return result == KERN_SUCCESS ? Int(info.phys_footprint) : 0
+        }
+        // The instrument must see an allocation before its silence means anything.
+        let before = inUse()
+        let probe = UnsafeMutableRawPointer.allocate(byteCount: 8 << 20, alignment: 16)
+        probe.initializeMemory(as: UInt8.self, repeating: 1, count: 8 << 20)
+        let seen = inUse() - before
+        probe.deallocate()
+        try #require(seen >= 8 << 20, "the footprint did not show an 8 MB allocation: \(seen) bytes")
+
+        var answer = StreamedAnswer(status: 200, cap: 1 << 20, key: nil)
+        let event = Data(Self.json(["choices": []]).utf8)
+        let start = inUse()
+        var peak = start
+        for count in 1...800_000 {
+            _ = try answer.take(event)
+            if count % 10_000 == 0 { peak = max(peak, inUse()) }
+        }
+        #expect(peak - start < 16 << 20, "800,000 events held \(peak - start) bytes")
+    }
+
     /// **The answer is capped as it grows**: its UTF-8 bytes up to the cap are an answer, one more is not.
     @Test func contentPastTheCapIsABadShape() throws {
         let events = [Self.chunk(["content": "é"]), Self.chunk(["content": "abc"], finish: "stop")]

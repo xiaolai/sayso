@@ -25,6 +25,16 @@ struct StreamedAnswer: Sendable {
     /// Takes one event's data; `true` once the answer has ended, so nothing after it need be read. A server's error
     /// event is `.server` with its own words, scrubbed of the key; anything that is not a chunk is `.badShape`.
     mutating func take(_ event: Data) throws(AIProviderError) -> Bool {
+        // **Each event's Foundation objects go with it**: parsing autoreleases them, and a stream that outruns its
+        // reader never lets the read loop pause to drain them, so they would pile up for as long as the stream runs.
+        #if canImport(ObjectiveC)
+        try autoreleasepool { Result { () throws(AIProviderError) in try read(event) } }.get()
+        #else
+        try read(event)
+        #endif
+    }
+
+    private mutating func read(_ event: Data) throws(AIProviderError) -> Bool {
         if String(decoding: event, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
             return true
         }

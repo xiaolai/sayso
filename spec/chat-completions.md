@@ -170,8 +170,13 @@ even on a refused turn.
 **Bounds.** The stream as a whole has no byte cap: every token comes wrapped in a chunk envelope, so a raw cap would
 refuse long legitimate answers; the timeouts bound it in time instead. Each line (a comment's included), one event's
 joined data, and the assembled answer (the UTF-8 bytes of its content) are each capped at the reply cap, and passing
-any of them is a bad shape at the byte, or chunk, that passes it. Reasoning deltas are parsed and dropped, so memory
-held stays within a few times the reply cap: the line being read, one event's data, and the answer.
+any of them is a bad shape at the byte, or chunk, that passes it. Reasoning deltas are parsed and dropped, and each
+event's parsing is released with the event, so what the provider holds stays within about four times the reply cap
+however long the stream runs: the line being read, one event's data and its copy being parsed, and the answer. This
+does not count bytes URLSession has received but the provider has not yet read: a server that sends faster than they
+are read is buffered there, outside the provider's control. Measured through the test stand-in at 800,000 small
+events sent with no pause, the process grew about 92 MB before the per-event release and about 41 MB after it, the same
+as the stand-in's stream read with no provider at all. How much a real connection buffers is unmeasured.
 
 **Known cost.** The stream is read a byte at a time, and every byte refreshes the idle watchdog's clock under a lock.
 Streaming a 1 MiB answer through the test stand-in took about 300 ms in a release build, about 140 ms of it that
