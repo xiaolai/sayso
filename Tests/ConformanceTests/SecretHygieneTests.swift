@@ -46,11 +46,17 @@ final class SecretHygieneTests: XCTestCase {
         let secret = String(repeating: "a", count: 32_768) + "b"
         Secret.register(secret)
         let text = String(repeating: "a", count: 65_536)
-        let start = Date()
+        // This thread's CPU time, so a loaded machine's wait for a core is not counted.
+        func cpu() -> Double {
+            var t = timespec()
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)
+            return Double(t.tv_sec) + Double(t.tv_nsec) / 1e9
+        }
+        let start = cpu()
         XCTAssertEqual(Secret.scrub(text), text)
         XCTAssertEqual(Secret.scrub(text + "b"), String(repeating: "a", count: 32_768) + Secret.redacted)
-        // A naive scan is about 10^9 comparisons; the bound is generous for a loaded machine.
-        XCTAssertLessThan(Date().timeIntervalSince(start), 30)
+        // A naive scan is about 10^9 comparisons.
+        XCTAssertLessThan(cpu() - start, 30)
     }
 
     /// The rolling match finds exactly the windows equal to a registered secret, overlapping ones included, against a

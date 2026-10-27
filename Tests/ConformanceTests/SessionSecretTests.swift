@@ -31,10 +31,16 @@ final class SessionSecretTests: XCTestCase {
         // measures the sanitizer. The unsanitized runs keep the bound, which the old scan missed by orders of
         // magnitude.
         if MemoryScan.allocatorReplaced { throw XCTSkip("a sanitizer's slowdown, not the scan's, would be timed") }
+        // This thread's CPU time, so a loaded machine's wait for a core is not counted.
+        func cpu() -> Double {
+            var t = timespec()
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)
+            return Double(t.tv_sec) + Double(t.tv_nsec) / 1e9
+        }
         let s = String(repeating: "eyJ", count: 60_000)
-        let start = Date()
+        let start = cpu()
         XCTAssertEqual(Secret.scrub(s), s)
-        XCTAssertLessThan(Date().timeIntervalSince(start), 30)  // generous for a loaded machine; the old scan took about 5·10⁹ steps here
+        XCTAssertLessThan(cpu() - start, 30)  // the old scan took about 5·10⁹ steps here
     }
 
     func testPatternsMatchGo() {

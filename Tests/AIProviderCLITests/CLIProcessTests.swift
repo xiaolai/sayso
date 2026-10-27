@@ -211,12 +211,18 @@ struct CLIProcessTests {
         var stream = CLIProcess.Stream(-1, 0)
         let chunk = Array(String(repeating: "x\n", count: 800_000).utf8)
         let count = Locked(0)
-        let start = ContinuousClock.now
+        // This thread's CPU time, so a loaded machine's wait for a core is not counted.
+        func cpu() -> Double {
+            var t = timespec()
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)
+            return Double(t.tv_sec) + Double(t.tv_nsec) / 1e9
+        }
+        let start = cpu()
         CLIProcess.lines(into: &stream, chunk[...], onLine: { _ in count.withLock { $0 += 1 } })
         #expect(count.withLock { $0 } == 800_000)
         #expect(stream.pending.isEmpty)
         // Measured in a debug build: about 0.3 s in one pass; the shift per line took 4.5 s at half this count.
-        #expect(ContinuousClock.now - start < .seconds(5))
+        #expect(cpu() - start < 5)
     }
 
     /// **The whole path to a credential folder is protected**, not only its last folder: a parent others may write to
