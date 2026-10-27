@@ -4,7 +4,7 @@ import Foundation
 ///
 /// No locality tier and no locality claim: the endpoint is the reader's address and this library promises nothing about
 /// what serves it. The key lives in this value, in memory, and never in an error, a log line or a description.
-/// Requests run on one kept `URLSession`, at temperature 0, non-streaming.
+/// Requests run on one kept `URLSession`, at temperature 0, non-streaming unless the configuration asks for a stream.
 public struct HTTPProvider: AIProvider {
     /// What the reader configured: an address, a model name and, for most cloud services, a key — plus how the key
     /// travels and which token-limit field the service prefers first. **The key is never printed**: description,
@@ -23,11 +23,13 @@ public struct HTTPProvider: AIProvider {
         /// The largest answer body accepted, in bytes; at least one, or construction traps. A refusal's body keeps the
         /// fixed `HTTPProvider.errorBodyCap`.
         public let responseCap: Int
+        public let delivery: Delivery
 
         public init(endpoint: URL, model: String, apiKey: String? = nil,
                     auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst,
                     temperature: AIProviderTemperature = .zero, answerBudget: AnswerBudget = .standard,
-                    timeouts: Timeouts = .standard, responseCap: Int = HTTPProvider.responseCap) {
+                    timeouts: Timeouts = .standard, responseCap: Int = HTTPProvider.responseCap,
+                    delivery: Delivery = .whole) {
             precondition(responseCap > 0, "a response cap must be at least one byte")
             self.endpoint = endpoint
             self.model = model
@@ -38,7 +40,19 @@ public struct HTTPProvider: AIProvider {
             self.answerBudget = answerBudget
             self.timeouts = timeouts
             self.responseCap = responseCap
+            self.delivery = delivery
         }
+    }
+
+    /// **How the answer travels.** Neither choice ever returns a partial answer.
+    public enum Delivery: Sendable, Equatable, Hashable {
+        /// `stream: false`: the reply is one JSON body, under `responseCap`.
+        case whole
+        /// `stream: true`: server-sent events, put together into one answer before it is returned. Bytes keep arriving
+        /// while a reasoning model works, so `idle` measures real silence. A line, one event and the answer are each
+        /// capped at `responseCap`; the stream as a whole is bounded by the timeouts. A server that answers with JSON
+        /// instead is read whole.
+        case streamed
     }
 
     /// **Per-request limits.** Every request enforces them, whichever session it runs on.
@@ -148,7 +162,7 @@ public struct HTTPProvider: AIProvider {
                         tokenField: Self.firstField(configuration.tokenField))
         let reply = try await ask(body)
         try Self.statusError(reply.status, body: reply.data, truncated: reply.truncated, key: configuration.apiKey)
-        return try Self.content(of: reply.data)
+        return try Self.text(of: reply)
     }
 
     /// **One request, with the token-field negotiation both callers need**: some servers (and older OpenAI models) refuse
@@ -186,7 +200,7 @@ public struct HTTPProvider: AIProvider {
         let reply = try await ask(body)
         try Self.statusError(reply.status, body: reply.data, truncated: reply.truncated, key: configuration.apiKey)
         // A one-token probe normally ends at the token ceiling; that is success here, not truncation.
-        _ = try Self.content(of: reply.data, allowEmpty: true, allowLength: true)
+        _ = try Self.text(of: reply, allowEmpty: true, allowLength: true)
         return .ready(latency: clock.now - start)
     }
 
@@ -197,6 +211,15 @@ public struct HTTPProvider: AIProvider {
         let data: Data
         /// The error-body ceiling cut this body: a message worded from it must not show a half-echoed key.
         let truncated: Bool
+        /// A streamed 2xx, put together; `nil` for a body read whole.
+        var streamed: StreamedAnswer? = nil
+    }
+
+    /// The answer in a 2xx reply, from its stream or its whole body.
+    private static func text(of reply: Reply, allowEmpty: Bool = false,
+                             allowLength: Bool = false) throws(AIProviderError) -> String {
+        if let streamed = reply.streamed { return try streamed.text(allowEmpty: allowEmpty, allowLength: allowLength) }
+        return try content(of: reply.data, allowEmpty: allowEmpty, allowLength: allowLength)
     }
 
     private enum TokenField: String, Sendable {
@@ -211,11 +234,12 @@ public struct HTTPProvider: AIProvider {
         let tokens: Int?
         let tokenField: TokenField
 
-        func json(temperature: AIProviderTemperature) throws(AIProviderError) -> Data {
+        func json(temperature: AIProviderTemperature, stream: Bool) throws(AIProviderError) -> Data {
+            // No `stream_options`: some servers refuse a member they do not know.
             var object: [String: Any] = [
                 "model": model,
                 "messages": [["role": "user", "content": question]],
-                "stream": false,
+                "stream": stream,
             ]
             if let tokens { object[tokenField.rawValue] = tokens }
             if temperature == .zero { object["temperature"] = 0 }
@@ -234,8 +258,10 @@ public struct HTTPProvider: AIProvider {
         var request = URLRequest(url: configuration.endpoint.appending(path: "chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let streamed = configuration.delivery == .streamed
+        if streamed { request.setValue("text/event-stream", forHTTPHeaderField: "Accept") }
         Wire.authorize(&request, auth: configuration.auth, key: configuration.apiKey)
-        request.httpBody = try body.json(temperature: configuration.temperature)
+        request.httpBody = try body.json(temperature: configuration.temperature, stream: streamed)
         let start = ContinuousClock.now
         let lastByte = Locked(start)
         do {
@@ -290,6 +316,10 @@ public struct HTTPProvider: AIProvider {
             // timeout it was, and the deadline is truthful.)
             let status = http.statusCode
             if (200..<300).contains(status) {
+                if configuration.delivery == .streamed, !Self.isJSON(http) {
+                    let answer = try await stream(bytes, status: status, onByte: touch)
+                    return Reply(status: status, data: Data(), truncated: false, streamed: answer)
+                }
                 let body = try await Wire.collect(bytes, cap: configuration.responseCap, onByte: touch)
                 return Reply(status: status, data: body.data, truncated: body.truncated)
             }
@@ -318,6 +348,28 @@ public struct HTTPProvider: AIProvider {
         } catch {
             throw .unreachable
         }
+    }
+
+    /// **A stream read until its answer ends**: every byte, a comment's included, is activity for the idle limit, and
+    /// once the answer has ended the rest of the transfer is cancelled, not read.
+    private func stream(_ bytes: URLSession.AsyncBytes, status: Int, onByte: () -> Void) async throws -> StreamedAnswer {
+        var events = ServerSentEvents(cap: configuration.responseCap)
+        var answer = StreamedAnswer(status: status, cap: configuration.responseCap, key: configuration.apiKey)
+        for try await byte in bytes {
+            onByte()
+            guard let event = try events.take(byte), try answer.take(event) else { continue }
+            bytes.task.cancel()
+            return answer
+        }
+        if let event = try events.finish() { _ = try answer.take(event) }
+        return answer
+    }
+
+    /// A streamed request answered with JSON was not streamed: the server ignored `stream: true`. Its media type is
+    /// compared without parameters; a reply with no type is read as a stream.
+    private static func isJSON(_ response: HTTPURLResponse) -> Bool {
+        let type = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first
+        return type?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json"
     }
 
     static func transport(_ code: URLError.Code) -> AIProviderError {

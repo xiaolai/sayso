@@ -425,6 +425,145 @@ struct HTTPProviderTests {
     }
     #endif
 
+    // MARK: - Streamed delivery
+
+    static func provider(delivery: HTTPProvider.Delivery, timeouts: HTTPProvider.Timeouts = .standard,
+                         responseCap: Int = HTTPProvider.responseCap) throws -> HTTPProvider {
+        let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
+        return try HTTPProvider(configuration: .init(endpoint: url, model: "gpt-test", apiKey: "sk-SECRET-123",
+                                                     timeouts: timeouts, responseCap: responseCap, delivery: delivery),
+                                session: session())
+    }
+
+    /// Each event as one `data` line and its blank line.
+    static func events(_ events: [String]) -> Data {
+        Data(events.map { "data: \($0)\n\n" }.joined().utf8)
+    }
+
+    /// A reasoning model's stream: a role chunk, reasoning, the content one character per chunk, the finish, `[DONE]`.
+    static func streamed(_ content: String, finish: String = "stop") -> [String] {
+        [HTTPStreamTests.chunk(["role": "assistant"]), HTTPStreamTests.chunk(["reasoning_content": "thinking"])]
+            + content.map { HTTPStreamTests.chunk(["content": String($0)]) }
+            + [HTTPStreamTests.chunk([:], finish: finish), "[DONE]"]
+    }
+
+    static func stream(_ steps: [Stub.Script.Step], type: String? = "text/event-stream") -> Stub.Script {
+        Stub.Script(headers: type.map { ["Content-Type": $0] } ?? [:], steps: steps)
+    }
+
+    @Test func aStreamedRequestAsksForAStream() async throws {
+        Stub.install(script: Self.stream([.chunk(Self.events(Self.streamed("ok")))]))
+        _ = try await Self.provider(delivery: .streamed).answer(to: "q")
+        let request = try #require(Stub.requests.first)
+        #expect(request.value(forHTTPHeaderField: "Accept") == "text/event-stream")
+        let body = try Self.body(of: request)
+        #expect(body["stream"] as? Bool == true)
+        #expect(body["stream_options"] == nil)
+        #expect(HTTPProvider.Configuration(endpoint: try #require(request.url), model: "m").delivery == .whole)
+    }
+
+    /// **The same content is the same answer, however it travels**: one event per character, each its own piece.
+    @Test func aStreamedAnswerEqualsTheWholeOne() async throws {
+        let content = "Bonjour, «monde» \u{2028}<think>x</think> é"
+        Stub.install { _ in (200, Data(Self.answer(content).utf8)) }
+        let whole = try await Self.provider(delivery: .whole).answer(to: "q")
+        Stub.install(script: Self.stream(Self.streamed(content).map { .chunk(Self.events([$0])) }))
+        #expect(try await Self.provider(delivery: .streamed).answer(to: "q") == whole)
+        #expect(whole == content)
+    }
+
+    @Test func aStreamedTokenFieldRefusalIsRetriedOnce() async throws {
+        Stub.install(script: { request in
+            let body = (try? Self.body(of: request)) ?? [:]
+            if body["max_completion_tokens"] != nil {
+                return .init(status: 422, steps: [.chunk(Data(#"{"error":{"message":"Invalid Parameters"}}"#.utf8))])
+            }
+            return Self.stream([.chunk(Self.events(Self.streamed("retried")))])
+        })
+        #expect(try await Self.provider(delivery: .streamed).answer(to: "q") == "retried")
+        let requests = Stub.requests
+        #expect(requests.count == 2)
+        #expect(try Self.body(of: requests[1])["stream"] as? Bool == true)
+    }
+
+    /// **The media type decides how a 2xx is read**: a server that ignored `stream: true` and sent JSON is read whole;
+    /// a reply with no type at all is read as a stream.
+    @Test func theContentTypeDecidesHowAStreamedRequestsReplyIsRead() async throws {
+        Stub.install(script: Self.stream([.chunk(Data(Self.answer("whole").utf8))], type: "Application/JSON; charset=utf-8"))
+        #expect(try await Self.provider(delivery: .streamed).answer(to: "q") == "whole")
+        Stub.install(script: Self.stream([.chunk(Self.events(Self.streamed("untyped")))], type: nil))
+        #expect(try await Self.provider(delivery: .streamed).answer(to: "q") == "untyped")
+    }
+
+    @Test func aStreamThatEndsUnfinishedIsABadShape() async throws {
+        let unfinished = Array(Self.streamed("half").dropLast(2))
+        Stub.install(script: Self.stream([.chunk(Self.events(unfinished))]))
+        await #expect(throws: AIProviderError.badShape) { try await Self.provider(delivery: .streamed).answer(to: "q") }
+    }
+
+    @Test func aStreamCutByTheNetworkIsUnreachable() async throws {
+        Stub.install(script: Self.stream([.chunk(Self.events(Array(Self.streamed("half").prefix(3)))),
+                                          .failure(.networkConnectionLost)]))
+        await #expect(throws: AIProviderError.unreachable) { try await Self.provider(delivery: .streamed).answer(to: "q") }
+    }
+
+    /// A line past the configured cap is refused as it arrives, not after the stream ends.
+    @Test func aStreamedLinePastTheCapIsABadShape() async throws {
+        Stub.install(script: Self.stream([.chunk(Data(("data: " + String(repeating: "a", count: 64)).utf8)), .hang]))
+        await #expect(throws: AIProviderError.badShape) {
+            try await Self.provider(delivery: .streamed, responseCap: 32).answer(to: "q")
+        }
+    }
+
+    /// **The finish ends the transfer**: what the server sends after it, even a stream that never ends, is not read.
+    @Test(.timeLimit(.minutes(1))) func theFinishReasonEndsTheTransfer() async throws {
+        Stub.install(script: Self.stream([.chunk(Self.events(Self.streamed("done").dropLast())), .hang]))
+        #expect(try await Self.provider(delivery: .streamed).answer(to: "q") == "done")
+        for _ in 0..<500 where !Stub.log.contains("released") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(Stub.log.contains("released"))
+    }
+
+    /// **A keep-alive comment is activity**: a reasoning model that sends nothing but comments for longer than `idle`,
+    /// never silent for that long, still answers.
+    @Test(.timeLimit(.minutes(1))) func keepAliveCommentsHoldOffTheIdleLimit() async throws {
+        let comments = (0..<40).flatMap { _ -> [Stub.Script.Step] in
+            [.delay(.milliseconds(50)), .chunk(Data(": keep-alive\n\n".utf8))]
+        }
+        Stub.install(script: Self.stream(comments + [.chunk(Self.events(Self.streamed("ok")))]))
+        let provider = try Self.provider(delivery: .streamed, timeouts: .init(idle: .seconds(1), ceiling: nil))
+        let start = ContinuousClock.now
+        #expect(try await provider.answer(to: "q") == "ok")
+        #expect(ContinuousClock.now - start > .seconds(1), "the comments ended within one idle period, so they prove nothing")
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aSilentStreamIsATimeout() async throws {
+        Stub.install(script: Self.stream([.chunk(Self.events([HTTPStreamTests.chunk(["content": "a"])])), .hang]))
+        await #expect(throws: AIProviderError.timeout) {
+            try await Self.provider(delivery: .streamed, timeouts: .init(idle: .milliseconds(300), ceiling: nil))
+                .answer(to: "q")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aCancelMidStreamIsCancelled() async throws {
+        Stub.install(script: Self.stream([.chunk(Self.events([HTTPStreamTests.chunk(["content": "a"])])), .hang]))
+        let provider = try Self.provider(delivery: .streamed)
+        let task = Task { try await provider.answer(to: "q") }
+        for _ in 0..<500 where !Stub.log.contains("sent 0") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(Stub.log.contains("sent 0"), "the stream never started, so there is nothing to cancel")
+        task.cancel()
+        await #expect(throws: AIProviderError.cancelled) { try await task.value }
+    }
+
+    /// **The probe takes the path answers take**: it asks for a stream, and a one-token stream that ends at the ceiling
+    /// with no content is the proof it exists for.
+    @Test func theProbeStreamsWhenAnswersDo() async throws {
+        Stub.install(script: Self.stream([.chunk(Self.events(Self.streamed("", finish: "length")))]))
+        _ = try await Self.provider(delivery: .streamed).probe()
+        #expect(try Self.body(of: try #require(Stub.requests.first))["stream"] as? Bool == true)
+        Stub.install(script: Self.stream([.chunk(Self.events(Self.streamed("x", finish: "content_filter")))]))
+        await #expect(throws: AIProviderError.refused) { try await Self.provider(delivery: .streamed).probe() }
+    }
+
     // MARK: - Typed failures
 
     @Test func statusCodesMapToTypedFailures() async throws {
@@ -686,10 +825,19 @@ struct HTTPProviderTests {
             #expect(!text.contains(key), "the provider printed its key: \(text)")
         }
         let url = try #require(URL(string: "https://api.example.com/v1"))
-        let configuration = HTTPProvider.Configuration(endpoint: url, model: "m", apiKey: key)
-        for text in [String(describing: configuration), String(reflecting: configuration),
-                     String(describing: Mirror(reflecting: configuration))] {
-            #expect(!text.contains(key), "the configuration printed its key: \(text)")
+        for configuration in [
+            HTTPProvider.Configuration(endpoint: url, model: "m", apiKey: key),
+            HTTPProvider.Configuration(endpoint: url, model: "m", apiKey: key, auth: .header("x-api-key"),
+                                       tokenField: .maxTokensFirst, temperature: .serverDefault,
+                                       answerBudget: .tokens(8_192), timeouts: .init(idle: .seconds(5), ceiling: nil),
+                                       responseCap: 4_096, delivery: .streamed),
+        ] {
+            var dumped = ""
+            dump(configuration, to: &dumped)
+            for text in [String(describing: configuration), String(reflecting: configuration),
+                         String(describing: Mirror(reflecting: configuration)), dumped] {
+                #expect(!text.contains(key), "the configuration printed its key: \(text)")
+            }
         }
         let profile = try #require(AIProviderProfile.profile(id: "deepseek"))
         let request = ModelCatalog.Request(profile: profile, baseURL: url, apiKey: key)
