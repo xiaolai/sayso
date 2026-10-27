@@ -194,7 +194,7 @@ final class CredentialsBoundaryTests: XCTestCase {
             answersInitialize
             ? "m = json.loads(sys.stdin.readline())\nprint(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n"
             : ""
-        let body = "#!\(python)\nimport sys, json, time\n\(reply)time.sleep(30)\n"
+        let body = "#!\(python)\nimport sys, json, time\nopen(sys.argv[0] + '.ready', 'w').close()\n\(reply)time.sleep(30)\n"
         FileManager.default.createFile(atPath: script, contents: Data(body.utf8))
         chmod(script, 0o755)
         return (script, { try? FileManager.default.removeItem(atPath: dir) })
@@ -218,7 +218,7 @@ final class CredentialsBoundaryTests: XCTestCase {
         let (script, cleanup) = try stalledChild()
         defer { cleanup() }
         let cfg = AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3)
-        let c = try AppServerClient.start(cfg)
+        let c = try AppServerClient.startWhenReady(cfg)
         XCTAssertThrowsError(try c.call("big", params: ["pad": String(repeating: "x", count: 4 << 20)]))
         let t0 = Date()
         XCTAssertThrowsError(try c.call("small"))

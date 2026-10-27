@@ -278,14 +278,14 @@ final class CredentialsUnitTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: dir) }
         let script = dir + "/codex"
-        let body = "#!\(python)\nimport sys, json, time\nm = json.loads(sys.stdin.readline())\n"
+        let body = "#!\(python)\nimport sys, json, time\nopen(sys.argv[0] + '.ready', 'w').close()\n"
+            + "m = json.loads(sys.stdin.readline())\n"
             + "print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\ntime.sleep(30)\n"
         FileManager.default.createFile(atPath: script, contents: Data(body.utf8))
         chmod(script, 0o755)
-        // Generous enough for a loaded machine to start Python and answer initialize.
         let cfg = AppServerClient.Configuration(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3)
 
-        let c = try AppServerClient.start(cfg)
+        let c = try AppServerClient.startWhenReady(cfg)
         var t0 = Date()
         XCTAssertThrowsError(try c.call("big", params: ["pad": String(repeating: "x", count: 4 << 20)]))
         XCTAssertLessThan(Date().timeIntervalSince(t0), 5, "the call outlived its timeout")

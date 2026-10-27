@@ -143,13 +143,14 @@ final class AppServerWipeTests: XCTestCase {
 
     /// A reply that comes after its call timed out is never copied and its line is wiped. The child sends it only
     /// once the next request arrives, after a notification that tells it the timed-out request was read; the next
-    /// call returning proves the late line was handled.
+    /// call returning proves the late line was handled. The child holds the reply until then, so the timeout decides
+    /// only how long the test waits; it is long enough for a loaded machine to start the child and answer the next call.
     func testALateReplyLeavesNothing() throws {
         let w = WipeScan()
         let c = try start(w, [
             Answer(parts: [.text(#"{"method":"read"}"#)]),
             Answer(parts: [.text(#"{"id":2,"result":{"authToken":""#), .needle, .text("\"}}\n" + #"{"id":3,"result":{}}"#)]),
-        ], timeout: 1)
+        ], timeout: 5)
         let found = try w.found {
             XCTAssertThrowsError(try c.getAuthStatus(includeToken: true, refreshToken: false))
             ping(c)

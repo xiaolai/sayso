@@ -13,7 +13,8 @@ final class AppServerLifecycleTests: XCTestCase {
         let dir = NSTemporaryDirectory() + "sayso-life-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let script = dir + "/codex"
-        let body = "#!\(python)\nimport sys, json, time\nm = json.loads(sys.stdin.readline())\n"
+        let body = "#!\(python)\nimport sys, json, time\nopen(sys.argv[0] + '.ready', 'w').close()\n"
+            + "m = json.loads(sys.stdin.readline())\n"
             + "print(json.dumps({'id': m['id'], 'result': {'userAgent': 'codex_cli_rs/0.162.1'}}), flush=True)\n"
             + "sys.stdin.readline()\n" + then
         FileManager.default.createFile(atPath: script, contents: Data(body.utf8))
@@ -337,7 +338,7 @@ final class AppServerLifecycleTests: XCTestCase {
                 + "    sys.stdout.write(json.dumps({'id': 'srv-%d' % i, 'method': 'approve', 'params': {'pad': 'x' * 100}}) + '\\n')\n"
                 + "sys.stdout.flush()\ntime.sleep(30)\n")
         defer { cleanup() }
-        let c = try start(script, timeout: 3, nil)  // initialize too: long enough for the child to start under load
+        let c = try AppServerClient.startWhenReady(.init(bin: script, environment: ["PATH": "/usr/bin:/bin"], timeout: 3))
         defer { c.close() }
         var last = ""
         let deadline = Date().addingTimeInterval(20)
@@ -350,6 +351,17 @@ final class AppServerLifecycleTests: XCTestCase {
         let t0 = Date()
         XCTAssertThrowsError(try c.call("echo"))
         XCTAssertLessThan(Date().timeIntervalSince(t0), 0.1, "a call after the failure did not fail at once")
+    }
+}
+
+extension AppServerClient {
+    /// Starts a client whose handshake begins once the child has created `<bin>.ready`, as a fake does when its
+    /// interpreter is up: a short timeout under test then times the exchange, not starting Python on a loaded machine.
+    static func startWhenReady(_ cfg: Configuration) throws -> AppServerClient {
+        try start(cfg) { _ in
+            let deadline = Date().addingTimeInterval(60)
+            while access(cfg.bin + ".ready", F_OK) != 0, Date() < deadline { usleep(2000) }
+        }
     }
 }
 #endif
