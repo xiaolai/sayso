@@ -17,21 +17,51 @@ public struct HTTPProvider: AIProvider {
         public let auth: AIProviderAuth
         public let tokenField: AIProviderTokenField
         public let temperature: AIProviderTemperature
-        /// The most tokens one answer may take; at least one, or construction traps.
-        public let answerTokens: Int
+        /// The most tokens one answer may take, or none named.
+        public let answerBudget: AnswerBudget
 
         public init(endpoint: URL, model: String, apiKey: String? = nil,
                     auth: AIProviderAuth = .bearer, tokenField: AIProviderTokenField = .completionFirst,
-                    temperature: AIProviderTemperature = .zero, answerTokens: Int = HTTPProvider.answerTokens) {
-            precondition(answerTokens > 0, "an answer budget must be at least one token")
+                    temperature: AIProviderTemperature = .zero, answerBudget: AnswerBudget = .standard) {
             self.endpoint = endpoint
             self.model = model
             self.apiKey = apiKey
             self.auth = auth
             self.tokenField = tokenField
             self.temperature = temperature
-            self.answerTokens = answerTokens
+            self.answerBudget = answerBudget
         }
+    }
+
+    /// **One answer's token budget**: a positive count, or none at all. A value at or below zero cannot be built.
+    public struct AnswerBudget: Sendable, Equatable, Hashable {
+        private let limit: Int?
+
+        private init(limit: Int?) {
+            self.limit = limit
+        }
+
+        /// **Sends no token field, so the server's own limit applies**, whatever that is: some servers fill in the
+        /// model's maximum, some generate until the context is full, some may refuse the request. It is meant for a
+        /// reader who knows their server.
+        public static let endpointDefault = AnswerBudget(limit: nil)
+        /// `.tokens(HTTPProvider.answerTokens)`.
+        public static let standard = AnswerBudget.tokens(HTTPProvider.answerTokens)
+
+        /// For a count written in code: traps when `count < 1`. A literal zero is the caller's bug.
+        public static func tokens(_ count: Int) -> AnswerBudget {
+            precondition(count > 0, "an answer budget must be at least one token")
+            return AnswerBudget(limit: count)
+        }
+
+        /// For a count read from settings or user input: `nil` when `count < 1`, never a trap.
+        public init?(tokens count: Int) {
+            guard count > 0 else { return nil }
+            self.limit = count
+        }
+
+        /// The count sent, or `nil` for `.endpointDefault`.
+        public var tokenLimit: Int? { limit }
     }
 
     /// The default answer budget. A budget bounds one answer's cost; a reasoning model spends part of it on reasoning
@@ -81,7 +111,7 @@ public struct HTTPProvider: AIProvider {
     }
 
     public func answer(to question: String) async throws(AIProviderError) -> String {
-        let body = Body(model: configuration.model, question: question, tokens: configuration.answerTokens,
+        let body = Body(model: configuration.model, question: question, tokens: configuration.answerBudget.tokenLimit,
                         tokenField: Self.firstField(configuration.tokenField))
         let reply = try await ask(body)
         try Self.statusError(reply.status, body: reply.data, truncated: reply.truncated, key: configuration.apiKey)
@@ -93,12 +123,13 @@ public struct HTTPProvider: AIProvider {
     /// status's, not the sentence's: DeepSeek answers 422 with "Invalid Parameters" and does not necessarily name the
     /// field (measured 2026-10-25). A probe uses the same path, so a server that answers questions does not fail its
     /// own connection test. **Only a retry that succeeds replaces the first reply**: one that fails too, by status or
-    /// transport, would hide what the server said about the request the profile meant to send.
+    /// transport, would hide what the server said about the request the profile meant to send. A body with no token
+    /// field has nothing to negotiate: the same request again would get the same refusal.
     private func ask(_ body: Body) async throws(AIProviderError) -> Reply {
         let reply = try await send(body)
-        guard reply.status == 400 || reply.status == 422 else { return reply }
+        guard reply.status == 400 || reply.status == 422, let tokens = body.tokens else { return reply }
         do {
-            let retry = try await send(Body(model: body.model, question: body.question, tokens: body.tokens,
+            let retry = try await send(Body(model: body.model, question: body.question, tokens: tokens,
                                             tokenField: body.tokenField == .completion ? .max : .completion))
             return (200..<300).contains(retry.status) ? retry : reply
         } catch {
@@ -143,7 +174,8 @@ public struct HTTPProvider: AIProvider {
     private struct Body: Sendable {
         let model: String
         let question: String
-        let tokens: Int
+        /// `nil` sends no token field.
+        let tokens: Int?
         let tokenField: TokenField
 
         func json(temperature: AIProviderTemperature) throws(AIProviderError) -> Data {
@@ -151,8 +183,8 @@ public struct HTTPProvider: AIProvider {
                 "model": model,
                 "messages": [["role": "user", "content": question]],
                 "stream": false,
-                tokenField.rawValue: tokens,
             ]
+            if let tokens { object[tokenField.rawValue] = tokens }
             if temperature == .zero { object["temperature"] = 0 }
             guard let data = try? JSONSerialization.data(withJSONObject: object) else { throw .badShape }
             return data

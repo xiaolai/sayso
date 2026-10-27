@@ -270,17 +270,19 @@ struct HTTPProviderTests {
 
     // MARK: - The answer budget
 
-    static func provider(answerTokens: Int, tokenField: AIProviderTokenField = .completionFirst) throws -> HTTPProvider {
+    static func provider(answerBudget: HTTPProvider.AnswerBudget,
+                         tokenField: AIProviderTokenField = .completionFirst) throws -> HTTPProvider {
         let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
         return try HTTPProvider(configuration: .init(endpoint: url, model: "gpt-test", tokenField: tokenField,
-                                                     answerTokens: answerTokens),
+                                                     answerBudget: answerBudget),
                                 session: session())
     }
 
     @Test func theDefaultBudgetIsUnchanged() async throws {
         let url = try #require(URL(string: "http://127.0.0.1:9/v1"))
         #expect(HTTPProvider.answerTokens == 1_024)
-        #expect(HTTPProvider.Configuration(endpoint: url, model: "m").answerTokens == 1_024)
+        #expect(HTTPProvider.AnswerBudget.standard.tokenLimit == 1_024)
+        #expect(HTTPProvider.Configuration(endpoint: url, model: "m").answerBudget == .standard)
         Stub.install { _ in (200, Data(Self.answer("ok").utf8)) }
         _ = try await Self.provider().answer(to: "q")
         #expect((try Self.body(of: try #require(Stub.requests.first)))["max_completion_tokens"] as? Int == 1_024)
@@ -295,7 +297,7 @@ struct HTTPProviderTests {
                 if body[first] != nil { return (422, Data(#"{"error":{"message":"Invalid Parameters"}}"#.utf8)) }
                 return (200, Data(Self.answer("retried").utf8))
             }
-            let text = try await Self.provider(answerTokens: 4_096, tokenField: preference).answer(to: "q")
+            let text = try await Self.provider(answerBudget: .tokens(4_096), tokenField: preference).answer(to: "q")
             #expect(text == "retried")
             let requests = Stub.requests
             #expect(requests.count == 2)
@@ -304,26 +306,48 @@ struct HTTPProviderTests {
         }
     }
 
+    /// **The server's own limit sends no token field, so there is nothing to negotiate**: an identical retry would get
+    /// the same refusal, and the reader sees the server's first words.
+    @Test func theEndpointsDefaultBudgetSendsNoTokenFieldAndNoRetry() async throws {
+        Stub.install { _ in (422, Data(#"{"error":{"message":"Invalid Parameters"}}"#.utf8)) }
+        await #expect(throws: AIProviderError.server(status: 422, message: "Invalid Parameters")) {
+            try await Self.provider(answerBudget: .endpointDefault).answer(to: "q")
+        }
+        let requests = Stub.requests
+        #expect(requests.count == 1)
+        let body = try Self.body(of: try #require(requests.first))
+        #expect(body["max_completion_tokens"] == nil && body["max_tokens"] == nil, "a token field was sent: \(body)")
+    }
+
+    /// A count read from settings or user input is checked, never trapped on.
+    @Test func aBudgetFromInputIsNilWhenNotPositive() {
+        #expect(HTTPProvider.AnswerBudget(tokens: 0) == nil)
+        #expect(HTTPProvider.AnswerBudget(tokens: -1) == nil)
+        #expect(HTTPProvider.AnswerBudget(tokens: 8_192) == .tokens(8_192))
+        #expect(HTTPProvider.AnswerBudget(tokens: 8_192)?.tokenLimit == 8_192)
+        #expect(HTTPProvider.AnswerBudget.endpointDefault.tokenLimit == nil)
+    }
+
     @Test func aCutAnswerIsTruncatedWhateverTheBudget() async throws {
         Stub.install { _ in (200, Data(Self.answer("half an ans", finish: "length").utf8)) }
-        await #expect(throws: AIProviderError.truncated) { try await Self.provider(answerTokens: 4_096).answer(to: "q") }
+        await #expect(throws: AIProviderError.truncated) {
+            try await Self.provider(answerBudget: .tokens(4_096)).answer(to: "q")
+        }
     }
 
     @Test func theProbeSpendsOneTokenWhateverTheAnswerBudget() async throws {
-        Stub.install { _ in (200, Data(Self.answer("ok", finish: "length").utf8)) }
-        _ = try await Self.provider(answerTokens: 4_096).probe()
-        #expect((try Self.body(of: try #require(Stub.requests.first)))["max_completion_tokens"] as? Int == 1)
+        for budget in [HTTPProvider.AnswerBudget.tokens(4_096), .endpointDefault] {
+            Stub.install { _ in (200, Data(Self.answer("ok", finish: "length").utf8)) }
+            _ = try await Self.provider(answerBudget: budget).probe()
+            #expect((try Self.body(of: try #require(Stub.requests.first)))["max_completion_tokens"] as? Int == 1)
+        }
     }
 
     #if compiler(>=6.2)
-    /// **A budget of no tokens is the caller's bug**, refused where it is written, not at the first ask.
+    /// **A budget of no tokens written in code is the caller's bug**, refused where it is written, not at the first ask.
     @Test func aNonPositiveBudgetIsRefusedAtConstruction() async {
-        await #expect(processExitsWith: .failure) {
-            _ = HTTPProvider.Configuration(endpoint: URL(fileURLWithPath: "/"), model: "m", answerTokens: 0)
-        }
-        await #expect(processExitsWith: .failure) {
-            _ = HTTPProvider.Configuration(endpoint: URL(fileURLWithPath: "/"), model: "m", answerTokens: -1)
-        }
+        await #expect(processExitsWith: .failure) { _ = HTTPProvider.AnswerBudget.tokens(0) }
+        await #expect(processExitsWith: .failure) { _ = HTTPProvider.AnswerBudget.tokens(-1) }
     }
     #endif
 
